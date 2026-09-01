@@ -156,6 +156,9 @@
           <button data-group="mailbox" class="setting-nav w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface text-sm font-medium transition-colors">
             <i data-lucide="inbox" class="w-4 h-4"></i>邮箱接入
           </button>
+          <button data-group="integrations" class="setting-nav w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface text-sm font-medium transition-colors">
+            <i data-lucide="blocks" class="w-4 h-4"></i>系统集成
+          </button>
           <button data-group="ai" class="setting-nav w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface text-sm font-medium transition-colors">
             <i data-lucide="sliders-horizontal" class="w-4 h-4"></i>AI 偏好
           </button>
@@ -686,6 +689,68 @@
               </div>
             </div>
           </div>
+
+          <!-- 系统集成 -->
+          <div id="group-integrations" class="setting-group hidden space-y-4">
+            <div class="bg-surface rounded-lg shadow-card p-6">
+              <h2 class="text-base font-semibold mb-1">系统集成</h2>
+              <p class="text-xs text-on-surface-variant mb-5">连接你的 ERP / POS 等外部业务系统，数据将自动同步到平台，供 AI COO 统一分析与预警。未接入时平台使用内置业务数据。</p>
+
+              <!-- ERPNext 接入卡片（已连接示例） -->
+              <div class="rounded-md bg-surface-container/60 p-5 mb-3">
+                <div class="flex items-start justify-between mb-4">
+                  <div class="flex items-center gap-3">
+                    <span class="w-10 h-10 rounded-md bg-primary/10 text-primary flex items-center justify-center"><i data-lucide="factory" class="w-5 h-5"></i></span>
+                    <div>
+                      <div class="flex items-center gap-2">
+                        <p class="text-sm font-semibold">ERPNext</p>
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success"><span class="w-1.5 h-1.5 rounded-full bg-success"></span>已连接</span>
+                      </div>
+                      <p class="text-xs text-on-surface-variant mt-0.5">开源 ERP：库存 / 采购 / 供应商 / 财务 · https://erp.sichuanhouse.com</p>
+                    </div>
+                  </div>
+                  <button id="btn-erp-config" class="text-sm text-primary font-medium hover:underline">管理</button>
+                </div>
+                <div class="grid grid-cols-4 gap-3 mb-4">
+                  <div class="rounded-md bg-surface p-3">
+                    <p class="text-xs text-on-surface-variant">库存物料</p>
+                    <p class="text-sm font-bold mt-0.5">86 项</p>
+                  </div>
+                  <div class="rounded-md bg-surface p-3">
+                    <p class="text-xs text-on-surface-variant">供应商</p>
+                    <p class="text-sm font-bold mt-0.5">12 家</p>
+                  </div>
+                  <div class="rounded-md bg-surface p-3">
+                    <p class="text-xs text-on-surface-variant">采购单（本月）</p>
+                    <p class="text-sm font-bold mt-0.5">23 张</p>
+                  </div>
+                  <div class="rounded-md bg-surface p-3">
+                    <p class="text-xs text-on-surface-variant">上次同步</p>
+                    <p class="text-sm font-bold mt-0.5">10 分钟前</p>
+                  </div>
+                </div>
+                <div class="space-y-2.5 mb-4">
+                  <p class="text-xs font-medium text-on-surface-variant">同步范围</p>
+                  <div class="flex flex-wrap gap-2">
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-surface text-xs"><i data-lucide="check" class="w-3 h-3 text-success"></i>库存物料（实时 Webhook）</span>
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-surface text-xs"><i data-lucide="check" class="w-3 h-3 text-success"></i>供应商与采购单（每 30 分钟）</span>
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-surface text-xs"><i data-lucide="check" class="w-3 h-3 text-success"></i>产品成本（每 30 分钟）</span>
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-surface text-xs text-on-surface-variant"><i data-lucide="minus" class="w-3 h-3"></i>财务凭证（未开启）</span>
+                  </div>
+                </div>
+                <div class="flex items-center justify-between">
+                  <p class="text-xs text-on-surface-variant inline-flex items-center gap-1.5"><i data-lucide="shield-check" class="w-3.5 h-3.5 text-success"></i>API Key / Secret 加密存储，仅服务端用于调用你的 ERPNext</p>
+                  <button id="btn-erp-sync" class="text-sm text-primary font-medium hover:underline inline-flex items-center gap-1"><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>立即同步</button>
+                </div>
+              </div>
+
+              <!-- 更多集成占位 -->
+              <div class="rounded-md border border-dashed border-outline-variant/40 p-5 text-center">
+                <p class="text-sm text-on-surface-variant">更多集成筹备中：Square POS · Shopify · Uber Eats 商家中心</p>
+                <p class="text-xs text-on-surface-variant/70 mt-1">有需要的系统可反馈给我们优先排期</p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </main>
@@ -817,6 +882,63 @@
       <div class="flex justify-end gap-3 mt-6">
         <button id="btn-wipe-cancel" class="bg-surface-container text-on-surface border-none px-4 py-2 rounded-md text-sm font-medium hover:bg-surface-container-high active:scale-[0.98] transition-all">取消</button>
         <button id="btn-wipe-confirm" class="bg-error text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all">确认清空</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ERPNext 配置弹窗 -->
+  <div id="modal-erp" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+    <div class="bg-surface rounded-xl shadow-dialog max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between mb-5">
+        <h3 class="text-base font-semibold">配置 ERPNext</h3>
+        <button id="btn-erp-close" class="w-8 h-8 rounded-md hover:bg-surface-container flex items-center justify-center text-on-surface-variant transition-colors"><i data-lucide="x" class="w-4 h-4"></i></button>
+      </div>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-on-surface-variant mb-1.5">服务器地址</label>
+          <input id="erp-url" type="text" value="https://erp.sichuanhouse.com" class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors font-mono"/>
+          <p class="text-xs text-on-surface-variant/70 mt-1.5">Frappe Cloud 或自建 ERPNext 站点地址</p>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-on-surface-variant mb-1.5">API Key</label>
+          <input id="erp-key" type="password" value="erp-key-masked-••••••••" class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors font-mono"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-on-surface-variant mb-1.5">API Secret</label>
+          <input id="erp-secret" type="password" value="erp-secret-masked-••••••••" class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors font-mono"/>
+          <p class="text-xs text-on-surface-variant/70 mt-1.5">在 ERPNext「用户 → API 访问」中生成；加密存储，仅服务端可读取</p>
+        </div>
+        <div>
+          <p class="text-xs font-medium text-on-surface-variant mb-2">同步范围</p>
+          <div class="space-y-2">
+            <label class="flex items-center justify-between rounded-md bg-surface-container/60 px-3 py-2.5 cursor-pointer">
+              <span class="text-sm">库存物料<span class="text-xs text-on-surface-variant ml-1.5">实时 Webhook</span></span>
+              <input type="checkbox" checked class="w-4 h-4 accent-primary"/>
+            </label>
+            <label class="flex items-center justify-between rounded-md bg-surface-container/60 px-3 py-2.5 cursor-pointer">
+              <span class="text-sm">供应商与采购单<span class="text-xs text-on-surface-variant ml-1.5">每 30 分钟</span></span>
+              <input type="checkbox" checked class="w-4 h-4 accent-primary"/>
+            </label>
+            <label class="flex items-center justify-between rounded-md bg-surface-container/60 px-3 py-2.5 cursor-pointer">
+              <span class="text-sm">产品成本（BOM 物料清单）<span class="text-xs text-on-surface-variant ml-1.5">每 30 分钟</span></span>
+              <input type="checkbox" checked class="w-4 h-4 accent-primary"/>
+            </label>
+            <label class="flex items-center justify-between rounded-md bg-surface-container/60 px-3 py-2.5 cursor-pointer">
+              <span class="text-sm">财务凭证<span class="text-xs text-on-surface-variant ml-1.5">每日</span></span>
+              <input type="checkbox" class="w-4 h-4 accent-primary"/>
+            </label>
+          </div>
+        </div>
+        <div id="erp-test-result" class="hidden rounded-md bg-success/10 p-3 flex items-center gap-2">
+          <i data-lucide="circle-check" class="w-4 h-4 text-success shrink-0"></i>
+          <span class="text-xs text-success font-medium">连接成功，已识别 86 项物料、12 家供应商</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <button id="btn-erp-test" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium bg-surface-container text-on-surface hover:bg-surface-container-high active:scale-[0.98] transition-all">
+            <i data-lucide="zap" class="w-3.5 h-3.5"></i>测试连接
+          </button>
+          <button id="btn-erp-save" class="bg-primary text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all">保存</button>
+        </div>
       </div>
     </div>
   </div>
@@ -965,6 +1087,32 @@
       });
       $('#btn-save-mailbox').on('click', function () {
         console.log('保存发送与自动化设置（开发阶段将写入 settings）');
+      });
+
+      // ERPNext 集成配置
+      // 开发阶段实现：POST /api/integrations/erpnext/test 用 URL + API Key/Secret 调 ERPNext REST /api/method/frappe.auth.get_logged_user 验证；PUT /api/integrations/erpnext 加密入库并注册 Webhook；POST /api/integrations/erpnext/sync 手动触发同步
+      $('#btn-erp-config').on('click', function () {
+        $('#modal-erp').removeClass('hidden');
+      });
+      $('#btn-erp-close').on('click', function () {
+        $('#modal-erp').addClass('hidden');
+      });
+      $('#btn-erp-test').on('click', function () {
+        $('#erp-test-result').removeClass('hidden');
+        lucide.createIcons();
+      });
+      $('#btn-erp-save').on('click', function () {
+        $('#modal-erp').addClass('hidden');
+        console.log('保存 ERPNext 配置（开发阶段将加密入库并注册 Webhook）');
+      });
+      $('#btn-erp-sync').on('click', function () {
+        var $btn = $(this);
+        $btn.html('<i data-lucide="loader-circle" class="w-3.5 h-3.5 animate-spin"></i>同步中...');
+        lucide.createIcons();
+        setTimeout(function () {
+          $btn.html('<i data-lucide="check" class="w-3.5 h-3.5 text-success"></i>已同步');
+          lucide.createIcons();
+        }, 1500);
       });
 
       // 清空数据二次确认

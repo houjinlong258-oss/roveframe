@@ -145,6 +145,7 @@
         <div class="flex items-center gap-2 bg-surface-container rounded-md p-1">
           <button id="tab-products" class="biz-tab px-4 py-1.5 rounded-sm text-sm font-medium bg-surface text-on-surface shadow-card transition-all">产品管理</button>
           <button id="tab-orders" class="biz-tab px-4 py-1.5 rounded-sm text-sm font-medium text-on-surface-variant hover:text-on-surface transition-all">订单管理</button>
+          <button id="tab-inventory" class="biz-tab px-4 py-1.5 rounded-sm text-sm font-medium text-on-surface-variant hover:text-on-surface transition-all">库存管理</button>
         </div>
       </div>
 
@@ -307,6 +308,118 @@
           </div>
         </div>
       </div>
+
+      <!-- 库存管理面板（ERPNext 数据源） -->
+      <div id="panel-inventory" class="hidden">
+        <!-- 数据源状态条 -->
+        <div class="bg-surface rounded-lg shadow-card px-5 py-3.5 mb-4 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span class="w-8 h-8 rounded-md bg-primary/10 text-primary flex items-center justify-center"><i data-lucide="factory" class="w-4 h-4"></i></span>
+            <div>
+              <p class="text-sm font-medium">数据源：ERPNext<span class="text-on-surface-variant font-normal">（erp.sichuanhouse.com）</span></p>
+              <p class="text-xs text-on-surface-variant">实时 Webhook 同步中 · 上次同步 10 分钟前</p>
+            </div>
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success"><span class="w-1.5 h-1.5 rounded-full bg-success"></span>已连接</span>
+          </div>
+          <div class="flex items-center gap-4">
+            <a href="settings.html" class="text-xs text-on-surface-variant hover:text-primary transition-colors">管理接入</a>
+            <button id="btn-inv-sync" class="text-sm text-primary font-medium hover:underline inline-flex items-center gap-1"><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>立即同步</button>
+          </div>
+        </div>
+
+        <!-- 库存统计 -->
+        <div class="grid grid-cols-4 gap-4 mb-4">
+          <div class="bg-surface rounded-lg shadow-card p-4">
+            <p class="text-xs text-on-surface-variant">物料总数</p>
+            <p class="text-xl font-bold mt-1">86 <span class="text-xs font-normal text-on-surface-variant">项</span></p>
+          </div>
+          <div class="bg-surface rounded-lg shadow-card p-4">
+            <p class="text-xs text-on-surface-variant">库存偏低</p>
+            <p class="text-xl font-bold mt-1 text-warning">5 <span class="text-xs font-normal text-on-surface-variant">项</span></p>
+          </div>
+          <div class="bg-surface rounded-lg shadow-card p-4">
+            <p class="text-xs text-on-surface-variant">缺货</p>
+            <p class="text-xl font-bold mt-1 text-error">1 <span class="text-xs font-normal text-on-surface-variant">项</span></p>
+          </div>
+          <div class="bg-surface rounded-lg shadow-card p-4">
+            <p class="text-xs text-on-surface-variant">今日待收货采购单</p>
+            <p class="text-xl font-bold mt-1">2 <span class="text-xs font-normal text-on-surface-variant">张</span></p>
+          </div>
+        </div>
+
+        <!-- AI 采购建议卡 -->
+        <div class="rounded-lg bg-primary/5 shadow-card p-4 mb-4 flex items-start gap-3">
+          <span class="w-8 h-8 rounded-md bg-primary/10 text-primary flex items-center justify-center shrink-0"><i data-lucide="sparkles" class="w-4 h-4"></i></span>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium mb-0.5">AI 采购建议</p>
+            <p class="text-sm text-on-surface-variant leading-relaxed">根据本周销量与周末预订量预测：建议补货 <span class="text-on-surface font-medium">黑鱼 30kg</span>（周六前）、<span class="text-on-surface font-medium">山药 15kg</span>、<span class="text-on-surface font-medium">茉莉花茶 2 箱</span>（今日缺货影响 3 款饮品）。</p>
+          </div>
+          <a href="agent.html?insight=purchase" class="shrink-0 inline-flex items-center gap-1.5 bg-primary text-on-primary px-3.5 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all"><i data-lucide="bot" class="w-3.5 h-3.5"></i>生成采购单</a>
+        </div>
+
+        <!-- 库存表格 -->
+        <div class="bg-surface rounded-lg shadow-card overflow-hidden">
+          <div class="grid grid-cols-[1.5fr_0.8fr_1fr_1fr_0.7fr_0.9fr_1fr] gap-3 px-5 py-3 bg-surface-container text-xs font-semibold text-on-surface-variant uppercase tracking-wide">
+            <span>物料名称</span><span>分类</span><span>当前库存</span><span>安全库存</span><span>单位</span><span>状态</span><span>主要供应商</span>
+          </div>
+          <div class="divide-y divide-outline-variant/20">
+            <div class="grid grid-cols-[1.5fr_0.8fr_1fr_1fr_0.7fr_0.9fr_1fr] gap-3 px-5 py-3.5 items-center hover:bg-surface-container/50 transition-colors">
+              <span class="text-sm font-medium">黑鱼（鲜活）</span>
+              <span class="text-xs text-on-surface-variant">水产</span>
+              <span class="text-sm font-semibold text-warning">12</span>
+              <span class="text-sm text-on-surface-variant">20</span>
+              <span class="text-sm">kg</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning w-fit">偏低</span>
+              <span class="text-xs text-on-surface-variant">鲜达水产批发</span>
+            </div>
+            <div class="grid grid-cols-[1.5fr_0.8fr_1fr_1fr_0.7fr_0.9fr_1fr] gap-3 px-5 py-3.5 items-center hover:bg-surface-container/50 transition-colors">
+              <span class="text-sm font-medium">铁棍山药</span>
+              <span class="text-xs text-on-surface-variant">蔬菜</span>
+              <span class="text-sm font-semibold text-warning">8</span>
+              <span class="text-sm text-on-surface-variant">15</span>
+              <span class="text-sm">kg</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning w-fit">偏低</span>
+              <span class="text-xs text-on-surface-variant">绿源农场</span>
+            </div>
+            <div class="grid grid-cols-[1.5fr_0.8fr_1fr_1fr_0.7fr_0.9fr_1fr] gap-3 px-5 py-3.5 items-center hover:bg-surface-container/50 transition-colors">
+              <span class="text-sm font-medium">茉莉花茶（特级）</span>
+              <span class="text-xs text-on-surface-variant">饮品原料</span>
+              <span class="text-sm font-semibold text-error">0</span>
+              <span class="text-sm text-on-surface-variant">2</span>
+              <span class="text-sm">箱</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-error/15 text-error w-fit">缺货</span>
+              <span class="text-xs text-on-surface-variant">茗香茶业</span>
+            </div>
+            <div class="grid grid-cols-[1.5fr_0.8fr_1fr_1fr_0.7fr_0.9fr_1fr] gap-3 px-5 py-3.5 items-center hover:bg-surface-container/50 transition-colors">
+              <span class="text-sm font-medium">牛柳（谷饲）</span>
+              <span class="text-xs text-on-surface-variant">肉类</span>
+              <span class="text-sm font-semibold">26</span>
+              <span class="text-sm text-on-surface-variant">15</span>
+              <span class="text-sm">kg</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success w-fit">充足</span>
+              <span class="text-xs text-on-surface-variant">牧原鲜肉供应</span>
+            </div>
+            <div class="grid grid-cols-[1.5fr_0.8fr_1fr_1fr_0.7fr_0.9fr_1fr] gap-3 px-5 py-3.5 items-center hover:bg-surface-container/50 transition-colors">
+              <span class="text-sm font-medium">干辣椒（二荆条）</span>
+              <span class="text-xs text-on-surface-variant">调料</span>
+              <span class="text-sm font-semibold">9.5</span>
+              <span class="text-sm text-on-surface-variant">5</span>
+              <span class="text-sm">kg</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success w-fit">充足</span>
+              <span class="text-xs text-on-surface-variant">川味调料行</span>
+            </div>
+            <div class="grid grid-cols-[1.5fr_0.8fr_1fr_1fr_0.7fr_0.9fr_1fr] gap-3 px-5 py-3.5 items-center hover:bg-surface-container/50 transition-colors">
+              <span class="text-sm font-medium">香水柠檬</span>
+              <span class="text-xs text-on-surface-variant">水果</span>
+              <span class="text-sm font-semibold">18</span>
+              <span class="text-sm text-on-surface-variant">10</span>
+              <span class="text-sm">kg</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success w-fit">充足</span>
+              <span class="text-xs text-on-surface-variant">绿源农场</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
     <!-- @main-content:end -->
   </div>
@@ -406,14 +519,27 @@
     $(function () {
       // Tab 切换
       function switchTab(tab) {
-        const isProducts = tab === 'products';
-        $('#panel-products').toggleClass('hidden', !isProducts);
-        $('#panel-orders').toggleClass('hidden', isProducts);
+        $('#panel-products').toggleClass('hidden', tab !== 'products');
+        $('#panel-orders').toggleClass('hidden', tab !== 'orders');
+        $('#panel-inventory').toggleClass('hidden', tab !== 'inventory');
         $('.biz-tab').removeClass('bg-surface text-on-surface shadow-card').addClass('text-on-surface-variant');
-        $(isProducts ? '#tab-products' : '#tab-orders').addClass('bg-surface text-on-surface shadow-card').removeClass('text-on-surface-variant');
+        $('#tab-' + tab).addClass('bg-surface text-on-surface shadow-card').removeClass('text-on-surface-variant');
       }
       $('#tab-products').on('click', function () { switchTab('products'); });
       $('#tab-orders').on('click', function () { switchTab('orders'); });
+      $('#tab-inventory').on('click', function () { switchTab('inventory'); });
+
+      // 库存手动同步
+      // 开发阶段实现：POST /api/integrations/erpnext/sync { scope: 'inventory' }，完成后刷新库存表格与告警
+      $('#btn-inv-sync').on('click', function () {
+        var $btn = $(this);
+        $btn.html('<i data-lucide="loader-circle" class="w-3.5 h-3.5 animate-spin"></i>同步中...');
+        lucide.createIcons();
+        setTimeout(function () {
+          $btn.html('<i data-lucide="check" class="w-3.5 h-3.5 text-success"></i>已同步');
+          lucide.createIcons();
+        }, 1500);
+      });
 
       // 产品分类筛选
       $('#product-cat').on('click', '.pcat-btn', function () {

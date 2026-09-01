@@ -18,11 +18,12 @@
 | 图表 | Recharts | Dashboard 营收/订单/趋势可视化 |
 | 多语言 | next-intl（en 默认 / zh / es） | 面向海外市场，文案全外置，货币+时区本地化 |
 | 邮件收发 | nodemailer + imapflow（OAuth2/SMTP/IMAP） | 绑定企业/个人邮箱真实收发，队列限流外发 |
+| ERP 集成 | ERPNext REST API + Token 认证 + Webhook | 库存/采购/供应商/成本同步，用户自部署 ERPNext，平台对接 |
 | 示例数据 | 餐厅行业 seed 数据 | 蓝图首选行业，开箱即用，可清空替换 |
 
 ## 功能模块
 
-### 1. 数据层（Supabase 13 张表）
+### 1. 数据层（Supabase 15 张表）
 
 | 表 | 关键字段 | 说明 |
 |----|---------|------|
@@ -39,6 +40,8 @@
 | reservations | id, customer_name, phone, party_size, table_no, reserved_at, duration, source, status(待确认/已确认/已到店/已取消/未到店), notes | 餐厅预约与桌位 |
 | email_accounts | id, provider(gmail/outlook/smtp), email, display_name, auth_type(oauth/smtp), credentials_encrypted, smtp_host/port, imap_host/port, is_default, status | 接入的企业/个人邮箱（授权信息加密存储） |
 | email_send_tasks | id, account_id, to_addr, subject, body, content_id, customer_id, status(queued/sent/failed), sent_at, error | 外发邮件队列（限流发送，支持营销批量个性化） |
+| integration_configs | id, type(erpnext), base_url, credentials_encrypted, sync_scopes(jsonb), status, last_sync_at | 外部系统接入配置（ERPNext 等，凭据加密存储） |
+| inventory_items | id, sku, name, category, quantity, safety_stock, unit, supplier_name, erp_item_code, synced_at | 库存物料（ERPNext 同步，未接入时用 seed 数据） |
 
 ### 2. AI 能力层（API Routes，全部真实调用）
 
@@ -59,14 +62,18 @@
 | `/api/settings/email-accounts` | 邮箱账户 CRUD（Gmail/Outlook OAuth2 授权回调 + 自定义 SMTP/IMAP，凭据加密存储）+ `POST .../test` 收发连通性测试 |
 | `/api/emails/[id]/send` | 通过已绑定邮箱账户真实发送回复（SMTP/OAuth），未配置邮箱时返回引导提示 |
 | `/api/marketing/send` | 个性化邮件批量发送：按客群圈选 → 逐人调用模型结合客户 360 生成差异化内容 → 入发送队列限流外发（支持先发测试邮件） |
+| `/api/integrations/erpnext` | ERPNext 接入配置（GET 掩码回传 / PUT 加密写入）+ `POST .../test` 连通性测试（调 `frappe.auth.get_logged_user`） |
+| `/api/integrations/erpnext/sync` | 手动/定时触发同步：拉取库存物料、供应商、采购单入库（库存走 Webhook 实时更新） |
 
-业务 CRUD（非 AI，REST）：`/api/products`、`/api/orders`、`/api/reservations`（预约含桌位占用冲突校验）、`/api/settings`（业务信息、语言/货币/时区、AI 偏好、邮箱发送与自动化规则）。
+业务 CRUD（非 AI，REST）：`/api/products`、`/api/orders`、`/api/reservations`（预约含桌位占用冲突校验）、`/api/inventory`（库存查询）、`/api/settings`（业务信息、语言/货币/时区、AI 偏好、邮箱发送与自动化规则）。
 
 **邮件通道（真实收发）**：收件通过 imapflow 定时 IMAP 同步绑定邮箱的新邮件入库（Gmail/Outlook 用 OAuth2，自定义邮箱用授权码）；发件通过 nodemailer（SMTP / Gmail API / Graph API）经 email_send_tasks 队列限流发出；所有授权凭据与模型 Key 同等级加密存储。营销邮件非固定模板——发送时对每位收件人独立调用模型，注入其客户 360 画像（姓名/最近菜品/到店频次/语言）生成差异化内容。
 
+**ERPNext 集成**：用户自部署 ERPNext（Frappe Cloud 或自建），平台通过官方 REST API + Token 认证（API Key/Secret）对接。同步策略：库存物料走 Webhook 实时推送，供应商/采购单/产品成本定时拉取（30 分钟）。库存数据入库后驱动：经营数据页库存 Tab、首页缺货告警、AI 今日简报备货建议、AI 采购单生成。未接入时回落平台内置 seed 库存数据，功能照常可用。
+
 ### 3. 页面模块
 
-10 个页面：经营仪表盘、AI COO 助手、预约管理、知识大脑、评论智能、客户智能、营销增长、邮件中心、经营数据（产品+订单）、设置（含 AI 模型接入、语言与地区）。详见页面规格。
+10 个页面：经营仪表盘、AI COO 助手、预约管理、知识大脑、评论智能、客户智能、营销增长、邮件中心、经营数据（产品+订单+库存）、设置（AI 模型接入、邮箱接入、系统集成、语言与地区等）。详见页面规格。
 
 ## 是否有原型设计
 
@@ -80,13 +87,13 @@
 
 ### 阶段二：代码开发
 
-2. **基础设施**：Supabase 建 13 张表 + 餐厅示例数据 seed + AI 集成封装（模型路由层：用户自接模型优先/平台 LLM 兜底、embedding 客户端、业务上下文构建器）+ next-intl i18n 脚手架（en/zh/es 字典、默认英文、货币与时区格式化工具）+ 邮件通道封装（nodemailer 发件 + imapflow 收件同步 + 凭据加解密）—— `src/lib/db.ts`、`src/lib/ai.ts`、`src/lib/mail.ts`
+2. **基础设施**：Supabase 建 15 张表 + 餐厅示例数据 seed + AI 集成封装（模型路由层：用户自接模型优先/平台 LLM 兜底、embedding 客户端、业务上下文构建器）+ next-intl i18n 脚手架（en/zh/es 字典、默认英文、货币与时区格式化工具）+ 邮件通道封装（nodemailer 发件 + imapflow 收件同步 + 凭据加解密）+ ERPNext 客户端封装（REST API + Token 认证 + Webhook 接收 + 同步任务）—— `src/lib/db.ts`、`src/lib/ai.ts`、`src/lib/mail.ts`、`src/lib/erpnext.ts`
 3. **全局布局 + 经营仪表盘**：侧边导航布局、AI 今日简报（总结 + 优先事项）、KPI 卡片、营收/订单/客流图表、AI 洞察流（一键行动跳转）、实时告警中心 —— `src/app/layout.tsx`、`src/app/page.tsx`、`src/app/api/insights/route.ts`
 4. **AI COO 助手**：流式对话界面（SSE）、业务上下文注入、会话列表与持久化、快捷问题模板 —— `src/app/agent/page.tsx`、`src/app/api/agent/chat/route.ts`
 5. **知识大脑**：文档管理（新建/编辑/删除/分类）、上传自动向量化、RAG 问答界面（引用来源展示）—— `src/app/knowledge/page.tsx`、`src/app/api/knowledge/route.ts`
 6. **评论智能 + 客户智能**：多平台评论列表、情感分析、AI 回复一键生成与标记；客户列表、360 抽屉（消费画像/AI 评分/流失预警）、批量评分 —— `src/app/reviews/page.tsx`、`src/app/customers/page.tsx`
 7. **营销增长 + 邮件中心**：营销内容生成工作台（活动创意/社媒/邮件三类，保存为资产；邮件类型支持客群圈选 + 逐人个性化生成 + 队列限流发送）；邮件收件箱（IMAP 同步）、AI 分类与优先级、摘要与回复草稿、经绑定邮箱真实发送 —— `src/app/marketing/page.tsx`、`src/app/emails/page.tsx`
-8. **预约管理 + 经营数据 + 设置 + 收尾验证**：预约管理（预订时间线/桌位状态板/新建预约/状态流转）、产品/订单管理（Tab 页）、设置页（AI 模型接入/邮箱接入/业务信息/语言与地区/AI 偏好/数据管理）、原型一致性检查、test_run 全量验收 —— `src/app/reservations/page.tsx`、`src/app/business/page.tsx`、`src/app/settings/page.tsx`
+8. **预约管理 + 经营数据 + 设置 + 收尾验证**：预约管理（预订时间线/桌位状态板/新建预约/状态流转）、产品/订单/库存管理（三 Tab，库存接 ERPNext 同步数据 + AI 采购建议）、设置页（AI 模型接入/邮箱接入/系统集成(ERPNext)/业务信息/语言与地区/AI 偏好/数据管理）、原型一致性检查、test_run 全量验收 —— `src/app/reservations/page.tsx`、`src/app/business/page.tsx`、`src/app/settings/page.tsx`
 
 ## 页面规格
 
@@ -317,14 +324,16 @@
 
 ##### @page(/business) 经营数据
 
-**核心职责**：产品与订单的统一管理后台（餐厅菜单 + 订单流水）。
+**核心职责**：产品、订单与库存的统一管理后台（餐厅菜单 + 订单流水 + ERPNext 库存）。
 **访问路径**：导航直达。
-**布局**：顶部导航栏；Tab 切换（产品管理 / 订单管理）。
+**布局**：顶部导航栏；Tab 切换（产品管理 / 订单管理 / 库存管理）。
 - 产品 Tab：分类筛选 chips + 新建产品按钮 + 产品表格（图片占位/名称/分类/价格/成本/销量/状态开关）
 - 订单 Tab：状态筛选（全部/待处理/进行中/已完成/已取消）+ 订单表格（单号/客户/金额/渠道/状态徽章/时间）
+- 库存 Tab：ERPNext 数据源状态条（连接状态/上次同步/立即同步/管理接入）+ 库存统计（物料总数/偏低/缺货/待收货采购单）+ AI 采购建议卡（生成采购单 → AI 助手）+ 库存表格（物料/分类/当前库存/安全库存/单位/状态徽章/供应商）
 
 **列表项字段（产品）**：名称 / 分类 / 价格 / 成本 / 销量 / 状态
 **列表项字段（订单）**：订单号 / 客户名 / 金额 / 渠道 / 状态 / 时间
+**列表项字段（库存）**：物料名称 / 分类 / 当前库存 / 安全库存 / 单位 / 状态（充足/偏低/缺货） / 主要供应商
 **状态**：
 - 空态：对应 Tab 无数据提示
 
@@ -350,11 +359,12 @@
 
 ##### @page(/settings) 设置
 
-**核心职责**：AI 模型接入、邮箱接入、业务信息配置、语言与地区、AI 行为偏好与数据管理。
+**核心职责**：AI 模型接入、邮箱接入、系统集成（ERPNext）、业务信息配置、语言与地区、AI 行为偏好与数据管理。
 **访问路径**：Dashboard 顶栏设置入口进入。
-**布局**：顶部导航栏；左侧设置分组菜单（AI 模型接入 / 邮箱接入 / 业务信息 / 语言与地区 / AI 偏好 / 数据管理）；右侧对应面板区。
+**布局**：顶部导航栏；左侧设置分组菜单（AI 模型接入 / 邮箱接入 / 系统集成 / 业务信息 / 语言与地区 / AI 偏好 / 数据管理）；右侧对应面板区。
 - AI 模型接入：服务商卡片网格（**Claude（Anthropic，主力）** / OpenAI / Gemini / DeepSeek / 豆包 / Kimi / 通义千问 / 智谱 GLM / Grok / 自定义 OpenAI 兼容接口，各含连接状态与配置入口）+ 模型分配区（为 AI 对话/内容生成/RAG 问答分别选择：自动模式（默认，按任务复杂度分流）/ 已接入模型 / 平台内置模型）
 - 邮箱接入：已接入邮箱列表（Gmail/Outlook/自定义 SMTP-IMAP，连接状态 + 默认发件标记 + 测试连接）+ 添加邮箱弹窗（OAuth 授权或手动服务器配置）+ 发送与自动化区（每日发送上限、批量发送间隔、客户咨询自动回复、差评预警通知、每日简报推送、邮件签名）
+- 系统集成：ERPNext 接入卡片（连接状态、库存物料/供应商/采购单统计、上次同步时间、同步范围勾选：库存物料 Webhook 实时/供应商与采购单/产品成本/财务凭证）+ 配置弹窗（服务器 URL + API Key/Secret + 测试连接）+ 立即同步；预留更多集成位（Square POS/Shopify/Uber Eats）
 - 业务信息：店名/行业/规模/营业时间/简介表单
 - 语言与地区：界面语言（**English 默认** / 中文 / Español）、货币（USD 默认 / EUR / GBP / CNY）、时区、AI 回复语言策略（跟随客户语言 / 固定语言）
 - AI 偏好：回复风格、自动化开关组

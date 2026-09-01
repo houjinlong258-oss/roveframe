@@ -18,7 +18,8 @@
 | 图表 | Recharts | Dashboard 营收/订单/趋势可视化 |
 | 多语言 | next-intl（en 默认 / zh / es） | 面向海外市场，文案全外置，货币+时区本地化 |
 | 邮件收发 | nodemailer + imapflow（OAuth2/SMTP/IMAP） | 绑定企业/个人邮箱真实收发，队列限流外发 |
-| ERP 集成 | ERPNext REST API + Token 认证 + Webhook | 库存/采购/供应商/成本同步，用户自部署 ERPNext，平台对接 |
+| 业务系统集成 | ERPNext REST API + Token；Square POS / Shopify Admin API（OAuth + Webhook） | 库存/采购/供应商/成本同步；POS 与网店订单实时汇聚，统一进 orders 表（source 区分渠道） |
+| 支付渠道 | Stripe（主）/ PayPal（备）Secret Key + Webhook | 预约订金、网店收款、每日自动对账 |
 | 示例数据 | 餐厅行业 seed 数据 | 蓝图首选行业，开箱即用，可清空替换 |
 
 ## 功能模块
@@ -28,7 +29,7 @@
 | 表 | 关键字段 | 说明 |
 |----|---------|------|
 | products | id, name, category, price, cost, description, status, sales_count | 菜单/产品 |
-| orders | id, order_no, customer_id, items(jsonb), total, status, channel, created_at | 订单流水 |
+| orders | id, order_no, customer_id, items(jsonb), total, status, channel, source(pos/square/shopify/dine_in/takeout/delivery), external_id, created_at | 订单流水（多渠道汇聚，external_id 关联外部系统单号防重） |
 | customers | id, name, phone, email, tags[], total_spent, visit_count, last_visit, ai_score, churn_risk | 客户 360 |
 | reviews | id, platform, author, rating, content, sentiment, ai_reply, replied_at | 多平台评论 |
 | emails | id, from_addr, subject, body, category, priority, ai_summary, draft_reply, status | 邮件智能 |
@@ -40,7 +41,7 @@
 | reservations | id, customer_name, phone, party_size, table_no, reserved_at, duration, source, status(待确认/已确认/已到店/已取消/未到店), notes | 餐厅预约与桌位 |
 | email_accounts | id, provider(gmail/outlook/smtp), email, display_name, auth_type(oauth/smtp), credentials_encrypted, smtp_host/port, imap_host/port, is_default, status | 接入的企业/个人邮箱（授权信息加密存储） |
 | email_send_tasks | id, account_id, to_addr, subject, body, content_id, customer_id, status(queued/sent/failed), sent_at, error | 外发邮件队列（限流发送，支持营销批量个性化） |
-| integration_configs | id, type(erpnext), base_url, credentials_encrypted, sync_scopes(jsonb), status, last_sync_at | 外部系统接入配置（ERPNext 等，凭据加密存储） |
+| integration_configs | id, provider(erpnext/square/shopify/stripe/paypal), base_url, credentials_encrypted, sync_scopes(jsonb), status, last_sync_at | 外部系统接入配置（凭据统一加密存储） |
 | inventory_items | id, sku, name, category, quantity, safety_stock, unit, supplier_name, erp_item_code, synced_at | 库存物料（ERPNext 同步，未接入时用 seed 数据） |
 
 ### 2. AI 能力层（API Routes，全部真实调用）
@@ -64,12 +65,19 @@
 | `/api/marketing/send` | 个性化邮件批量发送：按客群圈选 → 逐人调用模型结合客户 360 生成差异化内容 → 入发送队列限流外发（支持先发测试邮件） |
 | `/api/integrations/erpnext` | ERPNext 接入配置（GET 掩码回传 / PUT 加密写入）+ `POST .../test` 连通性测试（调 `frappe.auth.get_logged_user`） |
 | `/api/integrations/erpnext/sync` | 手动/定时触发同步：拉取库存物料、供应商、采购单入库（库存走 Webhook 实时更新） |
+| `/api/integrations/[provider]` | 通用集成配置：Square POS / Shopify / Stripe / PayPal（GET 掩码回传 / PUT 加密写入 / `POST .../test`），凭据统一入 integration_configs |
+| `/api/integrations/[provider]/sync` | 手动/定时同步：Square POS 订单与商品目录、Shopify 订单/商品/客户、Stripe 支付流水对账 |
+| `/api/webhooks/[provider]` | Webhook 统一入口：Square/Shopify 订单实时推送、Stripe 收款事件、ERPNext 库存变更（签名校验后写库） |
 
 业务 CRUD（非 AI，REST）：`/api/products`、`/api/orders`、`/api/reservations`（预约含桌位占用冲突校验）、`/api/inventory`（库存查询）、`/api/settings`（业务信息、语言/货币/时区、AI 偏好、邮箱发送与自动化规则）。
 
 **邮件通道（真实收发）**：收件通过 imapflow 定时 IMAP 同步绑定邮箱的新邮件入库（Gmail/Outlook 用 OAuth2，自定义邮箱用授权码）；发件通过 nodemailer（SMTP / Gmail API / Graph API）经 email_send_tasks 队列限流发出；所有授权凭据与模型 Key 同等级加密存储。营销邮件非固定模板——发送时对每位收件人独立调用模型，注入其客户 360 画像（姓名/最近菜品/到店频次/语言）生成差异化内容。
 
 **ERPNext 集成**：用户自部署 ERPNext（Frappe Cloud 或自建），平台通过官方 REST API + Token 认证（API Key/Secret）对接。同步策略：库存物料走 Webhook 实时推送，供应商/采购单/产品成本定时拉取（30 分钟）。库存数据入库后驱动：经营数据页库存 Tab、首页缺货告警、AI 今日简报备货建议、AI 采购单生成。未接入时回落平台内置 seed 库存数据，功能照常可用。
+
+**多渠道订单汇聚（Square POS / Shopify）**：Square POS（OAuth + Webhook）门店订单实时推送、商品目录定时同步；Shopify（Admin API access token + Webhook）网店订单/商品/客户同步。所有外部订单统一写入 orders 表（`source` 字段标识渠道：pos/square/shopify/dine_in/takeout/delivery），经营数据页订单 Tab 混合展示、可按渠道筛选，仪表盘营收统计自动包含全渠道。
+
+**支付渠道（Stripe / PayPal）**：Stripe 为主（Secret Key + Webhook Secret），PayPal 备用（Client ID/Secret）。能力：预约订金在线收取、Shopify 以外场景的收款链接、每日 08:00 自动对账（支付流水 vs 订单金额，差异告警到首页）。退款动作经 Stripe/PayPal API 执行并回写订单状态。未接入时不影响平台内订单流转，仅无在线收款与对账能力。
 
 ### 3. 页面模块
 
@@ -324,11 +332,11 @@
 
 ##### @page(/business) 经营数据
 
-**核心职责**：产品、订单与库存的统一管理后台（餐厅菜单 + 订单流水 + ERPNext 库存）。
+**核心职责**：产品、订单与库存的统一管理后台（餐厅菜单 + 多渠道订单流水 + ERPNext 库存）。
 **访问路径**：导航直达。
 **布局**：顶部导航栏；Tab 切换（产品管理 / 订单管理 / 库存管理）。
 - 产品 Tab：分类筛选 chips + 新建产品按钮 + 产品表格（图片占位/名称/分类/价格/成本/销量/状态开关）
-- 订单 Tab：状态筛选（全部/待处理/进行中/已完成/已取消）+ 订单表格（单号/客户/金额/渠道/状态徽章/时间）
+- 订单 Tab：多渠道来源状态条（Square POS 实时 / Shopify 网店实时 / Stripe 对账 08:00 + 今日已同步单数）+ 状态筛选（全部/待处理/进行中/已完成/已取消）+ 订单表格（单号/客户/金额/渠道徽章含 Square POS·Shopify 网店/状态徽章/时间）
 - 库存 Tab：ERPNext 数据源状态条（连接状态/上次同步/立即同步/管理接入）+ 库存统计（物料总数/偏低/缺货/待收货采购单）+ AI 采购建议卡（生成采购单 → AI 助手）+ 库存表格（物料/分类/当前库存/安全库存/单位/状态徽章/供应商）
 
 **列表项字段（产品）**：名称 / 分类 / 价格 / 成本 / 销量 / 状态
@@ -364,7 +372,7 @@
 **布局**：顶部导航栏；左侧设置分组菜单（AI 模型接入 / 邮箱接入 / 系统集成 / 业务信息 / 语言与地区 / AI 偏好 / 数据管理）；右侧对应面板区。
 - AI 模型接入：服务商卡片网格（**Claude（Anthropic，主力）** / OpenAI / Gemini / DeepSeek / 豆包 / Kimi / 通义千问 / 智谱 GLM / Grok / 自定义 OpenAI 兼容接口，各含连接状态与配置入口）+ 模型分配区（为 AI 对话/内容生成/RAG 问答分别选择：自动模式（默认，按任务复杂度分流）/ 已接入模型 / 平台内置模型）
 - 邮箱接入：已接入邮箱列表（Gmail/Outlook/自定义 SMTP-IMAP，连接状态 + 默认发件标记 + 测试连接）+ 添加邮箱弹窗（OAuth 授权或手动服务器配置）+ 发送与自动化区（每日发送上限、批量发送间隔、客户咨询自动回复、差评预警通知、每日简报推送、邮件签名）
-- 系统集成：ERPNext 接入卡片（连接状态、库存物料/供应商/采购单统计、上次同步时间、同步范围勾选：库存物料 Webhook 实时/供应商与采购单/产品成本/财务凭证）+ 配置弹窗（服务器 URL + API Key/Secret + 测试连接）+ 立即同步；预留更多集成位（Square POS/Shopify/Uber Eats）
+- 系统集成：按类别分组的接入卡片——**ERP**（ERPNext：URL + API Key/Secret，库存物料 Webhook 实时/供应商与采购单/产品成本/财务凭证）；**业务系统**（Square POS：OAuth + Webhook 订单实时；Shopify：店铺域名 + Admin API Token，订单/商品/客户同步）；**支付渠道**（Stripe：Secret Key + Webhook Secret，收款/退款/每日对账；PayPal：Client ID/Secret 备用渠道）；每类卡片含连接状态、同步项徽章、"管理/配置"弹窗（按服务商动态生成字段）与测试连接；预留 Uber Eats/DoorDash 占位
 - 业务信息：店名/行业/规模/营业时间/简介表单
 - 语言与地区：界面语言（**English 默认** / 中文 / Español）、货币（USD 默认 / EUR / GBP / CNY）、时区、AI 回复语言策略（跟随客户语言 / 固定语言）
 - AI 偏好：回复风格、自动化开关组

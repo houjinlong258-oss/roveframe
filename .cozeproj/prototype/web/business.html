@@ -243,6 +243,17 @@
 
       <!-- 订单管理面板 -->
       <div id="panel-orders" class="hidden">
+        <!-- 多渠道来源状态条 -->
+        <div class="bg-surface rounded-lg shadow-card px-5 py-3 mb-4 flex items-center justify-between flex-wrap gap-2">
+          <div class="flex items-center gap-2.5 text-sm">
+            <i data-lucide="git-merge" class="w-4 h-4 text-primary"></i>
+            <span class="text-on-surface-variant">订单汇聚：</span>
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success"><span class="w-1.5 h-1.5 rounded-full bg-success"></span>Square POS 实时</span>
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success"><span class="w-1.5 h-1.5 rounded-full bg-success"></span>Shopify 网店 实时</span>
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success"><span class="w-1.5 h-1.5 rounded-full bg-success"></span>Stripe 对账 08:00</span>
+          </div>
+          <span class="text-xs text-on-surface-variant">今日已同步 84 单</span>
+        </div>
         <!-- 工具行 -->
         <div class="flex items-center gap-2 mb-4">
           <button data-st="all" class="ostatus-btn px-3 py-1.5 rounded-sm text-xs font-medium bg-primary/10 text-primary transition-all">全部</button>
@@ -264,6 +275,22 @@
               <span class="text-sm font-semibold">¥100</span>
               <span class="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium bg-surface-container text-on-surface-variant w-fit">堂食</span>
               <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning w-fit">待处理</span>
+            </button>
+            <button class="order-row w-full grid grid-cols-[1.1fr_1fr_1.8fr_0.8fr_0.9fr_0.8fr] gap-3 px-5 py-3.5 items-center hover:bg-surface-container/50 transition-colors text-left" data-st="pending">
+              <span class="text-sm font-medium">#SQ-8841</span>
+              <span class="text-xs text-on-surface-variant">今天 12:26</span>
+              <span class="text-sm truncate">蜜汁叉烧饭 ×1、冻柠茶 ×1</span>
+              <span class="text-sm font-semibold">¥76</span>
+              <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[11px] font-medium bg-on-surface/10 text-on-surface w-fit"><i data-lucide="square" class="w-2.5 h-2.5"></i>Square POS</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning w-fit">待处理</span>
+            </button>
+            <button class="order-row w-full grid grid-cols-[1.1fr_1fr_1.8fr_0.8fr_0.9fr_0.8fr] gap-3 px-5 py-3.5 items-center hover:bg-surface-container/50 transition-colors text-left" data-st="done">
+              <span class="text-sm font-medium">#SH-2263</span>
+              <span class="text-xs text-on-surface-variant">今天 12:09</span>
+              <span class="text-sm truncate">手工火锅底料（麻辣）×3、秘制辣椒油 ×2</span>
+              <span class="text-sm font-semibold">$42.50</span>
+              <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[11px] font-medium bg-[#95BF47]/15 text-[#5E8E3E] w-fit"><i data-lucide="shopping-bag" class="w-2.5 h-2.5"></i>Shopify 网店</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success w-fit">已完成</span>
             </button>
             <button class="order-row w-full grid grid-cols-[1.1fr_1fr_1.8fr_0.8fr_0.9fr_0.8fr] gap-3 px-5 py-3.5 items-center hover:bg-surface-container/50 transition-colors text-left" data-st="pending">
               <span class="text-sm font-medium">#A1023</span>

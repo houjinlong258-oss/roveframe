@@ -6,6 +6,7 @@ project_type = "web"
 template = "nextjs"
 version = "0.0.35"
 appliedPatches = [ ]
+entrypoint = "dist/server.js"
 
 [preview]
 preview_enable = "enabled"
@@ -23,3 +24,7 @@ deps = [ "git" ]
 build = [ "bash", "./scripts/build.sh" ]
 run = [ "bash", "./scripts/start.sh" ]
 deps = [ "git" ]
+
+[deploy.profile]
+kind = "service"
+flavor = "web"

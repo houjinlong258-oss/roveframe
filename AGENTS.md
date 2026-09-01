@@ -4,7 +4,7 @@
 
 **RoveFrame AI Business OS** — 面向中小企业的 AI COO 智能经营平台。通过集成 AI Agent、知识库、商业数据分析，为商家提供 24/7 智能运营助手。
 
-当前阶段：Phase 0（Demo 验证），搭建前端原型与基础架构。
+当前阶段：Phase 1 已完成——10 个页面全部按原型实现，Supabase 数据链路、AI 路由层、RAG、真实邮件发送、多语言（en/zh/es）均已打通并通过 test_run 全量验收。
 
 详细产品规划见 `RoveFrame_AI_Business_OS_Fused_Blueprint.md`。
 
@@ -19,25 +19,77 @@
 ## 目录结构
 
 ```
+├── messages/               # next-intl 三语文案（en/zh/es，按页面命名空间）
 ├── public/                 # 静态资源
 ├── scripts/                # 构建与启动脚本
-│   ├── build.sh            # 构建脚本
+│   ├── build.sh            # 生产构建（pnpm install + next build + tsup server.ts → dist/）
 │   ├── dev.sh              # 开发环境启动脚本
 │   ├── prepare.sh          # 预处理脚本
-│   └── start.sh            # 生产环境启动脚本
+│   ├── start.sh            # 生产启动（PORT=5000，node dist/server.js）
+│   └── seed.ts             # Supabase 种子数据（四川人家餐厅示例）
 ├── src/
-│   ├── app/                # 页面路由与布局
-│   ├── components/ui/      # Shadcn UI 组件库
-│   ├── hooks/              # 自定义 Hooks
-│   ├── lib/                # 工具库
+│   ├── app/
+│   │   ├── [locale]/       # 10 个页面（next-intl 路由，localePrefix 'always'）
+│   │   │   ├── page.tsx            # 经营仪表盘
+│   │   │   ├── agent/              # AI COO 助手（SSE 流式对话）
+│   │   │   ├── knowledge/          # 知识大脑（RAG 问答 + 文档管理）
+│   │   │   ├── reviews/            # 评论智能
+│   │   │   ├── customers/          # 客户智能（360 视图 + 评分 + 挽留）
+│   │   │   ├── marketing/          # 营销增长（AI 内容生成 + 逐人个性化发送）
+│   │   │   ├── emails/             # 邮件中心（AI 分类 + 草稿 + 真实 SMTP 发送）
+│   │   │   ├── business/           # 经营数据（产品/订单/库存三 Tab）
+│   │   │   ├── reservations/       # 预约管理
+│   │   │   ├── settings/           # 设置（7 分组）
+│   │   │   └── layout.tsx          # html/body + NextIntlClientProvider + AppShell
+│   │   └── api/            # API 路由（与页面一一对应）
+│   ├── components/
+│   │   ├── layout/         # app-shell / sidebar / topbar（顶栏在上、侧栏在下）
+│   │   ├── ui/             # Shadcn UI 组件库
+│   │   └── markdown.tsx    # react-markdown 封装（AI 流式内容渲染）
+│   ├── hooks/              # use-sse.ts（手写 SSE reader 解析）
+│   ├── i18n/               # routing / request / navigation（en 默认，zh/es）
+│   ├── lib/
+│   │   ├── ai/             # providers.ts（10 家服务商预设）+ router.ts（streamChat/invokeChat）
+│   │   ├── api-helpers.ts  # ok/err/sseResponse
+│   │   ├── business-context.ts  # 经营快照（供 AI 系统提示词）
+│   │   ├── crypto.ts       # AES-256-GCM 加解密（API Key / 邮箱凭据）
+│   │   ├── embedding.ts    # 向量嵌入（1024 维，pgvector）
+│   │   ├── format.ts       # fmtCurrency/fmtDate/fmtDateTime/timeAgo/maskEmail
+│   │   ├── settings.ts     # settings 表单行 jsonb 读写 + 缓存
 │   │   └── utils.ts        # 通用工具函数 (cn)
+│   ├── middleware.ts       # next-intl 中间件
 │   └── server.ts           # 自定义服务端入口
-├── next.config.ts          # Next.js 配置
+├── next.config.ts          # Next.js 配置（createNextIntlPlugin 包装）
 ├── package.json            # 项目依赖管理
 └── tsconfig.json           # TypeScript 配置
 ```
 
 - 项目文件（如 app 目录、pages 目录、components 等）默认初始化到 `src/` 目录下。
+- 页面视觉以 `.cozeproj/prototype/web/*.html` 为唯一标准；设计变量在 `src/app/globals.css` 的 `@theme`（原型变量名 + shadcn 别名并存）。
+
+## 数据层（Supabase）
+
+- 客户端：`getSupabaseClient()`（**同步导出**，service_role_key，无 Auth 场景），来自 `@/storage/database/supabase-client`
+- 18 张表；**易错字段**：`orders.total`（非 total_amount）、`items` 元素用 `qty`（非 quantity）；`settings` 是**单行 jsonb**（business/locale/ai_prefs/model_assign），不是 key-value
+- RAG：`match_doc_chunks(query_embedding vector(1024), match_count int)` RPC，余弦距离
+- 加密凭据：model_configs.credentials / email_accounts.credentials / integration_configs.credentials 均为 AES-256-GCM JSON 字符串（`@/lib/crypto`）
+- seed 数据约定：邮件分类 inquiry/business/complaint/supplier/other；预约状态 pending/confirmed/arrived/cancelled/completed；桌位 A1-A4 包间、B1-B8 大厅
+
+## AI 路由层
+
+- `streamChat/invokeChat(capability, messages, forwardHeaders)`，capability: agent/content/rag/light
+- 外部 Key 已接入时按 model_assign 分流（auto 模式轻任务走 light）；未接入回落平台内置模型
+- Claude 用 Anthropic Messages SSE 协议，其余用 OpenAI 兼容 SSE
+- **API 路由里必须** `HeaderUtils.extractForwardHeaders(request.headers)` 并透传
+- 流式返回一律 `sseResponse(streamChat(...))`；**路由 handler 不能直接 return AsyncGenerator**（ts-check 会报 RouteHandlerConfig 错误）
+
+## 常见陷阱（已踩过）
+
+1. **时区**：沙箱为 CST(UTC+8)，但 `toISOString()` 是 UTC——日期切分用本地时区解析（`new Date('YYYY-MM-DDT00:00:00')` 无 Z），API 默认日期也要本地计算
+2. **EmbeddingClient.embedText**：类型声明返回 `number[]`，运行时实际返回 `{ embedding: number[] }`，`lib/embedding.ts` 已兼容两种形态
+3. **invokeChat 返回 string**，不是 `{ text }`
+4. **React Compiler lint**：渲染期不能重赋值累积变量（如环形图 gradient stops），用 reduce 前缀和
+5. **i18n 键**：改页面后跑 `messages/*.json` 与源码 t() 比对（见 git 历史中的扫描脚本模式），杜绝 MISSING_MESSAGE
 
 ## 包管理规范
 

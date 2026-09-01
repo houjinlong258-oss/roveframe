@@ -1,6 +1,14 @@
 # 项目上下文
 
-### 版本技术栈
+## 项目概述
+
+**RoveFrame AI Business OS** — 面向中小企业的 AI COO 智能经营平台。通过集成 AI Agent、知识库、商业数据分析，为商家提供 24/7 智能运营助手。
+
+当前阶段：Phase 0（Demo 验证），搭建前端原型与基础架构。
+
+详细产品规划见 `RoveFrame_AI_Business_OS_Fused_Blueprint.md`。
+
+## 版本技术栈
 
 - **Framework**: Next.js 16 (App Router)
 - **Core**: React 19
@@ -63,3 +71,16 @@
 
 - 模板默认预装核心组件库 `shadcn/ui`，位于`src/components/ui/`目录下
 - Next.js 项目**必须默认**采用 shadcn/ui 组件、风格和规范，**除非用户指定用其他的组件和规范。**
+
+## 运行与预览
+
+- **预览方式**：`bash scripts/prepare.sh` (build) → `bash scripts/dev.sh` (run)
+- **端口**：从 `.preview` 读取 `expose_port`，默认 5000
+- **预览类型**：web，支持 HMR 热更新
+- **`.coze` 配置**：`sub_id = "e679bddf"`，`project_type = "web"`
+
+## 用户偏好与长期约束
+
+- 包管理器仅使用 pnpm
+- UI 组件库使用 shadcn/ui
+- 项目目标：AI COO 智能经营平台（详见 Fused Blueprint）

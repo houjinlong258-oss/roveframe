@@ -1,9 +1,17 @@
 [project]
+sub_id = "e679bddf"
+name = "roveframe-ai-business-os"
 requires = [ "nodejs-24" ]
 project_type = "web"
 template = "nextjs"
 version = "0.0.35"
 appliedPatches = [ ]
+
+[preview]
+preview_enable = "enabled"
+
+[subprojects]
+path = ["."]
 
 [dev]
 build = [ "bash", "./scripts/prepare.sh" ]

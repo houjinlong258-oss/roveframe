@@ -345,7 +345,7 @@
             <!-- 模型分配 -->
             <div class="bg-surface rounded-lg shadow-card p-6">
               <h2 class="text-base font-semibold mb-1">模型分配</h2>
-              <p class="text-xs text-on-surface-variant mb-5">为不同 AI 能力选择使用哪个模型，仅可选已接入的模型或平台内置模型</p>
+              <p class="text-xs text-on-surface-variant mb-5">为不同 AI 能力选择使用哪个模型；「自动模式」按任务复杂度自动选模型（简单任务用轻量模型、复杂分析用旗舰模型），可节省 40–60% 成本</p>
               <div class="space-y-4">
                 <div class="flex items-center justify-between">
                   <div>
@@ -353,7 +353,8 @@
                     <p class="text-xs text-on-surface-variant mt-0.5">经营问答、分析洞察</p>
                   </div>
                   <select class="bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors w-60">
-                    <option selected>Claude · claude-sonnet-4-5</option>
+                    <option selected>自动（推荐）</option>
+                    <option>Claude · claude-sonnet-4-5</option>
                     <option>平台内置模型</option>
                   </select>
                 </div>
@@ -363,8 +364,9 @@
                     <p class="text-xs text-on-surface-variant mt-0.5">营销文案、评论回复、邮件草稿</p>
                   </div>
                   <select class="bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors w-60">
+                    <option selected>自动（推荐）</option>
                     <option>Claude · claude-sonnet-4-5</option>
-                    <option selected>平台内置模型</option>
+                    <option>平台内置模型</option>
                   </select>
                 </div>
                 <div class="flex items-center justify-between">
@@ -373,9 +375,14 @@
                     <p class="text-xs text-on-surface-variant mt-0.5">基于知识文档的回答生成</p>
                   </div>
                   <select class="bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors w-60">
-                    <option selected>平台内置模型</option>
+                    <option selected>自动（推荐）</option>
+                    <option>平台内置模型</option>
                     <option>Claude · claude-sonnet-4-5</option>
                   </select>
+                </div>
+                <div class="rounded-md bg-primary-container/50 border border-primary/10 p-3.5 flex items-start gap-2.5">
+                  <i data-lucide="zap" class="w-4 h-4 text-primary mt-0.5 shrink-0"></i>
+                  <p class="text-xs text-on-surface-variant leading-relaxed">自动模式下，系统按任务复杂度分流：评论回复、邮件分类等轻量任务使用轻量模型；经营分析、方案生成等复杂任务使用你已接入的旗舰模型（当前为 Claude）。</p>
                 </div>
                 <div class="flex justify-end">
                   <button id="btn-save-models" class="bg-primary text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all">保存分配</button>

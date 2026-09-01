@@ -183,6 +183,46 @@
         </div>
       </div>
 
+      <!-- AI 今日简报 -->
+      <section class="mb-6 bg-gradient-to-r from-primary-container/70 via-surface to-surface rounded-lg shadow-card p-5 border border-primary/10">
+        <div class="flex items-start gap-4">
+          <span class="w-10 h-10 rounded-lg bg-primary text-on-primary flex items-center justify-center shrink-0"><i data-lucide="sparkles" class="w-5 h-5"></i></span>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between">
+              <h2 class="text-base font-semibold">AI 今日简报</h2>
+              <span class="text-xs text-on-surface-variant">06:30 自动生成</span>
+            </div>
+            <p class="text-sm text-on-surface-variant mt-1.5 leading-relaxed">昨日营收 ¥8,642（较上周 +12.5%），晚市翻台率创本周新高；今天周一，晚餐 18:30–19:30 预约已满（16 桌），建议提前备货招牌黑椒牛柳与山药排骨汤。</p>
+            <div class="grid grid-cols-3 gap-3 mt-4">
+              <a href="reviews.html?filter=pending" class="flex items-center gap-3 bg-surface rounded-md shadow-card px-4 py-3 hover:shadow-float transition-shadow">
+                <span class="w-8 h-8 rounded-md bg-error/10 text-error flex items-center justify-center shrink-0"><i data-lucide="message-square-warning" class="w-4 h-4"></i></span>
+                <div class="min-w-0">
+                  <div class="text-sm font-medium">2 条差评待回复</div>
+                  <div class="text-xs text-on-surface-variant truncate">Google · 昨晚 21:14</div>
+                </div>
+                <i data-lucide="chevron-right" class="w-4 h-4 text-on-surface-variant ml-auto shrink-0"></i>
+              </a>
+              <a href="reservations.html" class="flex items-center gap-3 bg-surface rounded-md shadow-card px-4 py-3 hover:shadow-float transition-shadow">
+                <span class="w-8 h-8 rounded-md bg-warning/15 text-warning flex items-center justify-center shrink-0"><i data-lucide="calendar-check" class="w-4 h-4"></i></span>
+                <div class="min-w-0">
+                  <div class="text-sm font-medium">晚餐 18:30 预约已满</div>
+                  <div class="text-xs text-on-surface-variant truncate">16 桌 · 注意排台与备货</div>
+                </div>
+                <i data-lucide="chevron-right" class="w-4 h-4 text-on-surface-variant ml-auto shrink-0"></i>
+              </a>
+              <a href="customers.html?filter=churn" class="flex items-center gap-3 bg-surface rounded-md shadow-card px-4 py-3 hover:shadow-float transition-shadow">
+                <span class="w-8 h-8 rounded-md bg-error/10 text-error flex items-center justify-center shrink-0"><i data-lucide="user-x" class="w-4 h-4"></i></span>
+                <div class="min-w-0">
+                  <div class="text-sm font-medium">12 位老客户有流失风险</div>
+                  <div class="text-xs text-on-surface-variant truncate">超过 21 天未到店</div>
+                </div>
+                <i data-lucide="chevron-right" class="w-4 h-4 text-on-surface-variant ml-auto shrink-0"></i>
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- KPI 卡片 -->
       <div class="grid grid-cols-4 gap-4 mb-6">
         <div class="bg-surface rounded-lg shadow-card p-5">
@@ -355,9 +395,14 @@
                 <span class="text-sm font-semibold">周末营收创新高</span>
               </div>
               <p class="text-xs text-on-surface-variant leading-relaxed">上周六营收 ¥9,430，环比提升 18.2%。招牌酸菜鱼单日售出 74 份，建议周末增加该菜品备料。</p>
-              <button class="ask-ai-btn mt-2.5 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" data-insight="周末营收创新高的原因分析">
-                问 AI 深入分析<i data-lucide="arrow-right" class="w-3 h-3"></i>
-              </button>
+              <div class="mt-3 flex items-center gap-3">
+                <a href="marketing.html?brief=weekend-promo" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-on-primary text-xs font-medium hover:opacity-90 transition-opacity">
+                  <i data-lucide="megaphone" class="w-3 h-3"></i>生成周末营销海报
+                </a>
+                <button class="ask-ai-btn inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" data-insight="周末营收创新高的原因分析">
+                  问 AI<i data-lucide="arrow-right" class="w-3 h-3"></i>
+                </button>
+              </div>
             </div>
             <div class="rounded-md bg-surface-container/60 p-3.5">
               <div class="flex items-center gap-2 mb-1.5">
@@ -365,9 +410,14 @@
                 <span class="text-sm font-semibold">外卖差评率上升</span>
               </div>
               <p class="text-xs text-on-surface-variant leading-relaxed">近 3 天外卖渠道差评率 4.2%，主要集中在配送时长与包装撒漏，建议更换汤品密封包装。</p>
-              <button class="ask-ai-btn mt-2.5 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" data-insight="外卖差评率上升该如何处理">
-                问 AI 处理方案<i data-lucide="arrow-right" class="w-3 h-3"></i>
-              </button>
+              <div class="mt-3 flex items-center gap-3">
+                <a href="reviews.html?filter=negative" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-on-primary text-xs font-medium hover:opacity-90 transition-opacity">
+                  <i data-lucide="reply" class="w-3 h-3"></i>去回复差评
+                </a>
+                <button class="ask-ai-btn inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" data-insight="外卖差评率上升该如何处理">
+                  问 AI<i data-lucide="arrow-right" class="w-3 h-3"></i>
+                </button>
+              </div>
             </div>
             <div class="rounded-md bg-surface-container/60 p-3.5">
               <div class="flex items-center gap-2 mb-1.5">
@@ -375,9 +425,14 @@
                 <span class="text-sm font-semibold">工作日午市套餐机会</span>
               </div>
               <p class="text-xs text-on-surface-variant leading-relaxed">工作日 11:30-13:00 客流同比下降 12%，周边 3 栋写字楼入驻率上升，建议推出 ¥38 午市商务套餐。</p>
-              <button class="ask-ai-btn mt-2.5 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" data-insight="帮我设计工作日午市套餐方案">
-                问 AI 生成方案<i data-lucide="arrow-right" class="w-3 h-3"></i>
-              </button>
+              <div class="mt-3 flex items-center gap-3">
+                <a href="marketing.html?brief=lunch-set" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-on-primary text-xs font-medium hover:opacity-90 transition-opacity">
+                  <i data-lucide="chef-hat" class="w-3 h-3"></i>生成午市套餐方案
+                </a>
+                <button class="ask-ai-btn inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" data-insight="帮我设计工作日午市套餐方案">
+                  问 AI<i data-lucide="arrow-right" class="w-3 h-3"></i>
+                </button>
+              </div>
             </div>
           </div>
         </div>

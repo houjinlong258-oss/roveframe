@@ -2,9 +2,9 @@
 
 ## 概述
 
-面向中小企业的 **AI COO 智能经营平台**（Web 端完整版，非 Demo）。一体化架构：Next.js 单应用承载全部功能，**Supabase**（PostgreSQL + pgvector）作为数据库与向量存储，**平台 LLM 能力**（流式对话、内容生成）与**平台 Embedding 能力**（知识库向量化）作为 AI 底座。内置餐厅行业完整示例数据（菜单、订单、客户、评论、邮件、知识文档），所有 AI 功能基于真实业务数据运行，一键部署即可投入使用。
+面向**海外市场**中小企业的 **AI COO 智能经营平台**（Web 端完整版，非 Demo）。一体化架构：Next.js 单应用承载全部功能，**Supabase**（PostgreSQL + pgvector）作为数据库与向量存储，**平台 LLM 能力**（流式对话、内容生成）与**平台 Embedding 能力**（知识库向量化）作为 AI 底座。内置餐厅行业完整示例数据（菜单、订单、客户、评论、邮件、知识文档、预约），所有 AI 功能基于真实业务数据运行，一键部署即可投入使用。
 
-核心业务闭环：**数据 → 知识 → 智能 → 行动**——经营数据入库存储，Knowledge Brain 沉淀业务记忆，AI COO Agent 基于数据与知识推理，输出洞察、建议与可执行内容。
+**多语言与本地化**：基于 next-intl 全站 i18n，界面语言 **English 默认** / 中文 / Español，支持货币（USD 默认）与时区设置；AI 回复默认自动跟随客户语言（英文评论回英文）。核心业务闭环：**数据 → 知识 → 智能 → 行动**。
 
 ## 技术方案
 
@@ -16,11 +16,12 @@
 | AI 对话/生成 | 平台 LLM 能力（流式 SSE） | AI COO Agent、内容生成，流式优先 |
 | 向量化 | 平台 Embedding 能力 | Knowledge Brain 文档 RAG |
 | 图表 | Recharts | Dashboard 营收/订单/趋势可视化 |
+| 多语言 | next-intl（en 默认 / zh / es） | 面向海外市场，文案全外置，货币+时区本地化 |
 | 示例数据 | 餐厅行业 seed 数据 | 蓝图首选行业，开箱即用，可清空替换 |
 
 ## 功能模块
 
-### 1. 数据层（Supabase 10 张表）
+### 1. 数据层（Supabase 11 张表）
 
 | 表 | 关键字段 | 说明 |
 |----|---------|------|
@@ -34,6 +35,7 @@
 | alerts | id, type, title, content, severity, read, created_at | 实时告警 |
 | marketing_contents | id, type, title, content, status, created_at | 营销内容资产 |
 | model_configs | id, provider, api_key_encrypted, base_url, model, status, route_assignments(jsonb) | 用户自接 AI 模型（Key 加密存储） |
+| reservations | id, customer_name, phone, party_size, table_no, reserved_at, duration, source, status(待确认/已确认/已到店/已取消/未到店), notes | 餐厅预约与桌位 |
 
 ### 2. AI 能力层（API Routes，全部真实调用）
 
@@ -52,9 +54,11 @@
 | `/api/settings/models` | 模型服务商配置 CRUD（GET 仅回传 Key 掩码，PUT 加密写入）+ 按能力分配模型 |
 | `/api/settings/models/test` | 测试连接：服务端用所填 Key/Base URL/模型发起最小化请求，返回连通性与延迟 |
 
+业务 CRUD（非 AI，REST）：`/api/products`、`/api/orders`、`/api/reservations`（预约含桌位占用冲突校验）、`/api/settings`（业务信息、语言/货币/时区、AI 偏好）。
+
 ### 3. 页面模块
 
-9 个页面：经营仪表盘、AI COO 助手、知识大脑、评论智能、客户智能、营销增长、邮件中心、经营数据（产品+订单）、设置。详见页面规格。
+10 个页面：经营仪表盘、AI COO 助手、预约管理、知识大脑、评论智能、客户智能、营销增长、邮件中心、经营数据（产品+订单）、设置（含 AI 模型接入、语言与地区）。详见页面规格。
 
 ## 是否有原型设计
 
@@ -64,17 +68,17 @@
 
 ### 阶段一：原型设计
 
-1. **原型设计**：加载 design-canvas 技能，按页面规格完成全局导航 + 9 个页面的 HTML 原型（Tailwind v4 + Lucide），提交用户验收；确认后进入开发阶段。
+1. **原型设计**：加载 design-canvas 技能，按页面规格完成全局导航 + 10 个页面的 HTML 原型（Tailwind v4 + Lucide），提交用户验收；确认后进入开发阶段。
 
 ### 阶段二：代码开发
 
-2. **基础设施**：Supabase 建 10 张表 + 餐厅示例数据 seed + AI 集成封装（模型路由层：用户自接模型优先/平台 LLM 兜底、embedding 客户端、业务上下文构建器）—— `src/lib/db.ts`、`src/lib/ai.ts`、`src/lib/business-context.ts`
+2. **基础设施**：Supabase 建 11 张表 + 餐厅示例数据 seed + AI 集成封装（模型路由层：用户自接模型优先/平台 LLM 兜底、embedding 客户端、业务上下文构建器）+ next-intl i18n 脚手架（en/zh/es 字典、默认英文、货币与时区格式化工具）—— `src/lib/db.ts`、`src/lib/ai.ts`、`src/lib/business-context.ts`
 3. **全局布局 + 经营仪表盘**：侧边导航布局、KPI 卡片、营收/订单/客流图表、AI 洞察流、实时告警中心 —— `src/app/layout.tsx`、`src/app/page.tsx`、`src/app/api/insights/route.ts`
 4. **AI COO 助手**：流式对话界面（SSE）、业务上下文注入、会话列表与持久化、快捷问题模板 —— `src/app/agent/page.tsx`、`src/app/api/agent/chat/route.ts`
 5. **知识大脑**：文档管理（新建/编辑/删除/分类）、上传自动向量化、RAG 问答界面（引用来源展示）—— `src/app/knowledge/page.tsx`、`src/app/api/knowledge/route.ts`
 6. **评论智能 + 客户智能**：多平台评论列表、情感分析、AI 回复一键生成与标记；客户列表、360 抽屉（消费画像/AI 评分/流失预警）、批量评分 —— `src/app/reviews/page.tsx`、`src/app/customers/page.tsx`
 7. **营销增长 + 邮件中心**：营销内容生成工作台（活动创意/社媒/邮件三类，保存为资产）；邮件收件箱、AI 分类与优先级、摘要与回复草稿 —— `src/app/marketing/page.tsx`、`src/app/emails/page.tsx`
-8. **经营数据 + 设置 + 收尾验证**：产品/订单管理（Tab 页，增删改查）、设置页（AI 模型接入/业务信息/AI 偏好/数据管理）、原型一致性检查、test_run 全量验收 —— `src/app/business/page.tsx`、`src/app/settings/page.tsx`、`src/app/api/settings/models/route.ts`
+8. **预约管理 + 经营数据 + 设置 + 收尾验证**：预约管理（预订时间线/桌位状态板/新建预约/状态流转）、产品/订单管理（Tab 页）、设置页（AI 模型接入/业务信息/语言与地区/AI 偏好/数据管理）、原型一致性检查、test_run 全量验收 —— `src/app/reservations/page.tsx`、`src/app/business/page.tsx`、`src/app/settings/page.tsx`
 
 ## 页面规格
 
@@ -84,6 +88,7 @@
 
 - @page(/) 经营仪表盘
 - @page(/agent) AI COO 助手
+- @page(/reservations) 预约管理
 - @page(/knowledge) 知识大脑
 - @page(/reviews) 评论智能
 - @page(/customers) 客户智能
@@ -139,6 +144,34 @@
 - 标题："删除对话"
 - 内容：该会话的标题
 - 操作：确认（删除并刷新列表）、取消（关闭）
+
+##### @page(/reservations) 预约管理
+
+**核心职责**：餐厅预约统一管理——预订时间线、桌位占用状态与预约状态流转。
+**访问路径**：侧边导航直达。
+**布局**：顶部导航栏；统计条（今日预约/待确认/已到店/取消率）；日期周条（今天高亮，可切换前后日期）；主区左右分栏：左（约 2/3）预约时间线列表（按时段分组，卡片含时间/姓名/人数/桌位/来源/状态徽章），右（约 1/3）桌位状态板（桌位网格，空闲/已订/用餐中三色）。
+**列表项字段**：时间 / 姓名 / 人数 / 桌位 / 来源 / 联系电话 / 状态
+**状态**：
+- 空态：所选日期暂无预约
+- 冲突：新建时同桌位同时段已被占用，表单内提示
+
+**交互说明**
+
+| 元素 | 动作 | 响应 | 传参 | 备注 |
+|------|------|------|------|------|
+| Logo | 点击 | 跳转 @page(/) | — | — |
+| 日期周条 | 点击日期 | 刷新时间线与桌位状态板 | date | 今天默认选中 |
+| 新建预约 | 点击 | 弹窗 @modal(reservation-form)（姓名/电话/人数/日期时间/桌位/备注） | — | — |
+| 预约卡片 | 点击 | 弹窗 @modal(reservation-detail) 查看并流转状态 | reservation_id | — |
+| 桌位格 | 点击 | 按桌位筛选当日预约 | table_no | 再点取消筛选 |
+
+**弹窗 reservation-form**：
+- 字段：姓名、电话、人数、日期、时间、桌位（下拉，占用中置灰）、备注
+- 操作：保存（校验同桌同时段冲突）、取消
+
+**弹窗 reservation-detail**：
+- 内容：完整预约信息、来源、状态
+- 操作：状态流转（确认/到店/取消/未到店）、关闭
 
 ##### @page(/knowledge) 知识大脑
 
@@ -301,11 +334,12 @@
 
 ##### @page(/settings) 设置
 
-**核心职责**：AI 模型接入、业务信息配置、AI 行为偏好与数据管理。
+**核心职责**：AI 模型接入、业务信息配置、语言与地区、AI 行为偏好与数据管理。
 **访问路径**：Dashboard 顶栏设置入口进入。
-**布局**：顶部导航栏；左侧设置分组菜单（AI 模型接入 / 业务信息 / AI 偏好 / 数据管理）；右侧对应面板区。
+**布局**：顶部导航栏；左侧设置分组菜单（AI 模型接入 / 业务信息 / 语言与地区 / AI 偏好 / 数据管理）；右侧对应面板区。
 - AI 模型接入：服务商卡片网格（**Claude（Anthropic，主力）** / OpenAI / Gemini / DeepSeek / 豆包 / Kimi / 通义千问 / 智谱 GLM / Grok / 自定义 OpenAI 兼容接口，各含连接状态与配置入口）+ 模型分配区（为 AI 对话/内容生成/RAG 问答分别选择已接入模型或平台内置模型）
 - 业务信息：店名/行业/规模/营业时间/简介表单
+- 语言与地区：界面语言（**English 默认** / 中文 / Español）、货币（USD 默认 / EUR / GBP / CNY）、时区、AI 回复语言策略（跟随客户语言 / 固定语言）
 - AI 偏好：回复风格、自动化开关组
 - 数据管理：数据概况 + 清空示例数据危险区
 
@@ -322,6 +356,7 @@
 | 模型配置保存 | 点击 | 加密保存 Key，卡片状态更新为已连接 | provider 配置 | 弹窗内 |
 | 模型分配保存 | 点击 | 保存各 AI 能力使用的模型来源 | route_assignments | — |
 | 业务信息保存 | 点击 | 保存店名/行业/规模/营业时间 | — | — |
+| 语言与地区保存 | 点击 | 保存语言/货币/时区/AI 回复语言并全局生效（界面文案即时切换） | locale, currency, timezone | — |
 | AI 偏好保存 | 点击 | 保存回复风格/自动化开关 | — | — |
 | 清空示例数据 | 点击 | 弹窗 @modal(wipe-data) 二次确认后清空业务表 | — | 危险操作，红色按钮 |
 

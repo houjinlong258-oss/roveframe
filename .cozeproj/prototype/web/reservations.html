@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <link href="https://lf-code-agent.coze.cn/obj/x-ai-cn/fonts/google/google-all-fonts.css" rel="stylesheet"/>
+
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/jquery/jquery-3.7.1.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/lucide/lucide-1.11.0.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/tailwindcss/tailwindcss-browser-4.2.4.min.js"></script>
+
+  <style type="text/tailwindcss">
+    @theme {
+      /* === 品牌色 === */
+      --color-primary:              #2F6BFF;
+      --color-primary-container:    #E4EDFF;
+      --color-on-primary:           #ffffff;
+      /* === 背景 / 表面 === */
+      --color-background:                 #F6F8FB;
+      --color-surface-container-lowest:   #FFFFFF;
+      --color-surface:                    #FFFFFF;
+      --color-surface-container:          #EDF1F8;
+      --color-surface-container-high:     #E3E9F3;
+      --color-surface-container-highest:  #D8E0EE;
+      /* === 文字 === */
+      --color-on-surface:           #152033;
+      --color-on-surface-variant:   #637089;
+      /* === 功能色 === */
+      --color-success:  #16A37B;
+      --color-error:    #E5484D;
+      --color-warning:  #E8930C;
+      /* === 边框 === */
+      --color-outline:          #CBD5E4;
+      --color-outline-variant:  #E6EAF2;
+      /* === 圆角 === */
+      --radius-sm:   0.25rem;
+      --radius-md:   0.375rem;
+      --radius-lg:   0.5rem;
+      --radius-xl:   0.75rem;
+      --radius-2xl:  1rem;
+      --radius-full: 9999px;
+      /* === 阴影 === */
+      --shadow-card:   0 1px 3px rgba(21,32,51,0.06), 0 6px 16px rgba(21,32,51,0.05);
+      --shadow-float:  0 8px 24px rgba(21,32,51,0.10);
+      --shadow-dialog: 0 24px 48px rgba(21,32,51,0.16);
+      /* === 字体 === */
+      --font-sans: "Inter", "Noto Sans SC", system-ui, sans-serif;
+    }
+  </style>
+
+  <!-- 图片兜底 -->
+  <script>
+    document.addEventListener('error', function (e) {
+      const img = e.target;
+      if (img.tagName !== 'IMG' || img.dataset.fallback) return;
+      img.dataset.fallback = '1';
+      const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const cat = img.getAttribute('data-category') || '其他';
+      const alt = img.getAttribute('alt') || '';
+      const label = esc(alt.length > 8 ? alt.slice(0, 8) + '…' : alt);
+      const icons = { '人物': '👤', '自然风景': '🏞', '动物': '🐾', '建筑城市': '🏙', '运动体育': '⚽', '交通工具': '🚗', '食物': '🍽', '服饰时尚': '👗', '商业科技': '💼', '游戏娱乐': '🎮', '艺术': '🎨', '其他': '🖼' };
+      const icon = icons[cat] || '🖼';
+      const w = img.width || 400, h = img.height || 300;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="%23f3f4f6"/><text x="50%" y="45%" text-anchor="middle" font-size="${Math.min(w, h) * 0.18}" dominant-baseline="central">${icon}</text><text x="50%" y="68%" text-anchor="middle" font-size="${Math.min(w, h) * 0.07}" fill="%239ca3af" font-family="system-ui,sans-serif" dominant-baseline="central">${label}</text></svg>`;
+      img.src = 'data:image/svg+xml,' + svg;
+    }, true);
+  </script>
+</head>
+
+<body class="bg-background text-on-surface font-sans min-h-screen">
+
+  <!-- @nav:start 导航组件，不需要的页面则不要复制此段（从 @nav:start 到 @nav:end） -->
+  <header class="bg-surface sticky top-0 z-40 h-14 flex items-center justify-between px-5 border-b border-outline-variant/20">
+    <a href="home.html" class="flex items-center gap-2.5">
+      <span class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+        <i data-lucide="bot" class="text-on-primary w-4.5 h-4.5"></i>
+      </span>
+      <span class="flex items-baseline gap-2">
+        <span class="font-bold text-base tracking-tight">RoveFrame</span>
+        <span class="text-[11px] font-medium text-primary bg-primary-container px-1.5 py-0.5 rounded-sm">AI COO</span>
+      </span>
+    </a>
+    <div class="flex items-center gap-3">
+      <button class="relative w-9 h-9 rounded-md hover:bg-surface-container flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-colors" title="实时告警">
+        <i data-lucide="bell" class="w-4.5 h-4.5"></i>
+        <span class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-error"></span>
+      </button>
+      <span class="w-px h-5 bg-outline-variant"></span>
+      <button class="flex items-center gap-2 pl-1 pr-2 py-1 rounded-md hover:bg-surface-container transition-colors">
+        <span class="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-semibold">初</span>
+        <span class="text-sm font-medium">小初</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="flex" style="height: calc(100vh - 3.5rem)">
+    <aside class="w-56 shrink-0 bg-surface border-r border-outline-variant/20 flex flex-col">
+      <nav class="flex-1 p-3 space-y-0.5 overflow-y-auto">
+        <a href="home.html" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface font-medium text-sm transition-colors">
+          <i data-lucide="layout-dashboard" class="w-4 h-4"></i>经营仪表盘
+        </a>
+        <a href="agent.html" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface font-medium text-sm transition-colors">
+          <i data-lucide="bot" class="w-4 h-4"></i>AI COO 助手
+        </a>
+        <a href="knowledge.html" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface font-medium text-sm transition-colors">
+          <i data-lucide="brain" class="w-4 h-4"></i>知识大脑
+        </a>
+        <a href="reviews.html" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface font-medium text-sm transition-colors">
+          <i data-lucide="star" class="w-4 h-4"></i>评论智能
+        </a>
+        <a href="customers.html" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface font-medium text-sm transition-colors">
+          <i data-lucide="users" class="w-4 h-4"></i>客户智能
+        </a>
+        <a href="marketing.html" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface font-medium text-sm transition-colors">
+          <i data-lucide="megaphone" class="w-4 h-4"></i>营销增长
+        </a>
+        <a href="emails.html" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface font-medium text-sm transition-colors">
+          <i data-lucide="mail" class="w-4 h-4"></i>邮件中心
+        </a>
+        <a href="business.html" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface font-medium text-sm transition-colors">
+          <i data-lucide="database" class="w-4 h-4"></i>经营数据
+        </a>
+        <a href="reservations.html" class="flex items-center gap-3 px-3 py-2.5 rounded-md bg-primary/10 text-primary font-medium text-sm" aria-current="page">
+          <i data-lucide="calendar-days" class="w-4 h-4"></i>预约管理
+        </a>
+      </nav>
+      <div class="p-3 border-t border-outline-variant/20">
+        <a href="settings.html" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface font-medium text-sm transition-colors">
+          <i data-lucide="settings" class="w-4 h-4"></i>设置
+        </a>
+      </div>
+    </aside>
+  <!-- @nav:end 导航组件，不需要的页面则不要复制此段 -->
+
+    <!-- @main-content:start -->
+    <main class="flex-1 min-w-0 overflow-y-auto bg-background p-6">
+      <!-- 页面标题 -->
+      <div class="flex items-center justify-between mb-5">
+        <div>
+          <h1 class="text-2xl font-bold">预约管理</h1>
+          <p class="text-sm text-on-surface-variant mt-1">管理每日订座与桌位状态，AI 协助排台与高峰调度</p>
+        </div>
+        <button id="btn-new-reservation" class="bg-primary text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all inline-flex items-center gap-2">
+          <i data-lucide="plus" class="w-3.5 h-3.5"></i>新建预约
+        </button>
+      </div>
+
+      <!-- 统计条 -->
+      <div class="grid grid-cols-4 gap-4 mb-5">
+        <div class="bg-surface rounded-lg shadow-card p-4 flex items-center gap-3">
+          <span class="w-10 h-10 rounded-md bg-primary/10 text-primary flex items-center justify-center"><i data-lucide="calendar-check" class="w-4.5 h-4.5"></i></span>
+          <div>
+            <div class="text-xl font-bold">18</div>
+            <div class="text-xs text-on-surface-variant">今日预约</div>
+          </div>
+        </div>
+        <div class="bg-surface rounded-lg shadow-card p-4 flex items-center gap-3">
+          <span class="w-10 h-10 rounded-md bg-warning/15 text-warning flex items-center justify-center"><i data-lucide="clock" class="w-4.5 h-4.5"></i></span>
+          <div>
+            <div class="text-xl font-bold">5</div>
+            <div class="text-xs text-on-surface-variant">待确认</div>
+          </div>
+        </div>
+        <div class="bg-surface rounded-lg shadow-card p-4 flex items-center gap-3">
+          <span class="w-10 h-10 rounded-md bg-success/15 text-success flex items-center justify-center"><i data-lucide="user-check" class="w-4.5 h-4.5"></i></span>
+          <div>
+            <div class="text-xl font-bold">9</div>
+            <div class="text-xs text-on-surface-variant">已到店</div>
+          </div>
+        </div>
+        <div class="bg-surface rounded-lg shadow-card p-4 flex items-center gap-3">
+          <span class="w-10 h-10 rounded-md bg-error/15 text-error flex items-center justify-center"><i data-lucide="calendar-x" class="w-4.5 h-4.5"></i></span>
+          <div>
+            <div class="text-xl font-bold">4%</div>
+            <div class="text-xs text-on-surface-variant">本周取消率</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 日期周条 -->
+      <div id="week-strip" class="flex items-center gap-2 mb-5">
+        <button class="day-btn flex-1 rounded-md bg-surface shadow-card py-2.5 text-center hover:bg-surface-container transition-colors">
+          <span class="block text-xs text-on-surface-variant">周一</span><span class="block text-sm font-semibold mt-0.5">9/1</span>
+        </button>
+        <button class="day-btn flex-1 rounded-md bg-surface shadow-card py-2.5 text-center hover:bg-surface-container transition-colors">
+          <span class="block text-xs text-on-surface-variant">周二</span><span class="block text-sm font-semibold mt-0.5">9/2</span>
+        </button>
+        <button class="day-btn flex-1 rounded-md bg-primary text-on-primary shadow-card py-2.5 text-center">
+          <span class="block text-xs opacity-80">周三 · 今天</span><span class="block text-sm font-semibold mt-0.5">9/3</span>
+        </button>
+        <button class="day-btn flex-1 rounded-md bg-surface shadow-card py-2.5 text-center hover:bg-surface-container transition-colors">
+          <span class="block text-xs text-on-surface-variant">周四</span><span class="block text-sm font-semibold mt-0.5">9/4</span>
+        </button>
+        <button class="day-btn flex-1 rounded-md bg-surface shadow-card py-2.5 text-center hover:bg-surface-container transition-colors">
+          <span class="block text-xs text-on-surface-variant">周五</span><span class="block text-sm font-semibold mt-0.5">9/5</span>
+          <span class="block text-[10px] text-error font-medium mt-0.5">已满 80%</span>
+        </button>
+        <button class="day-btn flex-1 rounded-md bg-surface shadow-card py-2.5 text-center hover:bg-surface-container transition-colors">
+          <span class="block text-xs text-on-surface-variant">周六</span><span class="block text-sm font-semibold mt-0.5">9/6</span>
+          <span class="block text-[10px] text-warning font-medium mt-0.5">已满 65%</span>
+        </button>
+        <button class="day-btn flex-1 rounded-md bg-surface shadow-card py-2.5 text-center hover:bg-surface-container transition-colors">
+          <span class="block text-xs text-on-surface-variant">周日</span><span class="block text-sm font-semibold mt-0.5">9/7</span>
+        </button>
+      </div>
+
+      <div class="grid grid-cols-[1.6fr_1fr] gap-4 items-start">
+        <!-- 左：预约时间线 -->
+        <div class="bg-surface rounded-lg shadow-card p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-base font-semibold">9月3日（今天）预约时间线</h2>
+            <div id="status-filter" class="flex items-center gap-1.5">
+              <button data-st="all" class="st-btn px-2.5 py-1 rounded-sm text-xs font-medium bg-primary/10 text-primary transition-all">全部</button>
+              <button data-st="pending" class="st-btn px-2.5 py-1 rounded-sm text-xs font-medium bg-surface-container text-on-surface-variant hover:text-on-surface transition-all">待确认</button>
+              <button data-st="confirmed" class="st-btn px-2.5 py-1 rounded-sm text-xs font-medium bg-surface-container text-on-surface-variant hover:text-on-surface transition-all">已确认</button>
+              <button data-st="arrived" class="st-btn px-2.5 py-1 rounded-sm text-xs font-medium bg-surface-container text-on-surface-variant hover:text-on-surface transition-all">已到店</button>
+            </div>
+          </div>
+          <div id="reservation-list" class="space-y-2.5">
+            <!-- 已到店 -->
+            <div class="reservation-card rounded-md bg-surface-container/60 p-4" data-st="arrived">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-3">
+                  <span class="text-sm font-bold w-12">12:00</span>
+                  <span class="w-px h-8 bg-outline-variant"></span>
+                  <div>
+                    <p class="text-sm font-semibold">王小雅 · 2 人</p>
+                    <p class="text-xs text-on-surface-variant mt-0.5">B3 桌 · 138****6621 · 官网预约</p>
+                  </div>
+                </div>
+                <span class="st-badge inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success">已到店</span>
+              </div>
+              <div class="flex items-center gap-2 pl-[3.75rem]">
+                <span class="text-xs text-on-surface-variant">备注：靠窗座位，对花生过敏</span>
+              </div>
+            </div>
+            <!-- 已确认 -->
+            <div class="reservation-card rounded-md bg-surface-container/60 p-4" data-st="confirmed">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-3">
+                  <span class="text-sm font-bold w-12">12:30</span>
+                  <span class="w-px h-8 bg-outline-variant"></span>
+                  <div>
+                    <p class="text-sm font-semibold">Michael Chen · 4 人</p>
+                    <p class="text-xs text-on-surface-variant mt-0.5">A1 包间 · +1 415****882 · Google 预约</p>
+                  </div>
+                </div>
+                <span class="st-badge inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/10 text-primary">已确认</span>
+              </div>
+              <div class="flex items-center justify-between pl-[3.75rem]">
+                <span class="text-xs text-on-surface-variant">备注：商务午餐，需要发票</span>
+                <button class="btn-arrive text-xs font-medium text-success hover:underline">标记到店</button>
+              </div>
+            </div>
+            <!-- 已确认 -->
+            <div class="reservation-card rounded-md bg-surface-container/60 p-4" data-st="confirmed">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-3">
+                  <span class="text-sm font-bold w-12">13:00</span>
+                  <span class="w-px h-8 bg-outline-variant"></span>
+                  <div>
+                    <p class="text-sm font-semibold">李慧敏 · 5 人</p>
+                    <p class="text-xs text-on-surface-variant mt-0.5">B5 桌 · 137****5520 · 电话预约</p>
+                  </div>
+                </div>
+                <span class="st-badge inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/10 text-primary">已确认</span>
+              </div>
+              <div class="flex items-center justify-between pl-[3.75rem]">
+                <span class="text-xs text-on-surface-variant">备注：带儿童座椅</span>
+                <button class="btn-arrive text-xs font-medium text-success hover:underline">标记到店</button>
+              </div>
+            </div>
+            <!-- 待确认 -->
+            <div class="reservation-card rounded-md bg-warning/5 p-4" data-st="pending">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-3">
+                  <span class="text-sm font-bold w-12">18:30</span>
+                  <span class="w-px h-8 bg-outline-variant"></span>
+                  <div>
+                    <p class="text-sm font-semibold">张立国 · 8 人</p>
+                    <p class="text-xs text-on-surface-variant mt-0.5">A2 包间 · 186****3392 · 电话预约</p>
+                  </div>
+                </div>
+                <span class="st-badge inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">待确认</span>
+              </div>
+              <div class="flex items-center justify-between pl-[3.75rem]">
+                <span class="text-xs text-on-surface-variant">备注：生日宴，自带蛋糕需冷藏</span>
+                <div class="flex items-center gap-3">
+                  <button class="btn-confirm text-xs font-medium text-primary hover:underline">确认</button>
+                  <button class="btn-cancel-res text-xs font-medium text-error hover:underline">取消</button>
+                </div>
+              </div>
+            </div>
+            <!-- 待确认 -->
+            <div class="reservation-card rounded-md bg-warning/5 p-4" data-st="pending">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-3">
+                  <span class="text-sm font-bold w-12">19:00</span>
+                  <span class="w-px h-8 bg-outline-variant"></span>
+                  <div>
+                    <p class="text-sm font-semibold">Sarah Kim · 2 人</p>
+                    <p class="text-xs text-on-surface-variant mt-0.5">B2 桌 · +1 628****104 · Google 预约</p>
+                  </div>
+                </div>
+                <span class="st-badge inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">待确认</span>
+              </div>
+              <div class="flex items-center justify-between pl-[3.75rem]">
+                <span class="text-xs text-on-surface-variant">备注：Anniversary dinner, prefers quiet corner</span>
+                <div class="flex items-center gap-3">
+                  <button class="btn-confirm text-xs font-medium text-primary hover:underline">确认</button>
+                  <button class="btn-cancel-res text-xs font-medium text-error hover:underline">取消</button>
+                </div>
+              </div>
+            </div>
+            <!-- 已确认 -->
+            <div class="reservation-card rounded-md bg-surface-container/60 p-4" data-st="confirmed">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-3">
+                  <span class="text-sm font-bold w-12">19:30</span>
+                  <span class="w-px h-8 bg-outline-variant"></span>
+                  <div>
+                    <p class="text-sm font-semibold">刘子豪 · 3 人</p>
+                    <p class="text-xs text-on-surface-variant mt-0.5">B6 桌 · 158****9043 · 官网预约</p>
+                  </div>
+                </div>
+                <span class="st-badge inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/10 text-primary">已确认</span>
+              </div>
+              <div class="flex items-center justify-between pl-[3.75rem]">
+                <span class="text-xs text-on-surface-variant">备注：常客，偏好酸菜鱼</span>
+                <button class="btn-arrive text-xs font-medium text-success hover:underline">标记到店</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右：桌位状态 -->
+        <div class="space-y-4">
+          <div class="bg-surface rounded-lg shadow-card p-5">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-base font-semibold">桌位状态</h2>
+              <div class="flex items-center gap-3 text-xs text-on-surface-variant">
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-surface-container-highest"></span>空闲</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-primary"></span>已订</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-success"></span>用餐中</span>
+              </div>
+            </div>
+            <p class="text-xs font-medium text-on-surface-variant mb-2">包间</p>
+            <div class="grid grid-cols-4 gap-2 mb-4">
+              <button class="table-cell rounded-md bg-primary/10 border border-primary/20 py-2.5 text-center hover:opacity-80 transition-opacity">
+                <span class="block text-sm font-semibold text-primary">A1</span><span class="block text-[10px] text-on-surface-variant mt-0.5">已订</span>
+              </button>
+              <button class="table-cell rounded-md bg-primary/10 border border-primary/20 py-2.5 text-center hover:opacity-80 transition-opacity">
+                <span class="block text-sm font-semibold text-primary">A2</span><span class="block text-[10px] text-on-surface-variant mt-0.5">已订</span>
+              </button>
+              <button class="table-cell rounded-md bg-surface-container py-2.5 text-center hover:bg-surface-container-high transition-colors">
+                <span class="block text-sm font-semibold">A3</span><span class="block text-[10px] text-on-surface-variant mt-0.5">空闲</span>
+              </button>
+              <button class="table-cell rounded-md bg-success/10 border border-success/20 py-2.5 text-center hover:opacity-80 transition-opacity">
+                <span class="block text-sm font-semibold text-success">A4</span><span class="block text-[10px] text-on-surface-variant mt-0.5">用餐中</span>
+              </button>
+            </div>
+            <p class="text-xs font-medium text-on-surface-variant mb-2">大厅</p>
+            <div class="grid grid-cols-4 gap-2">
+              <button class="table-cell rounded-md bg-surface-container py-2.5 text-center hover:bg-surface-container-high transition-colors">
+                <span class="block text-sm font-semibold">B1</span><span class="block text-[10px] text-on-surface-variant mt-0.5">空闲</span>
+              </button>
+              <button class="table-cell rounded-md bg-primary/10 border border-primary/20 py-2.5 text-center hover:opacity-80 transition-opacity">
+                <span class="block text-sm font-semibold text-primary">B2</span><span class="block text-[10px] text-on-surface-variant mt-0.5">已订</span>
+              </button>
+              <button class="table-cell rounded-md bg-success/10 border border-success/20 py-2.5 text-center hover:opacity-80 transition-opacity">
+                <span class="block text-sm font-semibold text-success">B3</span><span class="block text-[10px] text-on-surface-variant mt-0.5">用餐中</span>
+              </button>
+              <button class="table-cell rounded-md bg-surface-container py-2.5 text-center hover:bg-surface-container-high transition-colors">
+                <span class="block text-sm font-semibold">B4</span><span class="block text-[10px] text-on-surface-variant mt-0.5">空闲</span>
+              </button>
+              <button class="table-cell rounded-md bg-primary/10 border border-primary/20 py-2.5 text-center hover:opacity-80 transition-opacity">
+                <span class="block text-sm font-semibold text-primary">B5</span><span class="block text-[10px] text-on-surface-variant mt-0.5">已订</span>
+              </button>
+              <button class="table-cell rounded-md bg-primary/10 border border-primary/20 py-2.5 text-center hover:opacity-80 transition-opacity">
+                <span class="block text-sm font-semibold text-primary">B6</span><span class="block text-[10px] text-on-surface-variant mt-0.5">已订</span>
+              </button>
+              <button class="table-cell rounded-md bg-surface-container py-2.5 text-center hover:bg-surface-container-high transition-colors">
+                <span class="block text-sm font-semibold">B7</span><span class="block text-[10px] text-on-surface-variant mt-0.5">空闲</span>
+              </button>
+              <button class="table-cell rounded-md bg-surface-container py-2.5 text-center hover:bg-surface-container-high transition-colors">
+                <span class="block text-sm font-semibold">B8</span><span class="block text-[10px] text-on-surface-variant mt-0.5">空闲</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- AI 排台提示 -->
+          <div class="rounded-md bg-primary-container/50 p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <i data-lucide="sparkles" class="w-4 h-4 text-primary"></i>
+              <span class="text-sm font-semibold text-primary">AI 排台建议</span>
+            </div>
+            <p class="text-xs leading-relaxed text-on-surface">今晚 19:00–20:00 大厅上座率已达 80%，建议将新预约引导至 20:30 之后，或推荐 A3 空闲包间（可容纳 6 人）。周五晚市已接近满负荷，可考虑在营销增长页发起"错峰用餐优惠"活动。</p>
+            <button id="btn-ai-schedule" class="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-xs font-medium bg-primary text-on-primary hover:opacity-90 active:scale-[0.98] transition-all">
+              <i data-lucide="wand-sparkles" class="w-3 h-3"></i>自动优化今晚排台
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+    <!-- @main-content:end -->
+  </div>
+
+  <!-- 新建预约弹窗 -->
+  <div id="modal-reservation-form" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+    <div class="bg-surface rounded-xl shadow-dialog max-w-md w-full p-6">
+      <div class="flex items-center justify-between mb-5">
+        <h3 class="text-base font-semibold">新建预约</h3>
+        <button id="btn-res-form-close" class="w-8 h-8 rounded-md hover:bg-surface-container flex items-center justify-center text-on-surface-variant transition-colors"><i data-lucide="x" class="w-4 h-4"></i></button>
+      </div>
+      <div class="space-y-4">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-on-surface-variant mb-1.5">客户姓名</label>
+            <input id="res-input-name" type="text" placeholder="例如：Michael Chen" class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors"/>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-on-surface-variant mb-1.5">联系电话</label>
+            <input id="res-input-phone" type="text" placeholder="+1 ..." class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors"/>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-on-surface-variant mb-1.5">人数</label>
+            <input id="res-input-size" type="number" min="1" value="2" class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors"/>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-on-surface-variant mb-1.5">日期</label>
+            <input id="res-input-date" type="date" value="2026-09-03" class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors"/>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-on-surface-variant mb-1.5">时间</label>
+            <input id="res-input-time" type="time" value="19:00" class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors"/>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-on-surface-variant mb-1.5">桌位</label>
+          <select id="res-input-table" class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors">
+            <option selected>自动分配（AI 排台）</option>
+            <option>A3 包间（6 人，空闲）</option>
+            <option>B1 大厅（2 人，空闲）</option>
+            <option>B4 大厅（4 人，空闲）</option>
+            <option>B7 大厅（4 人，空闲）</option>
+            <option>B8 大厅（4 人，空闲）</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-on-surface-variant mb-1.5">备注</label>
+          <textarea id="res-input-note" rows="2" placeholder="过敏原、座位偏好、特殊需求等" class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors resize-none"></textarea>
+        </div>
+      </div>
+      <div class="flex justify-end gap-3 mt-6">
+        <button id="btn-res-cancel" class="bg-surface-container text-on-surface border-none px-4 py-2 rounded-md text-sm font-medium hover:bg-surface-container-high active:scale-[0.98] transition-all">取消</button>
+        <button id="btn-res-save" class="bg-primary text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all">保存预约</button>
+      </div>
+    </div>
+  </div>
+
+  <script>lucide.createIcons();</script>
+  <script>
+    $(function () {
+      // 周条日期切换
+      // 开发阶段实现：GET /api/reservations?date=YYYY-MM-DD，刷新统计与时间线
+      $('#week-strip').on('click', '.day-btn', function () {
+        $('.day-btn').removeClass('bg-primary text-on-primary').addClass('bg-surface');
+        $(this).removeClass('bg-surface').addClass('bg-primary text-on-primary');
+      });
+
+      // 状态筛选
+      $('#status-filter').on('click', '.st-btn', function () {
+        const st = $(this).data('st');
+        $('.st-btn').removeClass('bg-primary/10 text-primary').addClass('bg-surface-container text-on-surface-variant');
+        $(this).removeClass('bg-surface-container text-on-surface-variant').addClass('bg-primary/10 text-primary');
+        $('.reservation-card').each(function () {
+          $(this).toggle(st === 'all' || $(this).data('st') === st);
+        });
+      });
+
+      // 预约状态操作
+      // 开发阶段实现：PUT /api/reservations/:id { status }，同步桌位状态与统计
+      $('#reservation-list').on('click', '.btn-confirm', function () {
+        const card = $(this).closest('.reservation-card');
+        card.data('st', 'confirmed').removeClass('bg-warning/5').addClass('bg-surface-container/60');
+        card.find('.st-badge').removeClass('bg-warning/15 text-warning').addClass('bg-primary/10 text-primary').text('已确认');
+        $(this).parent().html('<button class="btn-arrive text-xs font-medium text-success hover:underline">标记到店</button>');
+      });
+      $('#reservation-list').on('click', '.btn-arrive', function () {
+        const card = $(this).closest('.reservation-card');
+        card.data('st', 'arrived');
+        card.find('.st-badge').removeClass('bg-primary/10 text-primary').addClass('bg-success/15 text-success').text('已到店');
+        $(this).remove();
+      });
+      $('#reservation-list').on('click', '.btn-cancel-res', function () {
+        const card = $(this).closest('.reservation-card');
+        card.data('st', 'cancelled').removeClass('bg-warning/5').addClass('bg-surface-container/60');
+        card.find('.st-badge').removeClass('bg-warning/15 text-warning bg-primary/10 text-primary').addClass('bg-surface-container text-on-surface-variant').text('已取消');
+        $(this).parent().empty();
+      });
+
+      // 新建预约
+      // 开发阶段实现：POST /api/reservations，含客户/人数/日期时间/桌位/备注；选"自动分配"时由 AI 排台逻辑分配最优桌位
+      $('#btn-new-reservation').on('click', function () {
+        $('#modal-reservation-form').removeClass('hidden');
+      });
+      $('#btn-res-form-close, #btn-res-cancel').on('click', function () {
+        $('#modal-reservation-form').addClass('hidden');
+      });
+      $('#btn-res-save').on('click', function () {
+        console.log('保存预约:', $('#res-input-name').val(), $('#res-input-date').val(), $('#res-input-time').val());
+        $('#modal-reservation-form').addClass('hidden');
+      });
+
+      // AI 自动排台
+      // 开发阶段实现：POST /api/reservations/optimize { date }，AI 基于预约密度/桌位容量/用餐时长给出排台调整方案
+      $('#btn-ai-schedule').on('click', function () {
+        console.log('AI 优化排台（开发阶段将生成排台调整方案）');
+      });
+
+      // 桌位点击
+      // 开发阶段实现：展示该桌位当日预约/翻台记录
+      $('.table-cell').on('click', function () {
+        console.log('查看桌位:', $(this).find('span').first().text());
+      });
+    });
+  </script>
+</body>
+
+</html>

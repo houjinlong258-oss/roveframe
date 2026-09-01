@@ -71,6 +71,14 @@
       },
       "title": "设置",
       "size": "web"
+    },
+    {
+      "type": "html",
+      "options": {
+        "path": ".cozeproj/prototype/web/reservations.html"
+      },
+      "title": "预约管理",
+      "size": "web"
     }
   ]
 }

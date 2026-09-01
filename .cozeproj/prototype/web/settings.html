@@ -122,6 +122,9 @@
         <a href="business.html" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface font-medium text-sm transition-colors">
           <i data-lucide="database" class="w-4 h-4"></i>经营数据
         </a>
+        <a href="reservations.html" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface font-medium text-sm transition-colors">
+          <i data-lucide="calendar-days" class="w-4 h-4"></i>预约管理
+        </a>
       </nav>
       <div class="p-3 border-t border-outline-variant/20">
         <a href="settings.html" class="flex items-center gap-3 px-3 py-2.5 rounded-md bg-primary/10 text-primary font-medium text-sm" aria-current="page">
@@ -143,6 +146,9 @@
         <div class="space-y-0.5">
           <button data-group="business" class="setting-nav w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface text-sm font-medium transition-colors">
             <i data-lucide="store" class="w-4 h-4"></i>业务信息
+          </button>
+          <button data-group="locale" class="setting-nav w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface text-sm font-medium transition-colors">
+            <i data-lucide="languages" class="w-4 h-4"></i>语言与地区
           </button>
           <button data-group="models" class="setting-nav w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md bg-primary/10 text-primary text-sm font-medium">
             <i data-lucide="key-round" class="w-4 h-4"></i>AI 模型接入
@@ -378,6 +384,63 @@
             </div>
           </div>
 
+          <!-- 语言与地区 -->
+          <div id="group-locale" class="setting-group hidden bg-surface rounded-lg shadow-card p-6">
+            <h2 class="text-base font-semibold mb-1">语言与地区</h2>
+            <p class="text-xs text-on-surface-variant mb-5">面向海外市场的本地化配置，影响界面语言、金额、日期与 AI 输出语言</p>
+            <div class="space-y-5">
+              <div>
+                <label class="block text-xs font-medium text-on-surface-variant mb-2">界面语言</label>
+                <div class="grid grid-cols-3 gap-2">
+                  <button class="locale-lang rounded-md bg-primary/10 text-primary px-3 py-2.5 text-sm font-medium">English（默认）</button>
+                  <button class="locale-lang rounded-md bg-surface-container text-on-surface-variant px-3 py-2.5 text-sm font-medium hover:text-on-surface transition-colors">中文</button>
+                  <button class="locale-lang rounded-md bg-surface-container text-on-surface-variant px-3 py-2.5 text-sm font-medium hover:text-on-surface transition-colors">Español</button>
+                </div>
+                <p class="text-xs text-on-surface-variant/70 mt-1.5">切换后整个平台界面即时刷新为目标语言</p>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs font-medium text-on-surface-variant mb-1.5">货币</label>
+                  <select class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors">
+                    <option selected>USD — 美元（$）</option>
+                    <option>EUR — 欧元（€）</option>
+                    <option>GBP — 英镑（£）</option>
+                    <option>CNY — 人民币（¥）</option>
+                    <option>JPY — 日元（JP¥）</option>
+                    <option>AUD — 澳元（A$）</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-on-surface-variant mb-1.5">时区</label>
+                  <select class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors">
+                    <option selected>UTC-8 太平洋时间（洛杉矶）</option>
+                    <option>UTC-5 东部时间（纽约）</option>
+                    <option>UTC+0 伦敦</option>
+                    <option>UTC+1 柏林 / 巴黎</option>
+                    <option>UTC+8 北京 / 新加坡</option>
+                    <option>UTC+9 东京</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-on-surface-variant mb-1.5">AI 回复语言策略</label>
+                <select class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors">
+                  <option selected>跟随客户语言 — 英文评论回英文，西语邮件回西语（推荐）</option>
+                  <option>固定使用界面语言</option>
+                  <option>固定使用 English</option>
+                </select>
+                <p class="text-xs text-on-surface-variant/70 mt-1.5">影响评论回复、邮件草稿、营销内容的生成语言</p>
+              </div>
+              <div class="rounded-md bg-surface-container/60 p-3.5 flex items-center gap-3">
+                <i data-lucide="globe" class="w-4 h-4 text-primary shrink-0"></i>
+                <p class="text-xs text-on-surface-variant leading-relaxed">日期与数字格式将自动跟随货币和时区（如 MM/DD/YYYY、$1,234.56、12 小时制），无需额外配置。</p>
+              </div>
+              <div class="flex justify-end">
+                <button id="btn-save-locale" class="bg-primary text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all">保存语言与地区</button>
+              </div>
+            </div>
+          </div>
+
           <!-- 业务信息 -->
           <div id="group-business" class="setting-group hidden bg-surface rounded-lg shadow-card p-6">
             <h2 class="text-base font-semibold mb-1">业务信息</h2>
@@ -608,6 +671,19 @@
         grok:     { name: 'Grok（xAI）', baseUrl: 'https://api.x.ai/v1', keyHint: 'xai-...', models: ['grok-4', 'grok-3'] },
         custom:   { name: '自定义 OpenAI 兼容接口', baseUrl: '', keyHint: 'sk-...', models: [] }
       };
+
+      // 语言切换（单选高亮）
+      // 开发阶段实现：next-intl 切换 locale（en/zh/es），界面文案全部来自语言包，切换即时生效
+      $('.locale-lang').on('click', function () {
+        $('.locale-lang').removeClass('bg-primary/10 text-primary').addClass('bg-surface-container text-on-surface-variant');
+        $(this).removeClass('bg-surface-container text-on-surface-variant').addClass('bg-primary/10 text-primary');
+      });
+
+      // 保存语言与地区
+      // 开发阶段实现：PUT /api/settings { locale, currency, timezone, ai_language_strategy }，全局金额/日期格式化随之更新
+      $('#btn-save-locale').on('click', function () {
+        console.log('保存语言与地区（开发阶段将写入本地化配置）');
+      });
 
       // 模型配置弹窗
       // 开发阶段实现：

@@ -17,11 +17,12 @@
 | 向量化 | 平台 Embedding 能力 | Knowledge Brain 文档 RAG |
 | 图表 | Recharts | Dashboard 营收/订单/趋势可视化 |
 | 多语言 | next-intl（en 默认 / zh / es） | 面向海外市场，文案全外置，货币+时区本地化 |
+| 邮件收发 | nodemailer + imapflow（OAuth2/SMTP/IMAP） | 绑定企业/个人邮箱真实收发，队列限流外发 |
 | 示例数据 | 餐厅行业 seed 数据 | 蓝图首选行业，开箱即用，可清空替换 |
 
 ## 功能模块
 
-### 1. 数据层（Supabase 11 张表）
+### 1. 数据层（Supabase 13 张表）
 
 | 表 | 关键字段 | 说明 |
 |----|---------|------|
@@ -36,6 +37,8 @@
 | marketing_contents | id, type, title, content, status, created_at | 营销内容资产 |
 | model_configs | id, provider, api_key_encrypted, base_url, model, status, route_assignments(jsonb) | 用户自接 AI 模型（Key 加密存储） |
 | reservations | id, customer_name, phone, party_size, table_no, reserved_at, duration, source, status(待确认/已确认/已到店/已取消/未到店), notes | 餐厅预约与桌位 |
+| email_accounts | id, provider(gmail/outlook/smtp), email, display_name, auth_type(oauth/smtp), credentials_encrypted, smtp_host/port, imap_host/port, is_default, status | 接入的企业/个人邮箱（授权信息加密存储） |
+| email_send_tasks | id, account_id, to_addr, subject, body, content_id, customer_id, status(queued/sent/failed), sent_at, error | 外发邮件队列（限流发送，支持营销批量个性化） |
 
 ### 2. AI 能力层（API Routes，全部真实调用）
 
@@ -53,8 +56,13 @@
 | `/api/customers/score` | 客户价值评分与流失风险分析 |
 | `/api/settings/models` | 模型服务商配置 CRUD（GET 仅回传 Key 掩码，PUT 加密写入）+ 按能力分配模型 |
 | `/api/settings/models/test` | 测试连接：服务端用所填 Key/Base URL/模型发起最小化请求，返回连通性与延迟 |
+| `/api/settings/email-accounts` | 邮箱账户 CRUD（Gmail/Outlook OAuth2 授权回调 + 自定义 SMTP/IMAP，凭据加密存储）+ `POST .../test` 收发连通性测试 |
+| `/api/emails/[id]/send` | 通过已绑定邮箱账户真实发送回复（SMTP/OAuth），未配置邮箱时返回引导提示 |
+| `/api/marketing/send` | 个性化邮件批量发送：按客群圈选 → 逐人调用模型结合客户 360 生成差异化内容 → 入发送队列限流外发（支持先发测试邮件） |
 
-业务 CRUD（非 AI，REST）：`/api/products`、`/api/orders`、`/api/reservations`（预约含桌位占用冲突校验）、`/api/settings`（业务信息、语言/货币/时区、AI 偏好）。
+业务 CRUD（非 AI，REST）：`/api/products`、`/api/orders`、`/api/reservations`（预约含桌位占用冲突校验）、`/api/settings`（业务信息、语言/货币/时区、AI 偏好、邮箱发送与自动化规则）。
+
+**邮件通道（真实收发）**：收件通过 imapflow 定时 IMAP 同步绑定邮箱的新邮件入库（Gmail/Outlook 用 OAuth2，自定义邮箱用授权码）；发件通过 nodemailer（SMTP / Gmail API / Graph API）经 email_send_tasks 队列限流发出；所有授权凭据与模型 Key 同等级加密存储。营销邮件非固定模板——发送时对每位收件人独立调用模型，注入其客户 360 画像（姓名/最近菜品/到店频次/语言）生成差异化内容。
 
 ### 3. 页面模块
 
@@ -72,13 +80,13 @@
 
 ### 阶段二：代码开发
 
-2. **基础设施**：Supabase 建 11 张表 + 餐厅示例数据 seed + AI 集成封装（模型路由层：用户自接模型优先/平台 LLM 兜底、embedding 客户端、业务上下文构建器）+ next-intl i18n 脚手架（en/zh/es 字典、默认英文、货币与时区格式化工具）—— `src/lib/db.ts`、`src/lib/ai.ts`、`src/lib/business-context.ts`
-3. **全局布局 + 经营仪表盘**：侧边导航布局、KPI 卡片、营收/订单/客流图表、AI 洞察流、实时告警中心 —— `src/app/layout.tsx`、`src/app/page.tsx`、`src/app/api/insights/route.ts`
+2. **基础设施**：Supabase 建 13 张表 + 餐厅示例数据 seed + AI 集成封装（模型路由层：用户自接模型优先/平台 LLM 兜底、embedding 客户端、业务上下文构建器）+ next-intl i18n 脚手架（en/zh/es 字典、默认英文、货币与时区格式化工具）+ 邮件通道封装（nodemailer 发件 + imapflow 收件同步 + 凭据加解密）—— `src/lib/db.ts`、`src/lib/ai.ts`、`src/lib/mail.ts`
+3. **全局布局 + 经营仪表盘**：侧边导航布局、AI 今日简报（总结 + 优先事项）、KPI 卡片、营收/订单/客流图表、AI 洞察流（一键行动跳转）、实时告警中心 —— `src/app/layout.tsx`、`src/app/page.tsx`、`src/app/api/insights/route.ts`
 4. **AI COO 助手**：流式对话界面（SSE）、业务上下文注入、会话列表与持久化、快捷问题模板 —— `src/app/agent/page.tsx`、`src/app/api/agent/chat/route.ts`
 5. **知识大脑**：文档管理（新建/编辑/删除/分类）、上传自动向量化、RAG 问答界面（引用来源展示）—— `src/app/knowledge/page.tsx`、`src/app/api/knowledge/route.ts`
 6. **评论智能 + 客户智能**：多平台评论列表、情感分析、AI 回复一键生成与标记；客户列表、360 抽屉（消费画像/AI 评分/流失预警）、批量评分 —— `src/app/reviews/page.tsx`、`src/app/customers/page.tsx`
-7. **营销增长 + 邮件中心**：营销内容生成工作台（活动创意/社媒/邮件三类，保存为资产）；邮件收件箱、AI 分类与优先级、摘要与回复草稿 —— `src/app/marketing/page.tsx`、`src/app/emails/page.tsx`
-8. **预约管理 + 经营数据 + 设置 + 收尾验证**：预约管理（预订时间线/桌位状态板/新建预约/状态流转）、产品/订单管理（Tab 页）、设置页（AI 模型接入/业务信息/语言与地区/AI 偏好/数据管理）、原型一致性检查、test_run 全量验收 —— `src/app/reservations/page.tsx`、`src/app/business/page.tsx`、`src/app/settings/page.tsx`
+7. **营销增长 + 邮件中心**：营销内容生成工作台（活动创意/社媒/邮件三类，保存为资产；邮件类型支持客群圈选 + 逐人个性化生成 + 队列限流发送）；邮件收件箱（IMAP 同步）、AI 分类与优先级、摘要与回复草稿、经绑定邮箱真实发送 —— `src/app/marketing/page.tsx`、`src/app/emails/page.tsx`
+8. **预约管理 + 经营数据 + 设置 + 收尾验证**：预约管理（预订时间线/桌位状态板/新建预约/状态流转）、产品/订单管理（Tab 页）、设置页（AI 模型接入/邮箱接入/业务信息/语言与地区/AI 偏好/数据管理）、原型一致性检查、test_run 全量验收 —— `src/app/reservations/page.tsx`、`src/app/business/page.tsx`、`src/app/settings/page.tsx`
 
 ## 页面规格
 
@@ -251,9 +259,9 @@
 
 ##### @page(/marketing) 营销增长
 
-**核心职责**：基于经营数据 AI 生成营销创意与内容，并保存为内容资产。
+**核心职责**：基于经营数据 AI 生成营销创意与内容，保存为内容资产；邮件营销支持逐人个性化生成与真实批量发送。
 **访问路径**：导航直达；Dashboard 洞察卡片一键行动带 `?brief` 参数进入并预填生成简报。
-**布局**：顶部导航栏；左侧生成工作台：内容类型选择（活动策划/社交媒体/邮件营销）+ 目标描述输入框 + 生成按钮 + 生成结果区（流式，支持 Markdown）+ 保存按钮；右侧内容资产列表（卡片流，含类型标签与状态）。
+**布局**：顶部导航栏；左侧生成工作台：内容类型选择（活动策划/社交媒体/邮件营销）+ 目标描述输入框 + 生成按钮 + 生成结果区（流式，支持 Markdown）+ 保存按钮；选择"邮件营销"类型时下方出现个性化发送区（客群圈选 chips + 多客户个性化预览 tab + 发件账号与限流说明 + 测试发送/开始发送 + 发送进度条）；右侧内容资产列表（卡片流，含类型标签与状态）。
 **列表项字段（资产卡片）**：类型图标 / 标题 / 摘要 / 状态标签（草稿/已采用） / 创建时间
 **状态**：
 - 空态：资产区显示"还没有营销内容"
@@ -264,9 +272,13 @@
 | 元素 | 动作 | 响应 | 传参 | 备注 |
 |------|------|------|------|------|
 | Logo | 点击 | 跳转 @page(/) | — | — |
-| 内容类型 | 点击切换 | 更新生成表单提示语 | type | — |
+| 内容类型 | 点击切换 | 更新生成表单提示语；选"邮件营销"时显示个性化发送区 | type | — |
 | 生成按钮 | 点击 | 流式生成内容到结果区 | type, brief | — |
 | 保存为资产 | 点击 | 存入资产列表 | content | 生成完成后可用 |
+| 客群圈选 | 点击 | 更新发送对象与预计发送量 | segment | 仅邮件类型 |
+| 个性化预览 tab | 点击切换 | 展示不同客户收到的差异化版本 | customer | 仅邮件类型 |
+| 先发我一封测试 | 点击 | 向店主邮箱发送测试邮件 | account_id | 仅邮件类型 |
+| 开始发送 | 点击 | 逐人生成个性化内容入队限流外发，显示发送进度 | content_id, segment | 需已接入邮箱 |
 | 资产卡片 | 点击 | 弹窗 @modal(content-view) 查看全文 | content_id | — |
 | 标记已采用 | 点击 | 更新资产状态 | content_id | 弹窗内操作 |
 | 删除资产 | 点击 | 弹窗 @modal(content-delete) 确认后删除 | content_id | — |
@@ -280,9 +292,9 @@
 
 ##### @page(/emails) 邮件中心
 
-**核心职责**：邮件智能收件箱——AI 自动分类、判优先级、写摘要与回复草稿。
+**核心职责**：邮件智能收件箱——AI 自动分类、判优先级、写摘要与回复草稿，并经绑定邮箱真实收发。
 **访问路径**：导航直达。
-**布局**：顶部导航栏；三栏式：左栏分类列表（全部/客户咨询/潜在商机/投诉/供应商/其他，带未读数）；中栏邮件列表（发件人/主题/AI 摘要/优先级徽章）；右栏详情区（原文、AI 摘要、分类与优先级、回复草稿编辑框、操作按钮）。
+**布局**：顶部导航栏；三栏式：左栏分类列表（全部/客户咨询/潜在商机/投诉/供应商/其他，带未读数）；中栏邮件列表（发件人/主题/AI 摘要/优先级徽章）；右栏详情区（原文、AI 摘要、分类与优先级、回复草稿编辑框、发件账号指示与切换、操作按钮）。
 **列表项字段**：发件人 / 主题 / AI 摘要 / 优先级徽章（高/中/低） / 时间 / 状态
 **状态**：
 - 空态：分类下无邮件
@@ -298,6 +310,8 @@
 | AI 分析 | 点击 | 对该邮件执行分类/优先级/摘要/草稿生成 | email_id | 未分析时显示 |
 | 重新生成草稿 | 点击 | 重新生成回复草稿 | email_id | — |
 | 草稿编辑框 | 输入 | 编辑草稿内容 | — | — |
+| 发件账号切换 | 选择 | 更换真实发送的邮箱账户 | account_id | 多邮箱时 |
+| 发送回复 | 点击 | 经绑定邮箱真实发出；未接入邮箱时提示前往设置页接入 | email_id, account_id | — |
 | 标记已处理 | 点击 | 更新状态并刷新列表 | email_id | — |
 | 全部批量分析 | 点击 | 对所有未分析邮件执行 AI 分析 | — | 中栏顶部 |
 
@@ -336,10 +350,11 @@
 
 ##### @page(/settings) 设置
 
-**核心职责**：AI 模型接入、业务信息配置、语言与地区、AI 行为偏好与数据管理。
+**核心职责**：AI 模型接入、邮箱接入、业务信息配置、语言与地区、AI 行为偏好与数据管理。
 **访问路径**：Dashboard 顶栏设置入口进入。
-**布局**：顶部导航栏；左侧设置分组菜单（AI 模型接入 / 业务信息 / 语言与地区 / AI 偏好 / 数据管理）；右侧对应面板区。
+**布局**：顶部导航栏；左侧设置分组菜单（AI 模型接入 / 邮箱接入 / 业务信息 / 语言与地区 / AI 偏好 / 数据管理）；右侧对应面板区。
 - AI 模型接入：服务商卡片网格（**Claude（Anthropic，主力）** / OpenAI / Gemini / DeepSeek / 豆包 / Kimi / 通义千问 / 智谱 GLM / Grok / 自定义 OpenAI 兼容接口，各含连接状态与配置入口）+ 模型分配区（为 AI 对话/内容生成/RAG 问答分别选择：自动模式（默认，按任务复杂度分流）/ 已接入模型 / 平台内置模型）
+- 邮箱接入：已接入邮箱列表（Gmail/Outlook/自定义 SMTP-IMAP，连接状态 + 默认发件标记 + 测试连接）+ 添加邮箱弹窗（OAuth 授权或手动服务器配置）+ 发送与自动化区（每日发送上限、批量发送间隔、客户咨询自动回复、差评预警通知、每日简报推送、邮件签名）
 - 业务信息：店名/行业/规模/营业时间/简介表单
 - 语言与地区：界面语言（**English 默认** / 中文 / Español）、货币（USD 默认 / EUR / GBP / CNY）、时区、AI 回复语言策略（跟随客户语言 / 固定语言）
 - AI 偏好：回复风格、自动化开关组

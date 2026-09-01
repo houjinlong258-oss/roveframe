@@ -193,6 +193,74 @@
               <p>工作日午市客流提升 25%，新增午市常客 80 人，活动期间午市营收增加约 ¥3.6 万。</p>
             </div>
           </div>
+
+          <!-- 邮件营销：个性化生成与发送（选择"邮件营销"类型时显示） -->
+          <div id="email-campaign" class="hidden bg-surface rounded-lg shadow-card p-5 space-y-5">
+            <div class="flex items-start justify-between">
+              <div>
+                <h2 class="text-base font-semibold flex items-center gap-2">
+                  <span class="w-6 h-6 rounded-md bg-warning/15 text-warning flex items-center justify-center"><i data-lucide="mail-plus" class="w-3.5 h-3.5"></i></span>
+                  个性化邮件发送
+                </h2>
+                <p class="text-xs text-on-surface-variant mt-1.5">非固定模板群发：AI 读取每位客户的消费画像（最近菜品 / 到店频次 / 偏好），<span class="font-medium text-on-surface">逐人生成差异化内容</span>后通过你的邮箱发出</p>
+              </div>
+            </div>
+            <!-- 客群圈选 -->
+            <div>
+              <label class="block text-xs font-medium text-on-surface-variant mb-2">发送对象（按客户 360 数据圈选）</label>
+              <div id="segment-chips" class="flex flex-wrap gap-2">
+                <button class="segment-chip rounded-full bg-surface-container text-on-surface-variant px-3 py-1.5 text-xs font-medium hover:text-on-surface transition-colors">全部客户 · 1,286</button>
+                <button class="segment-chip rounded-full bg-surface-container text-on-surface-variant px-3 py-1.5 text-xs font-medium hover:text-on-surface transition-colors">高价值 · 86</button>
+                <button class="segment-chip rounded-full bg-primary/10 text-primary px-3 py-1.5 text-xs font-medium">流失风险 · 12</button>
+                <button class="segment-chip rounded-full bg-surface-container text-on-surface-variant px-3 py-1.5 text-xs font-medium hover:text-on-surface transition-colors">30 天新客 · 64</button>
+              </div>
+            </div>
+            <!-- 个性化预览 -->
+            <div>
+              <label class="block text-xs font-medium text-on-surface-variant mb-2">个性化预览（同一活动，不同客户收到的内容不同）</label>
+              <div id="preview-tabs" class="flex gap-2 mb-3">
+                <button class="preview-tab rounded-md bg-primary/10 text-primary px-3 py-1.5 text-xs font-medium" data-preview="1">张伟 · 流失风险</button>
+                <button class="preview-tab rounded-md bg-surface-container text-on-surface-variant px-3 py-1.5 text-xs font-medium hover:text-on-surface transition-colors" data-preview="2">Sarah M. · 高价值</button>
+                <button class="preview-tab rounded-md bg-surface-container text-on-surface-variant px-3 py-1.5 text-xs font-medium hover:text-on-surface transition-colors" data-preview="3">Mike R. · 新客</button>
+              </div>
+              <div class="preview-pane rounded-md bg-surface-container/50 p-4" data-pane="1">
+                <p class="text-xs text-on-surface-variant mb-1.5">主题：张伟，你爱的黑椒牛柳想你了（附 8 折回归礼）</p>
+                <p class="text-sm leading-relaxed">张伟你好！注意到你 45 天没来了——上次你点的黑椒牛柳最近升级了配方，主厨特意留了份 8 折券给你。本周预约还能备注你喜欢的靠窗位……</p>
+                <p class="text-[11px] text-on-surface-variant/70 mt-2">引用画像：最爱黑椒牛柳 · 到店 23 次 · 偏好靠窗位</p>
+              </div>
+              <div class="preview-pane hidden rounded-md bg-surface-container/50 p-4" data-pane="2">
+                <p class="text-xs text-on-surface-variant mb-1.5">Subject: Sarah, your table is ready — members' night preview</p>
+                <p class="text-sm leading-relaxed">Hi Sarah! As one of our top guests (38 visits!), you're invited to preview the new autumn tasting menu before anyone else. Your usual Sauvignon pairing included…</p>
+                <p class="text-[11px] text-on-surface-variant/70 mt-2">引用画像：到店 38 次 · 常点白葡萄酒 · 英文沟通</p>
+              </div>
+              <div class="preview-pane hidden rounded-md bg-surface-container/50 p-4" data-pane="3">
+                <p class="text-xs text-on-surface-variant mb-1.5">Subject: Mike, 10% off your next lunch — welcome back!</p>
+                <p class="text-sm leading-relaxed">Hi Mike! Thanks for trying us last week. Here's 10% off your next visit — and since you ordered the mapo tofu, you might love our chef's new twice-cooked pork…</p>
+                <p class="text-[11px] text-on-surface-variant/70 mt-2">引用画像：新客首单 · 点了麻婆豆腐 · 工作日午市</p>
+              </div>
+            </div>
+            <!-- 发送区 -->
+            <div class="rounded-md bg-surface-container/50 p-4 flex items-center justify-between gap-4 flex-wrap">
+              <div class="text-xs text-on-surface-variant space-y-1">
+                <p class="flex items-center gap-1.5"><i data-lucide="inbox" class="w-3.5 h-3.5"></i>发件账号：<span class="font-medium text-on-surface">hello@sichuanhouse.com</span></p>
+                <p class="flex items-center gap-1.5"><i data-lucide="timer" class="w-3.5 h-3.5"></i>预计 12 封 · 每封间隔 60 秒 · 约 12 分钟发完</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <button id="btn-test-send" class="bg-surface-container text-on-surface border-none px-3.5 py-2 rounded-md text-xs font-medium hover:bg-surface-container-high active:scale-[0.98] transition-all">先发我一封测试</button>
+                <button id="btn-campaign-send" class="bg-primary text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all inline-flex items-center gap-2">
+                  <i data-lucide="send-horizontal" class="w-3.5 h-3.5"></i>开始发送
+                </button>
+              </div>
+            </div>
+            <!-- 发送进度（发送后显示） -->
+            <div id="send-progress" class="hidden rounded-md bg-success/10 p-3.5 flex items-center gap-3">
+              <i data-lucide="loader-circle" class="w-4 h-4 text-success animate-spin shrink-0"></i>
+              <div class="flex-1">
+                <p class="text-xs font-medium text-success">正在发送 · 已完成 8 / 12</p>
+                <div class="h-1.5 bg-success/20 rounded-full mt-1.5"><div class="h-1.5 bg-success rounded-full" style="width:66%"></div></div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- 右侧：内容资产 -->
@@ -310,10 +378,39 @@
   <script>lucide.createIcons();</script>
   <script>
     $(function () {
-      // 内容类型切换
+      // 内容类型切换（邮件营销类型时展示个性化发送区）
       $('#type-selector').on('click', '.type-btn', function () {
         $('.type-btn').removeClass('bg-primary/10 text-primary').addClass('bg-surface-container text-on-surface-variant');
         $(this).removeClass('bg-surface-container text-on-surface-variant').addClass('bg-primary/10 text-primary');
+        if ($(this).data('type') === 'email') {
+          $('#email-campaign').removeClass('hidden');
+        } else {
+          $('#email-campaign').addClass('hidden');
+        }
+      });
+
+      // 客群圈选
+      $('#segment-chips').on('click', '.segment-chip', function () {
+        $('.segment-chip').removeClass('bg-primary/10 text-primary').addClass('bg-surface-container text-on-surface-variant');
+        $(this).removeClass('bg-surface-container text-on-surface-variant').addClass('bg-primary/10 text-primary');
+      });
+
+      // 个性化预览切换
+      $('#preview-tabs').on('click', '.preview-tab', function () {
+        $('.preview-tab').removeClass('bg-primary/10 text-primary').addClass('bg-surface-container text-on-surface-variant');
+        $(this).removeClass('bg-surface-container text-on-surface-variant').addClass('bg-primary/10 text-primary');
+        $('.preview-pane').addClass('hidden');
+        $('.preview-pane[data-pane="' + $(this).data('preview') + '"]').removeClass('hidden');
+      });
+
+      // 测试发送 / 批量发送
+      // 开发阶段实现：POST /api/marketing/send { content_id, segment, account_id, test }，服务端按客户 360 逐人调用模型生成个性化邮件并入发送队列（限流），进度通过轮询/SSE 回显
+      $('#btn-test-send').on('click', function () {
+        console.log('发送测试邮件到店主邮箱');
+      });
+      $('#btn-campaign-send').on('click', function () {
+        $('#send-progress').removeClass('hidden');
+        lucide.createIcons();
       });
 
       // AI 生成内容

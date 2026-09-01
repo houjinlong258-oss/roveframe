@@ -292,6 +292,17 @@
 
 此致
 RoveFrame 餐厅 · 小初</textarea>
+          <!-- 发件账号指示 -->
+          <div class="flex items-center gap-2 mb-3 text-xs text-on-surface-variant">
+            <i data-lucide="inbox" class="w-3.5 h-3.5"></i>
+            <span>将通过</span>
+            <select id="send-account" class="bg-surface-container border-none rounded-sm px-2 py-1 text-xs font-medium text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30">
+              <option selected>hello@sichuanhouse.com（默认）</option>
+            </select>
+            <span>真实发送</span>
+            <span class="text-on-surface-variant/50">·</span>
+            <a href="settings.html" class="text-primary hover:underline">管理邮箱</a>
+          </div>
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
               <button class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-xs font-medium bg-surface-container text-on-surface hover:bg-surface-container-high transition-all">
@@ -349,9 +360,9 @@ RoveFrame 餐厅 · 小初</textarea>
       });
 
       // 发送回复
-      // 开发阶段实现：POST /api/emails/:id/send，实际发送需用户先配置发件邮箱（见设置页），当前版本记录草稿并提示
+      // 开发阶段实现：POST /api/emails/:id/send { account_id }，通过已绑定的邮箱账户（SMTP/OAuth）真实发送，未配置邮箱时提示前往设置页接入
       $('#btn-send-reply').on('click', function () {
-        console.log('发送回复（需在设置中配置发件邮箱后生效）');
+        console.log('通过', $('#send-account').val(), '发送回复（开发阶段将调用 /api/emails/:id/send 真实发出）');
       });
     });
   </script>

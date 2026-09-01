@@ -86,4 +86,5 @@
 - 项目目标：AI COO 智能经营平台（详见 Fused Blueprint）
 - **目标市场为海外**：界面默认英文（next-intl，en/zh/es），货币默认 USD，支持时区本地化；AI 回复默认跟随客户语言
 - 用户主力模型为 **Claude（Anthropic）**，设置页支持 10 家模型服务商自接（Key 加密存储），未接入时回落平台内置模型
-- 实施计划以 `.cozeproj/documents/plan.md` 为准（10 页面 + 11 表 + 原型设计先行）
+- **邮件系统为真实收发通道**：设置页支持绑定 Gmail/Outlook（OAuth2）与自定义 SMTP/IMAP 企业/个人邮箱（凭据加密存储）；营销邮件为 AI 按客户 360 逐人个性化生成（非固定模板），队列限流外发
+- 实施计划以 `.cozeproj/documents/plan.md` 为准（10 页面 + 13 表 + 原型设计先行）

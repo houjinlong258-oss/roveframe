@@ -20,7 +20,7 @@
 
 ## 功能模块
 
-### 1. 数据层（Supabase 9 张表）
+### 1. 数据层（Supabase 10 张表）
 
 | 表 | 关键字段 | 说明 |
 |----|---------|------|
@@ -33,8 +33,11 @@
 | chat_sessions / chat_messages | 会话与消息（role, content, created_at） | AI COO 对话持久化 |
 | alerts | id, type, title, content, severity, read, created_at | 实时告警 |
 | marketing_contents | id, type, title, content, status, created_at | 营销内容资产 |
+| model_configs | id, provider, api_key_encrypted, base_url, model, status, route_assignments(jsonb) | 用户自接 AI 模型（Key 加密存储） |
 
 ### 2. AI 能力层（API Routes，全部真实调用）
+
+**模型路由**：所有 AI 调用统一经过模型路由层——用户已在设置中接入自己的大模型（OpenAI / DeepSeek / 豆包 / Kimi / 通义千问 / 智谱 GLM / 自定义 OpenAI 兼容接口）时优先调用用户模型（OpenAI 兼容协议，流式 SSE），未接入时回落平台内置 LLM 能力。
 
 | API | 能力 |
 |-----|------|
@@ -46,6 +49,8 @@
 | `/api/emails/classify` | 邮件分类、优先级判定、摘要、回复草稿生成 |
 | `/api/marketing/generate` | 营销活动创意 / 社媒文案 / 邮件营销内容生成 |
 | `/api/customers/score` | 客户价值评分与流失风险分析 |
+| `/api/settings/models` | 模型服务商配置 CRUD（GET 仅回传 Key 掩码，PUT 加密写入）+ 按能力分配模型 |
+| `/api/settings/models/test` | 测试连接：服务端用所填 Key/Base URL/模型发起最小化请求，返回连通性与延迟 |
 
 ### 3. 页面模块
 
@@ -63,13 +68,13 @@
 
 ### 阶段二：代码开发
 
-2. **基础设施**：Supabase 建 9 张表 + 餐厅示例数据 seed + AI 集成封装（LLM 流式/embedding 客户端、业务上下文构建器）—— `src/lib/db.ts`、`src/lib/ai.ts`、`src/lib/business-context.ts`
+2. **基础设施**：Supabase 建 10 张表 + 餐厅示例数据 seed + AI 集成封装（模型路由层：用户自接模型优先/平台 LLM 兜底、embedding 客户端、业务上下文构建器）—— `src/lib/db.ts`、`src/lib/ai.ts`、`src/lib/business-context.ts`
 3. **全局布局 + 经营仪表盘**：侧边导航布局、KPI 卡片、营收/订单/客流图表、AI 洞察流、实时告警中心 —— `src/app/layout.tsx`、`src/app/page.tsx`、`src/app/api/insights/route.ts`
 4. **AI COO 助手**：流式对话界面（SSE）、业务上下文注入、会话列表与持久化、快捷问题模板 —— `src/app/agent/page.tsx`、`src/app/api/agent/chat/route.ts`
 5. **知识大脑**：文档管理（新建/编辑/删除/分类）、上传自动向量化、RAG 问答界面（引用来源展示）—— `src/app/knowledge/page.tsx`、`src/app/api/knowledge/route.ts`
 6. **评论智能 + 客户智能**：多平台评论列表、情感分析、AI 回复一键生成与标记；客户列表、360 抽屉（消费画像/AI 评分/流失预警）、批量评分 —— `src/app/reviews/page.tsx`、`src/app/customers/page.tsx`
 7. **营销增长 + 邮件中心**：营销内容生成工作台（活动创意/社媒/邮件三类，保存为资产）；邮件收件箱、AI 分类与优先级、摘要与回复草稿 —— `src/app/marketing/page.tsx`、`src/app/emails/page.tsx`
-8. **经营数据 + 设置 + 收尾验证**：产品/订单管理（Tab 页，增删改查）、设置页（业务信息/AI 偏好/数据管理）、原型一致性检查、test_run 全量验收 —— `src/app/business/page.tsx`、`src/app/settings/page.tsx`
+8. **经营数据 + 设置 + 收尾验证**：产品/订单管理（Tab 页，增删改查）、设置页（AI 模型接入/业务信息/AI 偏好/数据管理）、原型一致性检查、test_run 全量验收 —— `src/app/business/page.tsx`、`src/app/settings/page.tsx`、`src/app/api/settings/models/route.ts`
 
 ## 页面规格
 
@@ -296,22 +301,35 @@
 
 ##### @page(/settings) 设置
 
-**核心职责**：业务信息配置、AI 行为偏好与数据管理。
+**核心职责**：AI 模型接入、业务信息配置、AI 行为偏好与数据管理。
 **访问路径**：Dashboard 顶栏设置入口进入。
-**布局**：顶部导航栏；左侧设置分组菜单（业务信息 / AI 偏好 / 数据管理）；右侧对应表单区。
-**状态**：保存成功显示 Toast
+**布局**：顶部导航栏；左侧设置分组菜单（AI 模型接入 / 业务信息 / AI 偏好 / 数据管理）；右侧对应面板区。
+- AI 模型接入：服务商卡片网格（OpenAI / DeepSeek / 豆包 / Kimi / 通义千问 / 智谱 GLM / 自定义 OpenAI 兼容接口，各含连接状态与配置入口）+ 模型分配区（为 AI 对话/内容生成/RAG 问答分别选择已接入模型或平台内置模型）
+- 业务信息：店名/行业/规模/营业时间/简介表单
+- AI 偏好：回复风格、自动化开关组
+- 数据管理：数据概况 + 清空示例数据危险区
+
+**状态**：保存成功显示 Toast；模型测试连接显示成功/失败与延迟
 
 **交互说明**
 
 | 元素 | 动作 | 响应 | 传参 | 备注 |
 |------|------|------|------|------|
 | Logo | 点击 | 跳转 @page(/) | — | — |
-| 分组菜单 | 点击 | 切换右侧表单 | — | — |
-| 业务信息保存 | 点击 | 保存店名/行业/地址/营业时间 | — | — |
-| AI 偏好保存 | 点击 | 保存回复语言/语气/洞察频率 | — | — |
+| 分组菜单 | 点击 | 切换右侧面板 | — | — |
+| 服务商卡片"配置/管理" | 点击 | 弹窗 @modal(model-config)（API Key/Base URL/默认模型） | provider | Key 仅显示掩码 |
+| 测试连接 | 点击 | 服务端真实验证连通性，显示结果与延迟 | provider, api_key, base_url, model | 弹窗内 |
+| 模型配置保存 | 点击 | 加密保存 Key，卡片状态更新为已连接 | provider 配置 | 弹窗内 |
+| 模型分配保存 | 点击 | 保存各 AI 能力使用的模型来源 | route_assignments | — |
+| 业务信息保存 | 点击 | 保存店名/行业/规模/营业时间 | — | — |
+| AI 偏好保存 | 点击 | 保存回复风格/自动化开关 | — | — |
 | 清空示例数据 | 点击 | 弹窗 @modal(wipe-data) 二次确认后清空业务表 | — | 危险操作，红色按钮 |
 
+**弹窗 model-config**：
+- 字段：API Key（密码框，已配置显示掩码）、Base URL（按服务商预填默认值）、默认模型（下拉）
+- 操作：测试连接（显示成功/失败+延迟）、保存、取消
+
 **弹窗 wipe-data**：
-- 标题："清空所有业务数据"
+- 标题："确认清空全部数据"
 - 内容：说明将删除产品/订单/客户/评论/邮件等全部数据且不可恢复
 - 操作：确认清空（红色）、取消

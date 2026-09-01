@@ -141,8 +141,11 @@
       <div class="grid grid-cols-[11rem_1fr] gap-6 items-start max-w-4xl">
         <!-- 左侧分组菜单 -->
         <div class="space-y-0.5">
-          <button data-group="business" class="setting-nav w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md bg-primary/10 text-primary text-sm font-medium">
+          <button data-group="business" class="setting-nav w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface text-sm font-medium transition-colors">
             <i data-lucide="store" class="w-4 h-4"></i>业务信息
+          </button>
+          <button data-group="models" class="setting-nav w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md bg-primary/10 text-primary text-sm font-medium">
+            <i data-lucide="key-round" class="w-4 h-4"></i>AI 模型接入
           </button>
           <button data-group="ai" class="setting-nav w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md text-on-surface-variant hover:bg-surface-container hover:text-on-surface text-sm font-medium transition-colors">
             <i data-lucide="sliders-horizontal" class="w-4 h-4"></i>AI 偏好
@@ -154,8 +157,178 @@
 
         <!-- 右侧设置面板 -->
         <div class="space-y-4">
+          <!-- AI 模型接入 -->
+          <div id="group-models" class="setting-group space-y-4">
+            <div class="bg-surface rounded-lg shadow-card p-6">
+              <h2 class="text-base font-semibold mb-1">AI 模型接入</h2>
+              <p class="text-xs text-on-surface-variant mb-5">接入你自己的大模型 API Key，支持市面上主流模型服务商。已接入的模型将优先用于 AI 助手、内容生成等能力；未接入时自动使用平台内置模型。API Key 加密存储，仅服务端可读取。</p>
+              <div class="grid grid-cols-2 gap-3">
+                <!-- DeepSeek（已连接示例） -->
+                <div class="provider-card rounded-md bg-surface-container/60 p-4" data-provider="deepseek">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2.5">
+                      <span class="w-9 h-9 rounded-md bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">D</span>
+                      <div>
+                        <p class="text-sm font-semibold">DeepSeek</p>
+                        <p class="text-xs text-on-surface-variant">deepseek-chat · deepseek-reasoner</p>
+                      </div>
+                    </div>
+                    <span class="provider-status inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success"><span class="w-1.5 h-1.5 rounded-full bg-success"></span>已连接</span>
+                  </div>
+                  <div class="flex items-center justify-between mt-3">
+                    <span class="text-xs text-on-surface-variant font-mono">sk-••••••••3f2a</span>
+                    <button class="btn-config-provider text-xs font-medium text-primary hover:underline">管理</button>
+                  </div>
+                </div>
+                <!-- OpenAI -->
+                <div class="provider-card rounded-md bg-surface-container/60 p-4" data-provider="openai">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2.5">
+                      <span class="w-9 h-9 rounded-md bg-surface-container-high text-on-surface flex items-center justify-center text-sm font-bold">O</span>
+                      <div>
+                        <p class="text-sm font-semibold">OpenAI</p>
+                        <p class="text-xs text-on-surface-variant">gpt-4o · gpt-4o-mini</p>
+                      </div>
+                    </div>
+                    <span class="provider-status inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium bg-surface-container-high text-on-surface-variant">未配置</span>
+                  </div>
+                  <div class="flex items-center justify-between mt-3">
+                    <span class="text-xs text-on-surface-variant/60">未设置 API Key</span>
+                    <button class="btn-config-provider text-xs font-medium text-primary hover:underline">配置</button>
+                  </div>
+                </div>
+                <!-- 豆包 -->
+                <div class="provider-card rounded-md bg-surface-container/60 p-4" data-provider="doubao">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2.5">
+                      <span class="w-9 h-9 rounded-md bg-surface-container-high text-on-surface flex items-center justify-center text-sm font-bold">豆</span>
+                      <div>
+                        <p class="text-sm font-semibold">豆包（火山引擎）</p>
+                        <p class="text-xs text-on-surface-variant">doubao-pro · doubao-lite</p>
+                      </div>
+                    </div>
+                    <span class="provider-status inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium bg-surface-container-high text-on-surface-variant">未配置</span>
+                  </div>
+                  <div class="flex items-center justify-between mt-3">
+                    <span class="text-xs text-on-surface-variant/60">未设置 API Key</span>
+                    <button class="btn-config-provider text-xs font-medium text-primary hover:underline">配置</button>
+                  </div>
+                </div>
+                <!-- Kimi -->
+                <div class="provider-card rounded-md bg-surface-container/60 p-4" data-provider="kimi">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2.5">
+                      <span class="w-9 h-9 rounded-md bg-surface-container-high text-on-surface flex items-center justify-center text-sm font-bold">K</span>
+                      <div>
+                        <p class="text-sm font-semibold">Kimi（Moonshot）</p>
+                        <p class="text-xs text-on-surface-variant">moonshot-v1 · kimi-k2</p>
+                      </div>
+                    </div>
+                    <span class="provider-status inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium bg-surface-container-high text-on-surface-variant">未配置</span>
+                  </div>
+                  <div class="flex items-center justify-between mt-3">
+                    <span class="text-xs text-on-surface-variant/60">未设置 API Key</span>
+                    <button class="btn-config-provider text-xs font-medium text-primary hover:underline">配置</button>
+                  </div>
+                </div>
+                <!-- 通义千问 -->
+                <div class="provider-card rounded-md bg-surface-container/60 p-4" data-provider="qwen">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2.5">
+                      <span class="w-9 h-9 rounded-md bg-surface-container-high text-on-surface flex items-center justify-center text-sm font-bold">Q</span>
+                      <div>
+                        <p class="text-sm font-semibold">通义千问（阿里）</p>
+                        <p class="text-xs text-on-surface-variant">qwen-plus · qwen-max</p>
+                      </div>
+                    </div>
+                    <span class="provider-status inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium bg-surface-container-high text-on-surface-variant">未配置</span>
+                  </div>
+                  <div class="flex items-center justify-between mt-3">
+                    <span class="text-xs text-on-surface-variant/60">未设置 API Key</span>
+                    <button class="btn-config-provider text-xs font-medium text-primary hover:underline">配置</button>
+                  </div>
+                </div>
+                <!-- 智谱 GLM -->
+                <div class="provider-card rounded-md bg-surface-container/60 p-4" data-provider="glm">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2.5">
+                      <span class="w-9 h-9 rounded-md bg-surface-container-high text-on-surface flex items-center justify-center text-sm font-bold">G</span>
+                      <div>
+                        <p class="text-sm font-semibold">智谱 GLM</p>
+                        <p class="text-xs text-on-surface-variant">glm-4-plus · glm-4-air</p>
+                      </div>
+                    </div>
+                    <span class="provider-status inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium bg-surface-container-high text-on-surface-variant">未配置</span>
+                  </div>
+                  <div class="flex items-center justify-between mt-3">
+                    <span class="text-xs text-on-surface-variant/60">未设置 API Key</span>
+                    <button class="btn-config-provider text-xs font-medium text-primary hover:underline">配置</button>
+                  </div>
+                </div>
+                <!-- 自定义 OpenAI 兼容 -->
+                <div class="provider-card rounded-md bg-surface-container/60 p-4 col-span-2" data-provider="custom">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2.5">
+                      <span class="w-9 h-9 rounded-md bg-surface-container-high text-on-surface flex items-center justify-center"><i data-lucide="plug" class="w-4 h-4"></i></span>
+                      <div>
+                        <p class="text-sm font-semibold">自定义 OpenAI 兼容接口</p>
+                        <p class="text-xs text-on-surface-variant">任何兼容 OpenAI API 协议的服务（如 Claude 代理、Gemini 代理、本地 Ollama 等）</p>
+                      </div>
+                    </div>
+                    <span class="provider-status inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium bg-surface-container-high text-on-surface-variant">未配置</span>
+                  </div>
+                  <div class="flex items-center justify-between mt-3">
+                    <span class="text-xs text-on-surface-variant/60">自定义 Base URL + 模型名</span>
+                    <button class="btn-config-provider text-xs font-medium text-primary hover:underline">配置</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 模型分配 -->
+            <div class="bg-surface rounded-lg shadow-card p-6">
+              <h2 class="text-base font-semibold mb-1">模型分配</h2>
+              <p class="text-xs text-on-surface-variant mb-5">为不同 AI 能力选择使用哪个模型，仅可选已接入的模型或平台内置模型</p>
+              <div class="space-y-4">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <p class="text-sm font-medium">AI COO 对话助手</p>
+                    <p class="text-xs text-on-surface-variant mt-0.5">经营问答、分析洞察</p>
+                  </div>
+                  <select class="bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors w-52">
+                    <option selected>DeepSeek · deepseek-chat</option>
+                    <option>平台内置模型</option>
+                  </select>
+                </div>
+                <div class="flex items-center justify-between">
+                  <div>
+                    <p class="text-sm font-medium">内容生成</p>
+                    <p class="text-xs text-on-surface-variant mt-0.5">营销文案、评论回复、邮件草稿</p>
+                  </div>
+                  <select class="bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors w-52">
+                    <option>DeepSeek · deepseek-chat</option>
+                    <option selected>平台内置模型</option>
+                  </select>
+                </div>
+                <div class="flex items-center justify-between">
+                  <div>
+                    <p class="text-sm font-medium">知识库问答（RAG）</p>
+                    <p class="text-xs text-on-surface-variant mt-0.5">基于知识文档的回答生成</p>
+                  </div>
+                  <select class="bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors w-52">
+                    <option selected>平台内置模型</option>
+                    <option>DeepSeek · deepseek-chat</option>
+                  </select>
+                </div>
+                <div class="flex justify-end">
+                  <button id="btn-save-models" class="bg-primary text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all">保存分配</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- 业务信息 -->
-          <div id="group-business" class="setting-group bg-surface rounded-lg shadow-card p-6">
+          <div id="group-business" class="setting-group hidden bg-surface rounded-lg shadow-card p-6">
             <h2 class="text-base font-semibold mb-1">业务信息</h2>
             <p class="text-xs text-on-surface-variant mb-5">AI 会结合这些信息生成更贴合的分析与营销内容</p>
             <div class="space-y-4">
@@ -278,6 +451,48 @@
     <!-- @main-content:end -->
   </div>
 
+  <!-- 模型配置弹窗 -->
+  <div id="modal-model-config" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+    <div class="bg-surface rounded-xl shadow-dialog max-w-md w-full p-6">
+      <div class="flex items-center justify-between mb-5">
+        <h3 class="text-base font-semibold">配置 <span id="provider-name">DeepSeek</span></h3>
+        <button id="btn-model-config-close" class="w-8 h-8 rounded-md hover:bg-surface-container flex items-center justify-center text-on-surface-variant transition-colors"><i data-lucide="x" class="w-4 h-4"></i></button>
+      </div>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-on-surface-variant mb-1.5">API Key</label>
+          <input id="model-api-key" type="password" placeholder="sk-..." class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors font-mono"/>
+          <p class="text-xs text-on-surface-variant/70 mt-1.5">加密存储，仅服务端可读取，保存后不再明文显示</p>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-on-surface-variant mb-1.5">Base URL</label>
+          <input id="model-base-url" type="text" value="https://api.deepseek.com/v1" class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors font-mono"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-on-surface-variant mb-1.5">默认模型</label>
+          <select id="model-default" class="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors">
+            <option selected>deepseek-chat</option>
+            <option>deepseek-reasoner</option>
+          </select>
+        </div>
+        <!-- 测试连接结果 -->
+        <div id="test-result" class="hidden rounded-md bg-success/10 p-3 flex items-center gap-2">
+          <i data-lucide="circle-check" class="w-4 h-4 text-success shrink-0"></i>
+          <span class="text-xs text-success font-medium">连接成功 · 延迟 320ms · 模型可用</span>
+        </div>
+      </div>
+      <div class="flex items-center justify-between mt-6">
+        <button id="btn-test-connection" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium bg-surface-container text-on-surface hover:bg-surface-container-high active:scale-[0.98] transition-all">
+          <i data-lucide="zap" class="w-3.5 h-3.5"></i>测试连接
+        </button>
+        <div class="flex gap-3">
+          <button id="btn-model-config-cancel" class="bg-surface-container text-on-surface border-none px-4 py-2 rounded-md text-sm font-medium hover:bg-surface-container-high active:scale-[0.98] transition-all">取消</button>
+          <button id="btn-model-config-save" class="bg-primary text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 清空数据确认弹窗 -->
   <div id="modal-wipe-data" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
     <div class="bg-surface rounded-xl shadow-dialog max-w-sm w-full p-6">
@@ -326,6 +541,41 @@
       // 开发阶段实现：PUT /api/settings，批量保存当前分组的表单值
       $('#btn-save-business, #btn-save-ai').on('click', function () {
         console.log('保存设置（开发阶段将写入 settings 存储）');
+      });
+
+      // 模型配置弹窗
+      // 开发阶段实现：
+      // 1. GET /api/settings/models 返回各服务商配置状态（API Key 只回传掩码）
+      // 2. 打开弹窗时按 data-provider 加载对应默认 Base URL 与可选模型列表
+      $('#group-models').on('click', '.btn-config-provider', function () {
+        const provider = $(this).closest('.provider-card').data('provider');
+        $('#provider-name').text($(this).closest('.provider-card').find('p').first().text());
+        $('#test-result').addClass('hidden');
+        $('#modal-model-config').removeClass('hidden');
+        console.log('配置服务商:', provider);
+      });
+      $('#btn-model-config-close, #btn-model-config-cancel').on('click', function () {
+        $('#modal-model-config').addClass('hidden');
+      });
+
+      // 测试连接
+      // 开发阶段实现：POST /api/settings/models/test { provider, api_key, base_url, model }，服务端真实发起一次最小化 chat 请求验证连通性，返回延迟与结果
+      $('#btn-test-connection').on('click', function () {
+        $('#test-result').removeClass('hidden');
+        lucide.createIcons();
+      });
+
+      // 保存模型配置
+      // 开发阶段实现：PUT /api/settings/models { provider, api_key, base_url, model }，Key 服务端加密入库，保存成功后卡片状态更新为"已连接"
+      $('#btn-model-config-save').on('click', function () {
+        $('#modal-model-config').addClass('hidden');
+        console.log('保存模型配置:', $('#model-base-url').val(), $('#model-default').val());
+      });
+
+      // 保存模型分配
+      // 开发阶段实现：PUT /api/settings/models/route { agent, content, rag }，记录各能力使用的模型来源
+      $('#btn-save-models').on('click', function () {
+        console.log('保存模型分配（开发阶段将写入模型路由配置）');
       });
 
       // 清空数据二次确认

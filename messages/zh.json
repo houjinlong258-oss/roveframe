@@ -400,7 +400,10 @@
     "qrDownload": "下载 PNG",
     "qrEmpty": "还没有二维码，在上方为餐位生成一个吧",
     "orderTable": "桌号",
-    "orderNotes": "备注"
+    "orderNotes": "备注",
+    "allTables": "全部桌位",
+    "noTable": "无桌号",
+    "viewTableOrders": "查看该桌订单"
   },
   "settings": {
     "title": "设置",

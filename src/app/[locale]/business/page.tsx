@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
-import { Plus, X, Sparkles, Bot, RefreshCw, Factory, QrCode, Download, Copy, Check, Trash2, ImagePlus, Video, ExternalLink, Pencil } from 'lucide-react';
+import { Plus, X, Sparkles, Bot, RefreshCw, Factory, QrCode, Download, Copy, Check, Trash2, ImagePlus, Video, ExternalLink, Pencil, ClipboardList } from 'lucide-react';
 import QRCode from 'qrcode';
 import { fmtCurrency, fmtDateTime } from '@/lib/format';
 import { Link } from '@/i18n/navigation';
@@ -114,7 +114,9 @@ export default function BusinessPage() {
 
   // 订单
   const [orders, setOrders] = useState<Order[]>([]);
+  const [orderTables, setOrderTables] = useState<string[]>([]);
   const [orderStatusFilter, setOrderStatusFilter] = useState('all');
+  const [orderTableFilter, setOrderTableFilter] = useState('all');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
 
   // 库存
@@ -129,10 +131,11 @@ export default function BusinessPage() {
     setProdCats(data.categories ?? []);
   }, []);
 
-  const loadOrders = useCallback(async (status: string) => {
-    const res = await fetch(`/api/business/orders?status=${status}`);
+  const loadOrders = useCallback(async (status: string, table: string) => {
+    const res = await fetch(`/api/business/orders?status=${status}&table=${table}`);
     const data = await res.json();
     setOrders(data.orders ?? []);
+    setOrderTables(data.tables ?? []);
   }, []);
 
   const loadInventory = useCallback(async () => {
@@ -159,10 +162,10 @@ export default function BusinessPage() {
 
   useEffect(() => {
     if (tab === 'products') loadProducts();
-    else if (tab === 'orders') loadOrders(orderStatusFilter);
+    else if (tab === 'orders') loadOrders(orderStatusFilter, orderTableFilter);
     else if (tab === 'inventory') loadInventory();
     else loadQrCodes();
-  }, [tab, orderStatusFilter, loadProducts, loadOrders, loadInventory, loadQrCodes]);
+  }, [tab, orderStatusFilter, orderTableFilter, loadProducts, loadOrders, loadInventory, loadQrCodes]);
 
   const filteredProducts = useMemo(
     () => (prodCatFilter === 'all' ? products : products.filter((p) => p.category === prodCatFilter)),
@@ -295,7 +298,7 @@ export default function BusinessPage() {
       body: JSON.stringify({ id, status }),
     });
     setSelectedOrder(null);
-    await loadOrders(orderStatusFilter);
+    await loadOrders(orderStatusFilter, orderTableFilter);
   };
 
   const stockState = (item: InventoryItem) => {
@@ -433,7 +436,7 @@ export default function BusinessPage() {
       {/* 订单管理面板 */}
       {tab === 'orders' && (
         <div>
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 mb-4 flex-wrap">
             {['all', 'pending', 'preparing', 'done', 'cancelled'].map((st) => (
               <button
                 key={st}
@@ -443,6 +446,20 @@ export default function BusinessPage() {
                 }`}
               >
                 {st === 'all' ? tc('all') : t(`orderStatuses.${st}` as 'orderStatuses.pending')}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 mb-4 flex-wrap">
+            <span className="text-xs text-on-surface-variant mr-1">{t('orderTable')}:</span>
+            {['all', ...Array.from(new Set([...orderTables, ...(orderTableFilter !== 'all' && orderTableFilter !== '_none' ? [orderTableFilter] : [])])).sort(), '_none'].map((tb) => (
+              <button
+                key={tb}
+                onClick={() => setOrderTableFilter(tb)}
+                className={`px-3 py-1.5 rounded-sm text-xs font-medium transition-all ${
+                  orderTableFilter === tb ? 'bg-primary text-on-primary' : 'bg-surface-container text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                {tb === 'all' ? t('allTables') : tb === '_none' ? t('noTable') : t('qrTable', { table: tb })}
               </button>
             ))}
           </div>
@@ -750,6 +767,13 @@ export default function BusinessPage() {
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
                   </a>
+                  <button
+                    onClick={() => { setOrderTableFilter(c.table_no); setOrderStatusFilter('all'); setTab('orders'); }}
+                    className="w-8 h-8 rounded-md bg-primary/10 hover:bg-primary/20 flex items-center justify-center text-primary transition-colors"
+                    title={t('viewTableOrders')}
+                  >
+                    <ClipboardList className="w-3.5 h-3.5" />
+                  </button>
                   <button
                     onClick={() => removeQrCode(c.id)}
                     className="w-8 h-8 rounded-md bg-error/10 hover:bg-error/20 flex items-center justify-center text-error transition-colors"

@@ -400,7 +400,10 @@
     "qrDownload": "Download PNG",
     "qrEmpty": "No QR codes yet. Generate one above for a table.",
     "orderTable": "Table",
-    "orderNotes": "Notes"
+    "orderNotes": "Notes",
+    "allTables": "All tables",
+    "noTable": "No table",
+    "viewTableOrders": "View table orders"
   },
   "settings": {
     "title": "Settings",

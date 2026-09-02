@@ -5,6 +5,7 @@ import { getSupabaseClient } from '@/storage/database/supabase-client';
 export async function GET(request: NextRequest) {
   const supabase = getSupabaseClient();
   const status = request.nextUrl.searchParams.get('status');
+  const table = request.nextUrl.searchParams.get('table');
 
   let q = supabase
     .from('orders')
@@ -12,8 +13,17 @@ export async function GET(request: NextRequest) {
     .order('created_at', { ascending: false })
     .limit(100);
   if (status && status !== 'all') q = q.eq('status', status);
+  if (table === '_none') q = q.is('table_no', null);
+  else if (table && table !== 'all') q = q.eq('table_no', table);
   const { data, error } = await q;
   if (error) throw new Error(error.message);
+
+  // 有桌号的订单涉及的桌位列表（供筛选器）
+  const { data: tableRows } = await supabase
+    .from('orders')
+    .select('table_no')
+    .not('table_no', 'is', null);
+  const tables = Array.from(new Set((tableRows ?? []).map((r) => r.table_no as string))).sort();
 
   // 客户名映射
   const customerIds = Array.from(new Set((data ?? []).map((o) => o.customer_id).filter(Boolean)));
@@ -24,7 +34,7 @@ export async function GET(request: NextRequest) {
   }
 
   const orders = (data ?? []).map((o) => ({ ...o, customer_name: o.customer_id ? (nameMap[o.customer_id] ?? null) : null }));
-  return NextResponse.json({ orders });
+  return NextResponse.json({ orders, tables });
 }
 
 export async function PATCH(request: NextRequest) {

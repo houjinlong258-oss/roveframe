@@ -400,7 +400,10 @@
     "qrDownload": "Descargar PNG",
     "qrEmpty": "Aún no hay códigos QR. Genera uno arriba para una mesa.",
     "orderTable": "Mesa",
-    "orderNotes": "Notas"
+    "orderNotes": "Notas",
+    "allTables": "Todas las mesas",
+    "noTable": "Sin mesa",
+    "viewTableOrders": "Ver pedidos de la mesa"
   },
   "settings": {
     "title": "Ajustes",

@@ -1,4 +1,4 @@
-# 项目上下文
+﻿# 项目上下文
 
 ## 项目概述
 
@@ -58,7 +58,7 @@
 │   │   ├── format.ts       # fmtCurrency/fmtDate/fmtDateTime/timeAgo/maskEmail
 │   │   ├── settings.ts     # settings 表单行 jsonb 读写 + 缓存
 │   │   └── utils.ts        # 通用工具函数 (cn)
-│   ├── middleware.ts       # next-intl 中间件
+│   ├── proxy.ts            # next-intl 中间件(Next.js 16 起改名为 proxy)
 │   └── server.ts           # 自定义服务端入口
 ├── next.config.ts          # Next.js 配置（createNextIntlPlugin 包装）
 ├── package.json            # 项目依赖管理

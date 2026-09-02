@@ -699,8 +699,7 @@
     "sold": "{count} sold",
     "empty": "No items in this category",
     "loadFailed": "Failed to load the menu. Please scan the QR code again."
-  }
-},
+  },
   "auth": {
     "loginTitle": "Sign in",
     "signupTitle": "Create your business",
@@ -716,8 +715,7 @@
     "loginLink": "Sign in",
     "businessName": "Business name",
     "industry": "Industry"
-  }
-},
+  },
   "pwa": {
     "installTitle": "Install App",
     "installAndroidBody": "Add RoveFrame to your home screen for one-tap access to your AI restaurant cockpit.",

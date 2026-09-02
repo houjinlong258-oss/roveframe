@@ -699,8 +699,7 @@
     "sold": "{count} vendidos",
     "empty": "No hay artículos en esta categoría",
     "loadFailed": "Error al cargar el menú. Escanea el código QR de nuevo."
-  }
-},
+  },
   "auth": {
     "loginTitle": "Iniciar sesión",
     "signupTitle": "Crea tu negocio",
@@ -716,8 +715,7 @@
     "loginLink": "Iniciar sesión",
     "businessName": "Nombre del negocio",
     "industry": "Industria"
-  }
-},
+  },
   "pwa": {
     "installTitle": "Instalar app",
     "installAndroidBody": "Añade RoveFrame a tu pantalla de inicio para acceder a tu AI restaurant cockpit con un toque.",

@@ -699,8 +699,7 @@
     "sold": "已售 {count}",
     "empty": "该分类暂无商品",
     "loadFailed": "菜单加载失败，请重新扫码"
-  }
-},
+  },
   "auth": {
     "loginTitle": "登录",
     "signupTitle": "创建企业",
@@ -716,8 +715,7 @@
     "loginLink": "去登录",
     "businessName": "企业名称",
     "industry": "行业"
-  }
-},
+  },
   "pwa": {
     "installTitle": "安装 App",
     "installAndroidBody": "把 RoveFrame 加到主屏幕,一键直达你的 AI 经营中控台。",

@@ -717,4 +717,19 @@
     "businessName": "Nombre del negocio",
     "industry": "Industria"
   }
+},
+  "pwa": {
+    "installTitle": "Instalar app",
+    "installAndroidBody": "Añade RoveFrame a tu pantalla de inicio para acceder a tu AI restaurant cockpit con un toque.",
+    "installIOSBody": "Toca el botón compartir, luego elige 'Añadir a pantalla de inicio' para instalar.",
+    "install": "Instalar",
+    "dismiss": "Ahora no",
+    "offlineTitle": "Sin conexión",
+    "offlineBody": "Sin conexión a internet. El menú en caché sigue disponible, pero los pedidos y análisis AI necesitan conexión.",
+    "somethingWrong": "Algo salió mal",
+    "retryBody": "La página no cargó. Verifica tu conexión e inténtalo de nuevo.",
+    "retry": "Reintentar",
+    "goHome": "Ir al inicio",
+    "cacheHint": "Las páginas vistas recientemente están en caché y funcionan sin conexión."
+  }
 }

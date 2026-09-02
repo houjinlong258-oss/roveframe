@@ -717,4 +717,19 @@
     "businessName": "企业名称",
     "industry": "行业"
   }
+},
+  "pwa": {
+    "installTitle": "安装 App",
+    "installAndroidBody": "把 RoveFrame 加到主屏幕,一键直达你的 AI 经营中控台。",
+    "installIOSBody": "点击分享按钮,选择「添加到主屏幕」即可安装。",
+    "install": "安装",
+    "dismiss": "暂不",
+    "offlineTitle": "你已离线",
+    "offlineBody": "无网络连接。已缓存的菜单仍可访问,但下单和 AI 洞察需要网络。",
+    "somethingWrong": "出错了",
+    "retryBody": "页面加载失败。检查网络后重试。",
+    "retry": "重试",
+    "goHome": "回到首页",
+    "cacheHint": "最近浏览的页面已缓存,断网时仍可访问。"
+  }
 }

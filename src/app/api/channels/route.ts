@@ -1,14 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { encrypt } from '@/lib/crypto';
 import { CHANNEL_KEYS, type ChannelKey } from '@/lib/channels-presets';
+import { getTenantContext } from '@/lib/tenant';
+import {
+  insertWithTenant,
+  tenantTable,
+  updateWithTenant,
+} from '@/lib/tenant-db';
 
 // 社交通讯渠道：列表 / 连接 / 断开（复用 integration_configs 表，provider 为渠道 key）
-export async function GET() {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from('integration_configs')
-    .select('provider, is_enabled, status, last_sync_at')
+export async function GET(request: NextRequest) {
+  const ctx = getTenantContext(request);
+  const { data, error } = await tenantTable(
+    ctx.tenantId,
+    'integration_configs',
+    'provider, is_enabled, status, last_sync_at',
+  )
     .in('provider', CHANNEL_KEYS);
   if (error) throw new Error(error.message);
 
@@ -21,13 +28,13 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const ctx = getTenantContext(request);
   const body = await request.json();
   const provider: ChannelKey = body.provider;
   if (!provider || !CHANNEL_KEYS.includes(provider)) {
     return NextResponse.json({ error: 'invalid channel provider' }, { status: 400 });
   }
 
-  const supabase = getSupabaseClient();
   const record = {
     provider,
     config_encrypted: encrypt(JSON.stringify(body.config ?? {})),
@@ -37,29 +44,35 @@ export async function POST(request: NextRequest) {
     last_sync_at: new Date().toISOString(),
   };
 
-  const { data: existing } = await supabase
-    .from('integration_configs')
-    .select('id')
+  const existingRes = await tenantTable(ctx.tenantId, 'integration_configs', 'id')
     .eq('provider', provider)
     .maybeSingle();
+  if (existingRes.error) throw new Error(existingRes.error.message);
+  const existing = existingRes.data as { id: string } | null;
+
   if (existing) {
-    const { error } = await supabase.from('integration_configs').update(record).eq('id', existing.id);
+    const { error } = await updateWithTenant(ctx.tenantId, 'integration_configs', existing.id, record);
     if (error) throw new Error(error.message);
   } else {
-    const { error } = await supabase.from('integration_configs').insert(record);
+    const { error } = await insertWithTenant(ctx.tenantId, 'integration_configs', record);
     if (error) throw new Error(error.message);
   }
   return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(request: NextRequest) {
+  const ctx = getTenantContext(request);
   const provider = request.nextUrl.searchParams.get('provider');
   if (!provider) return NextResponse.json({ error: 'provider required' }, { status: 400 });
-  const supabase = getSupabaseClient();
-  const { error } = await supabase
-    .from('integration_configs')
-    .update({ is_enabled: false, status: 'disconnected' })
-    .eq('provider', provider);
+  // 软断开：先查 id 再 update（保持 tenant 内限定）
+  const res = await tenantTable(ctx.tenantId, 'integration_configs', 'id').eq('provider', provider).maybeSingle();
+  if (res.error) throw new Error(res.error.message);
+  const row = res.data as { id: string } | null;
+  if (!row) return NextResponse.json({ ok: true });
+  const { error } = await updateWithTenant(ctx.tenantId, 'integration_configs', row.id, {
+    is_enabled: false,
+    status: 'disconnected',
+  });
   if (error) throw new Error(error.message);
   return NextResponse.json({ ok: true });
 }

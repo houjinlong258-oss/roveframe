@@ -1,10 +1,11 @@
-import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { getForwardHeaders, jsonError, getErrorMessage, sseResponse } from '@/lib/api-helpers';
 import { streamChat, invokeChat, type ChatMessage } from '@/lib/ai/router';
 import { getBusinessContext, contextToPrompt } from '@/lib/business-context';
 import { getRecentMemories, memoriesToPrompt, addMemory } from '@/lib/memory';
 import { skillForIndustry } from '@/lib/skills';
 import { getSettings } from '@/lib/settings';
+import { getTenantContext } from '@/lib/tenant';
+import { insertWithTenant, tenantTable, updateWithTenant } from '@/lib/tenant-db';
 
 const SYSTEM_ZH = `你是 RoveFrame AI COO —— 中小企业的 AI 首席运营官。你基于商户的真实经营数据提供分析和可执行建议。
 要求：
@@ -22,72 +23,81 @@ Requirements:
 
 export async function POST(request: Request) {
   try {
+    const ctx = getTenantContext(request);
     const body = (await request.json()) as { session_id?: string; message: string; locale?: string };
     if (!body.message?.trim()) return jsonError('empty message', 400);
     const locale = body.locale ?? 'en';
-    const client = getSupabaseClient();
     const forwardHeaders = getForwardHeaders(request);
 
-    // 会话：不存在则创建
+    // 会话：不存在则创建（tenant 内）
     let sessionId = body.session_id;
     if (!sessionId) {
-      const { data, error } = await client
-        .from('chat_sessions')
-        .insert({ title: body.message.slice(0, 40) })
+      const ins = await insertWithTenant(ctx.tenantId, 'chat_sessions', {
+        title: body.message.slice(0, 40),
+      })
         .select('id')
         .single();
-      if (error) throw new Error(error.message);
-      sessionId = data.id;
+      if (ins.error) throw new Error(ins.error.message);
+      sessionId = (ins.data as { id: string }).id;
     }
 
-    // 历史消息
-    const { data: history, error: hErr } = await client
-      .from('chat_messages')
-      .select('role, content')
+    // 历史消息（tenant 内）
+    const histRes = await tenantTable(ctx.tenantId, 'chat_messages', 'role, content')
       .eq('session_id', sessionId)
       .order('created_at', { ascending: true })
       .limit(20);
-    if (hErr) throw new Error(hErr.message);
+    if (histRes.error) throw new Error(histRes.error.message);
+    const history = (histRes.data ?? []) as { role: string; content: string }[];
 
     // 保存用户消息
-    const { error: uErr } = await client.from('chat_messages').insert({
+    const insUser = await insertWithTenant(ctx.tenantId, 'chat_messages', {
       session_id: sessionId,
       role: 'user',
       content: body.message,
     });
-    if (uErr) throw new Error(uErr.message);
+    if (insUser.error) throw new Error(insUser.error.message);
 
     // 组装 prompt：系统 + 行业能力 + 实时经营上下文 + 企业长期记忆 + 历史 + 当前问题
-    const ctx = await getBusinessContext();
+    const bizCtx = await getBusinessContext();
     const settings = await getSettings();
     const industry = (settings.business?.industry as string) || 'restaurant';
     const memories = await getRecentMemories(5);
     const systemContent = [
       locale === 'zh' ? SYSTEM_ZH : SYSTEM_EN,
       skillForIndustry(industry),
-      contextToPrompt(ctx, locale),
+      contextToPrompt(bizCtx, locale),
       memoriesToPrompt(memories, locale),
-    ].filter(Boolean).join('\n\n');
+    ]
+      .filter(Boolean)
+      .join('\n\n');
     const messages: ChatMessage[] = [
       { role: 'system', content: systemContent },
-      ...(history ?? []).map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+      ...history.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
       { role: 'user', content: body.message },
     ];
 
     const stream = streamChat('agent', messages, forwardHeaders);
 
-    // 包装流：结束后落库 assistant 消息并刷新会话标题/时间
+    // 包装流：结束后落库 assistant 消息并刷新会话时间（tenant 化）
+    const tenantId = ctx.tenantId;
     async function* wrapped(): AsyncGenerator<string> {
       let full = '';
       for await (const chunk of stream) {
         full += chunk;
         yield chunk;
       }
-      const db = getSupabaseClient();
-      await db.from('chat_messages').insert({ session_id: sessionId, role: 'assistant', content: full });
-      await db.from('chat_sessions').update({ updated_at: new Date().toISOString() }).eq('id', sessionId);
+      const ins = await insertWithTenant(tenantId, 'chat_messages', {
+        session_id: sessionId,
+        role: 'assistant',
+        content: full,
+      });
+      if (ins.error) throw new Error(ins.error.message);
+      const upd = await updateWithTenant(tenantId, 'chat_sessions', sessionId!, {
+        updated_at: new Date().toISOString(),
+      });
+      if (upd.error) throw new Error(upd.error.message);
 
-      // 沉淀企业长期记忆（仅对实质性提问，失败不影响主流程）
+      // 沉淀企业长期记忆（tenant 化，失败不影响主流程）
       if (body.message.trim().length > 15) {
         try {
           const memory = await invokeChat(

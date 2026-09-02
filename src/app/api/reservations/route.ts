@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { getTenantContext } from '@/lib/tenant';
+import {
+  insertWithTenant,
+  tenantTable,
+  updateWithTenant,
+} from '@/lib/tenant-db';
 
 function dayRange(dateStr: string): { start: string; end: string } {
   // 按服务器本地时区解释自然日
@@ -9,30 +14,26 @@ function dayRange(dateStr: string): { start: string; end: string } {
 }
 
 export async function GET(request: NextRequest) {
-  const supabase = getSupabaseClient();
+  const ctx = getTenantContext(request);
   const now = new Date();
   const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const date = request.nextUrl.searchParams.get('date') ?? localToday;
   const { start, end } = dayRange(date);
 
-  const { data: rows, error } = await supabase
-    .from('reservations')
-    .select('*')
+  const listRes = await tenantTable(ctx.tenantId, 'reservations')
     .gte('reserved_at', start)
     .lt('reserved_at', end)
     .order('reserved_at', { ascending: true });
-  if (error) throw new Error(error.message);
-  const list = rows ?? [];
+  if (listRes.error) throw new Error(listRes.error.message);
+  const list = (listRes.data ?? []) as { status: string; [k: string]: unknown }[];
 
   // 本周取消率
   const weekStart = new Date(start);
   weekStart.setUTCDate(weekStart.getUTCDate() - weekStart.getUTCDay());
-  const { data: weekRows, error: wErr } = await supabase
-    .from('reservations')
-    .select('status')
+  const weekRes = await tenantTable(ctx.tenantId, 'reservations', 'status')
     .gte('reserved_at', weekStart.toISOString());
-  if (wErr) throw new Error(wErr.message);
-  const week = weekRows ?? [];
+  if (weekRes.error) throw new Error(weekRes.error.message);
+  const week = (weekRes.data ?? []) as { status: string }[];
   const cancelRate = week.length > 0 ? Math.round((week.filter((r) => r.status === 'cancelled').length / week.length) * 100) : 0;
 
   // 未来 6 天每日占用
@@ -42,13 +43,11 @@ export async function GET(request: NextRequest) {
     const d = new Date(startMs + i * 86400000);
     const ds = d.toISOString().slice(0, 10);
     const { start: s2, end: e2 } = dayRange(ds);
-    const { count } = await supabase
-      .from('reservations')
-      .select('id', { count: 'exact', head: true })
+    const dayRes = await tenantTable(ctx.tenantId, 'reservations', 'id')
       .gte('reserved_at', s2)
       .lt('reserved_at', e2)
       .neq('status', 'cancelled');
-    occupancy.push({ date: ds, count: count ?? 0 });
+    occupancy.push({ date: ds, count: (dayRes.data ?? []).length });
   }
 
   return NextResponse.json({
@@ -64,34 +63,32 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const ctx = getTenantContext(request);
   const body = await request.json();
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from('reservations')
-    .insert({
-      customer_name: body.customer_name,
-      phone: body.phone,
-      party_size: body.party_size ?? 2,
-      table_no: body.table_no ?? null,
-      reserved_at: body.reserved_at,
-      source: body.source ?? 'phone',
-      notes: body.notes ?? null,
-      status: 'pending',
-    })
+  const { data, error } = await insertWithTenant(ctx.tenantId, 'reservations', {
+    customer_name: body.customer_name,
+    phone: body.phone,
+    party_size: body.party_size ?? 2,
+    table_no: body.table_no ?? null,
+    reserved_at: body.reserved_at,
+    source: body.source ?? 'phone',
+    notes: body.notes ?? null,
+    status: 'pending',
+  })
     .select('id')
     .single();
   if (error) throw new Error(error.message);
-  return NextResponse.json({ id: data.id });
+  return NextResponse.json({ id: (data as { id: string }).id });
 }
 
 export async function PATCH(request: NextRequest) {
+  const ctx = getTenantContext(request);
   const body = await request.json();
   if (!body.id) return NextResponse.json({ error: 'id required' }, { status: 400 });
-  const supabase = getSupabaseClient();
   const update: Record<string, unknown> = {};
   if (body.status) update.status = body.status;
   if (body.table_no !== undefined) update.table_no = body.table_no;
-  const { error } = await supabase.from('reservations').update(update).eq('id', body.id);
+  const { error } = await updateWithTenant(ctx.tenantId, 'reservations', body.id, update);
   if (error) throw new Error(error.message);
   return NextResponse.json({ ok: true });
 }

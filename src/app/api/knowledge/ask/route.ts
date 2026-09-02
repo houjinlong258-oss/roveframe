@@ -1,10 +1,13 @@
-import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { getForwardHeaders, jsonError, getErrorMessage, sseResponse } from '@/lib/api-helpers';
 import { streamChat, type ChatMessage } from '@/lib/ai/router';
 import { embedText } from '@/lib/embedding';
+import { getTenantContext } from '@/lib/tenant';
+import { tenantTable } from '@/lib/tenant-db';
+import { getSupabaseClient } from '@/storage/database/supabase-client';
 
 export async function POST(request: Request) {
   try {
+    const ctx = getTenantContext(request);
     const body = (await request.json()) as { question: string; locale?: string };
     if (!body.question?.trim()) return jsonError('empty question', 400);
     const locale = body.locale ?? 'en';
@@ -14,31 +17,31 @@ export async function POST(request: Request) {
     // 1. 问题向量化
     const queryEmbedding = await embedText(body.question, forwardHeaders);
 
-    // 2. 向量检索最相关的分块（余弦相似度）
+    // 2. 向量检索最相关的分块（RPC 必须传 tenant_id，否则跨租户串味）
     const { data: chunks, error } = await client.rpc('match_doc_chunks', {
       query_embedding: JSON.stringify(queryEmbedding),
       match_count: 5,
+      filter_tenant_id: ctx.tenantId,
     });
 
     let sources: { title: string }[] = [];
     let contextText = '';
     if (!error && chunks && chunks.length > 0) {
-      contextText = chunks.map((c: { content: string }, i: number) => `[${i + 1}] ${c.content}`).join('\n\n');
-      const docIds = [...new Set(chunks.map((c: { doc_id: string }) => c.doc_id))] as string[];
-      const { data: docs } = await client.from('knowledge_docs').select('id, title').in('id', docIds);
-      sources = (docs ?? []).map((d) => ({ title: d.title }));
+      contextText = (chunks as { content: string }[]).map((c, i) => `[${i + 1}] ${c.content}`).join('\n\n');
+      const docIds = Array.from(new Set((chunks as { doc_id: string }[]).map((c) => c.doc_id)));
+      const docsRes = await tenantTable(ctx.tenantId, 'knowledge_docs', 'id, title').in('id', docIds);
+      sources = ((docsRes.data ?? []) as { title: string }[]).map((d) => ({ title: d.title }));
     } else {
-      // RPC 不存在时退回简单全量匹配（取最近文档的前几个分块）
-      const { data: fallback } = await client
-        .from('doc_chunks')
-        .select('doc_id, content')
+      // RPC 不存在时退回简单全量匹配（取当前租户最近文档的前几个分块）
+      const fallbackRes = await tenantTable(ctx.tenantId, 'doc_chunks', 'doc_id, content')
         .order('chunk_index', { ascending: true })
         .limit(5);
-      contextText = (fallback ?? []).map((c, i) => `[${i + 1}] ${c.content}`).join('\n\n');
-      const docIds = [...new Set((fallback ?? []).map((c) => c.doc_id))];
+      const fallback = (fallbackRes.data ?? []) as { doc_id: string; content: string }[];
+      contextText = fallback.map((c, i) => `[${i + 1}] ${c.content}`).join('\n\n');
+      const docIds = Array.from(new Set(fallback.map((c) => c.doc_id)));
       if (docIds.length > 0) {
-        const { data: docs } = await client.from('knowledge_docs').select('id, title').in('id', docIds);
-        sources = (docs ?? []).map((d) => ({ title: d.title }));
+        const docsRes = await tenantTable(ctx.tenantId, 'knowledge_docs', 'id, title').in('id', docIds);
+        sources = ((docsRes.data ?? []) as { title: string }[]).map((d) => ({ title: d.title }));
       }
     }
 

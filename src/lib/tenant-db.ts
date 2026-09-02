@@ -16,20 +16,37 @@ import { getSupabaseClient } from '@/storage/database/supabase-client';
  *
  * Part F 接线规则：业务表路由必须用 *_WithTenant 系列；平台表路由用 plain_* 系列。
  * service_role 模式下，平台表仍能写；用户 JWT 模式（完整版 P0-S3）由 RLS 兜底。
- *
- * 现状：本模块已有 4 个 helper（tenantTable / insertWithTenant / updateWithTenant /
- *       deleteWithTenant），本 PR 补 platform 系列 + isPlatformTable 工具。
  */
 
-/** Supabase 对 `.from(string 变量)` 的读查询 builder 类型收窄不完整，用结构类型承接 */
-type TenantReadBuilder = {
-  eq: (column: string, value: unknown) => TenantReadBuilder;
-  select: (columns?: string) => TenantReadBuilder;
-  order: (column: string, opts?: { ascending?: boolean }) => TenantReadBuilder;
-  limit: (count: number) => TenantReadBuilder;
-  single: () => Promise<unknown>;
-  maybeSingle: () => Promise<unknown>;
+/** Supabase PostgrestFilterBuilder 的结构化类型（足够覆盖路由中用到的 eq/neq/gte/lt/in/order/limit/single/maybeSingle） */
+type FilterBuilder = {
+  eq: (col: string, val: unknown) => FilterBuilder;
+  neq: (col: string, val: unknown) => FilterBuilder;
+  gt: (col: string, val: unknown) => FilterBuilder;
+  gte: (col: string, val: unknown) => FilterBuilder;
+  lt: (col: string, val: unknown) => FilterBuilder;
+  lte: (col: string, val: unknown) => FilterBuilder;
+  like: (col: string, pattern: string) => FilterBuilder;
+  ilike: (col: string, pattern: string) => FilterBuilder;
+  in: (col: string, vals: unknown[]) => FilterBuilder;
+  is: (col: string, val: unknown) => FilterBuilder;
+  match: (q: Record<string, unknown>) => FilterBuilder;
+  order: (col: string, opts?: { ascending?: boolean }) => FilterBuilder;
+  limit: (n: number) => FilterBuilder;
+  range: (from: number, to: number) => FilterBuilder;
+  single: () => Promise<{ data: unknown; error: { message: string } | null }>;
+  maybeSingle: () => Promise<{ data: unknown; error: { message: string } | null }>;
+  then: <T>(
+    onfulfilled: (v: { data: unknown[] | null; error: { message: string } | null }) => T,
+  ) => Promise<T>;
 };
+
+/** PostgrestQueryBuilder（仅含 select/insert/update/delete/upsert） */
+type QueryBuilder = {
+  select: (cols?: string) => FilterBuilder;
+};
+
+/** 显式结构化类型，避免泄漏 supabase 内部泛型导致路由侧类型噪音 */
 
 /** 平台层表——不按 tenant 过滤（tenants/users/roles/user_roles/audit_logs） */
 export const PLATFORM_TABLES: ReadonlySet<string> = new Set([
@@ -49,9 +66,14 @@ export function isPlatformTable(table: string): boolean {
 /* 业务表（带 tenant 过滤）                                                */
 /* ====================================================================== */
 
-/** 读：返回已按 tenant_id 过滤的查询构建器（可继续链式 .select/.eq/.order） */
-export function tenantTable(tenantId: string, table: string): TenantReadBuilder {
-  const builder = getSupabaseClient().from(table) as unknown as TenantReadBuilder;
+/** 读：返回「已 select(cols) + 已 eq('tenant_id', tenantId)」的链式 filter builder
+ *  调用方继续链式：.eq('status', 'active').order('name').limit(10) */
+export function tenantTable(tenantId: string, table: string, columns = '*'): FilterBuilder {
+  const client = getSupabaseClient();
+  // Supabase 类型链：from → select → eq → FilterBuilder
+  // 这里用 unknown 跳过内部泛型，外层用结构化 FilterBuilder 兜底
+  const builder = (client.from(table) as unknown as QueryBuilder)
+    .select(columns) as unknown as FilterBuilder;
   return builder.eq('tenant_id', tenantId);
 }
 
@@ -87,9 +109,9 @@ export function deleteWithTenant(tenantId: string, table: string, id: string) {
 /* 平台表（不带 tenant 过滤）                                              */
 /* ====================================================================== */
 
-/** 读：返回未过滤的查询构建器（仅用于平台表） */
-export function plainTable(table: string): TenantReadBuilder {
-  return getSupabaseClient().from(table) as unknown as TenantReadBuilder;
+/** 读：返回未过滤的查询构建器（仅用于平台表，需调用方自己 .select(cols)） */
+export function plainTable(table: string): QueryBuilder {
+  return getSupabaseClient().from(table) as unknown as QueryBuilder;
 }
 
 /** 写：insert（仅用于平台表，不注入 tenant_id） */

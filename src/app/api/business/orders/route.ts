@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
 
   let q = supabase
     .from('orders')
-    .select('id, order_no, customer_id, items, total, channel, status, source, external_id, table_no, notes, created_at')
+    .select('id, order_no, customer_id, items, total, tip, tip_percent, channel, status, source, external_id, table_no, notes, created_at')
     .order('created_at', { ascending: false })
     .limit(100);
   if (status && status !== 'all') q = q.eq('status', status);
@@ -34,7 +34,32 @@ export async function GET(request: NextRequest) {
   }
 
   const orders = (data ?? []).map((o) => ({ ...o, customer_name: o.customer_id ? (nameMap[o.customer_id] ?? null) : null }));
-  return NextResponse.json({ orders, tables });
+
+  // 小费统计（今日 / 本周，排除已取消）
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const weekStart = new Date(todayStart);
+  weekStart.setDate(weekStart.getDate() - 6);
+  const { data: tipRows } = await supabase
+    .from('orders')
+    .select('tip, table_no, created_at')
+    .gte('created_at', weekStart.toISOString())
+    .neq('status', 'cancelled');
+  const tipList = (tipRows ?? []) as { tip: string | number; table_no: string | null; created_at: string }[];
+  const todayTip = Math.round(tipList.filter((r) => r.created_at >= todayStart.toISOString()).reduce((s, r) => s + Number(r.tip ?? 0), 0) * 100) / 100;
+  const weekTip = Math.round(tipList.reduce((s, r) => s + Number(r.tip ?? 0), 0) * 100) / 100;
+
+  // 按桌位归因（本周）
+  const byTable = new Map<string, number>();
+  for (const r of tipList) {
+    if (r.table_no) byTable.set(r.table_no, (byTable.get(r.table_no) ?? 0) + Number(r.tip ?? 0));
+  }
+  const tipByTable = Array.from(byTable.entries())
+    .map(([table_no, tip]) => ({ table_no, tip: Math.round(tip * 100) / 100 }))
+    .sort((a, b) => b.tip - a.tip)
+    .slice(0, 8);
+
+  return NextResponse.json({ orders, tables, tipStats: { todayTip, weekTip, tipByTable } });
 }
 
 export async function PATCH(request: NextRequest) {

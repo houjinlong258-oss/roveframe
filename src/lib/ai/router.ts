@@ -3,9 +3,16 @@ import { getSupabaseClient } from "@/storage/database/supabase-client";
 import { decrypt } from "@/lib/crypto";
 import { AUTO_ROUTE, PROVIDER_PRESETS, type Capability } from "@/lib/ai/providers";
 
+/** 多模态内容块：text + image_url（url 可为 data URL 或 http(s) 地址） */
+export type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+export type ChatContent = string | ChatContentPart[];
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: ChatContent;
 }
 
 interface ResolvedModel {
@@ -16,6 +23,43 @@ interface ResolvedModel {
   apiKey?: string;
   baseUrl?: string;
   protocol?: "anthropic" | "openai";
+}
+
+/** 把多模态 content 降级为纯文本（提取 text 块），用于平台内置模型的兜底 */
+function textOf(content: ChatContent): string {
+  if (typeof content === "string") return content;
+  return content.filter((p): p is { type: "text"; text: string } => p.type === "text").map((p) => p.text).join("\n");
+}
+
+/** 从 URL 或 data URL 拿到 base64 图片数据（Anthropic 图片协议要求 base64） */
+async function imageToBase64(url: string): Promise<{ media_type: string; data: string }> {
+  const dataMatch = /^data:([^;,]+);base64,([\s\S]+)$/.exec(url);
+  if (dataMatch) {
+    return { media_type: dataMatch[1], data: dataMatch[2].replace(/\s/g, "") };
+  }
+  const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  if (!resp.ok) throw new Error(`图片拉取失败 (${resp.status})`);
+  const mediaType = (resp.headers.get("content-type") || "image/jpeg").split(";")[0];
+  const data = Buffer.from(await resp.arrayBuffer()).toString("base64");
+  return { media_type: mediaType, data };
+}
+
+type AnthropicContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+
+async function toAnthropicContent(content: ChatContent): Promise<string | AnthropicContentBlock[]> {
+  if (typeof content === "string") return content;
+  const blocks: AnthropicContentBlock[] = [];
+  for (const part of content) {
+    if (part.type === "text") {
+      blocks.push({ type: "text", text: part.text });
+    } else if (part.type === "image_url") {
+      const { media_type, data } = await imageToBase64(part.image_url.url);
+      blocks.push({ type: "image", source: { type: "base64", media_type, data } });
+    }
+  }
+  return blocks;
 }
 
 /** 解析某能力应使用的模型：auto → 平台内置按复杂度分流；指定 provider:model → 走用户接入的服务商 */
@@ -66,8 +110,10 @@ export async function* streamChat(
   const resolved = await resolveModel(capability);
 
   if (resolved.kind === "platform") {
+    // 平台内置模型：降级为纯文本（视觉能力走接入的外部服务商）
     const client = new LLMClient(new Config(), forwardHeaders);
-    const stream = client.stream(messages, { model: resolved.model, temperature: resolved.temperature });
+    const textMessages = messages.map((m) => ({ role: m.role, content: textOf(m.content) }));
+    const stream = client.stream(textMessages, { model: resolved.model, temperature: resolved.temperature });
     for await (const chunk of stream) {
       if (chunk.content) yield chunk.content.toString();
     }
@@ -132,8 +178,12 @@ async function* streamOpenAICompatible(resolved: ResolvedModel, messages: ChatMe
 }
 
 async function* streamAnthropic(resolved: ResolvedModel, messages: ChatMessage[]): AsyncGenerator<string> {
-  const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n");
-  const turns = messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role, content: m.content }));
+  const system = messages.filter((m) => m.role === "system").map((m) => textOf(m.content)).join("\n");
+
+  const turns: { role: string; content: string | AnthropicContentBlock[] }[] = [];
+  for (const m of messages.filter((m) => m.role !== "system")) {
+    turns.push({ role: m.role, content: await toAnthropicContent(m.content) });
+  }
 
   const resp = await fetch(`${resolved.baseUrl}/v1/messages`, {
     method: "POST",

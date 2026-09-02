@@ -4,7 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import {
-  UtensilsCrossed, Plus, Minus, ShoppingCart, X, CheckCircle2, Play, Store as StoreIcon, ClipboardList,
+  UtensilsCrossed, Plus, Minus, ShoppingCart, X, CheckCircle2, Play, Store as StoreIcon, ClipboardList, UserRound,
 } from 'lucide-react';
 import { fmtCurrency } from '@/lib/format';
 
@@ -38,8 +38,13 @@ function Storefront() {
   const [detail, setDetail] = useState<Product | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [note, setNote] = useState('');
+  const [tipChoice, setTipChoice] = useState<string>('0');
+  const [customTip, setCustomTip] = useState<string>('');
   const [placing, setPlacing] = useState(false);
-  const [placed, setPlaced] = useState<{ order_no: string; total: number } | null>(null);
+  const [placed, setPlaced] = useState<{ order_no: string; total: number; id: string; tip: number } | null>(null);
+  const [staffList, setStaffList] = useState<{ id: string; name: string; role: string | null; photo_url: string | null }[]>([]);
+  const [thanked, setThanked] = useState<string | null>(null);
+  const [thanking, setThanking] = useState(false);
 
   useEffect(() => {
     fetch(`/api/store/menu${table ? `?table=${encodeURIComponent(table)}` : ''}`)
@@ -55,6 +60,12 @@ function Storefront() {
   );
   const cartCount = Object.values(cart).reduce((s, q) => s + q, 0);
   const cartTotal = Object.entries(cart).reduce((s, [id, q]) => s + Number(byId.get(id)?.price ?? 0) * q, 0);
+  const tipPercent =
+    tipChoice === 'custom'
+      ? (Number(customTip) || 0) / 100
+      : tipChoice === '15' ? 0.15 : tipChoice === '18' ? 0.18 : tipChoice === '20' ? 0.2 : 0;
+  const tipAmount = Math.round(cartTotal * tipPercent * 100) / 100;
+  const grandTotal = Math.round((cartTotal + tipAmount) * 100) / 100;
 
   const add = (id: string, delta: number) => {
     setCart((c) => {
@@ -76,18 +87,40 @@ function Storefront() {
         body: JSON.stringify({
           table_no: table,
           note: note || null,
+          tip_amount: tipAmount,
+          tip_percent: tipPercent,
           items: Object.entries(cart).map(([product_id, qty]) => ({ product_id, qty })),
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setPlaced({ order_no: data.order.order_no, total: Number(data.order.total) });
+      setPlaced({ order_no: data.order.order_no, total: Number(data.order.total), id: data.order.id, tip: Number(data.order.tip ?? 0) });
       setCart({});
       setCartOpen(false);
+      setThanked(null);
+      fetch('/api/store/staff')
+        .then((r) => (r.ok ? r.json() : Promise.reject()))
+        .then((d) => setStaffList(d.staff ?? []))
+        .catch(() => setStaffList([]));
     } catch {
       alert(t('placeFailed'));
     } finally {
       setPlacing(false);
+    }
+  };
+
+  const thankStaff = async (staffId: string, name: string) => {
+    if (!placed || thanking) return;
+    setThanking(true);
+    try {
+      const res = await fetch('/api/store/orders', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: placed.id, tip_staff_id: staffId }),
+      });
+      if (res.ok) setThanked(name);
+    } finally {
+      setThanking(false);
     }
   };
 
@@ -130,6 +163,34 @@ function Storefront() {
             <span className="font-semibold text-primary">{fmtCurrency(placed.total)}</span>
           </div>
         </div>
+        {placed.tip > 0 && !thanked && staffList.length > 0 && (
+          <div className="w-full max-w-xs mb-6">
+            <p className="text-sm font-semibold text-on-surface mb-3">{t('whoServed')}</p>
+            <div className="grid grid-cols-3 gap-2">
+              {staffList.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => thankStaff(s.id, s.name)}
+                  disabled={thanking}
+                  className="flex flex-col items-center gap-1 p-2 rounded-xl bg-surface shadow-card hover:bg-surface-container transition-colors disabled:opacity-60"
+                >
+                  {s.photo_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={s.photo_url} alt={s.name} className="w-12 h-12 rounded-full object-cover" />
+                  ) : (
+                    <span className="w-12 h-12 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant">
+                      <UserRound className="w-6 h-6" />
+                    </span>
+                  )}
+                  <span className="text-xs font-medium text-on-surface truncate w-full">{s.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {thanked && (
+          <p className="text-sm text-success font-medium mb-4">{t('thankedStaff', { name: thanked })}</p>
+        )}
         <button
           onClick={() => setPlaced(null)}
           className="px-6 py-2.5 rounded-lg bg-primary text-on-primary text-sm font-semibold shadow-float"
@@ -348,9 +409,49 @@ function Storefront() {
               />
             </div>
             <div className="px-4 py-3 border-t border-outline-variant">
+              <p className="text-xs font-medium text-on-surface-variant mb-2">{t('thankTeam')}</p>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {[
+                  { key: '0', label: t('noTip') },
+                  { key: '15', label: '15%' },
+                  { key: '18', label: '18%' },
+                  { key: '20', label: '20%' },
+                  { key: 'custom', label: t('customTip') },
+                ].map((opt) => (
+                  <button
+                    key={opt.key}
+                    onClick={() => setTipChoice(opt.key)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                      tipChoice === opt.key ? 'bg-primary text-on-primary' : 'bg-surface-container text-on-surface-variant'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {tipChoice === 'custom' && (
+                <input
+                  type="number"
+                  min={0}
+                  value={customTip}
+                  onChange={(e) => setCustomTip(e.target.value)}
+                  placeholder="%"
+                  className="mb-3 w-24 bg-surface-container border-none rounded-lg px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              )}
+              <div className="flex justify-between text-sm mb-1">
+                <span className="text-on-surface-variant">{t('subtotal')}</span>
+                <span className="text-on-surface">{fmtCurrency(cartTotal)}</span>
+              </div>
+              {tipAmount > 0 && (
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-on-surface-variant">{t('tip')}</span>
+                  <span className="text-on-surface">{fmtCurrency(tipAmount)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-sm mb-3">
                 <span className="text-on-surface-variant">{t('total')}</span>
-                <span className="text-lg font-bold text-primary">{fmtCurrency(cartTotal)}</span>
+                <span className="text-lg font-bold text-primary">{fmtCurrency(grandTotal)}</span>
               </div>
               <button
                 onClick={placeOrder}

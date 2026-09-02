@@ -13,7 +13,7 @@ export async function GET(request: Request) {
     rangeStart.setDate(rangeStart.getDate() - (range - 1));
 
     const [ordersRes, reviewsRes, customersRes, alertsRes] = await Promise.all([
-      client.from('orders').select('total, channel, created_at, status, items').gte('created_at', rangeStart.toISOString()).neq('status', 'cancelled').order('created_at', { ascending: true }),
+      client.from('orders').select('total, channel, created_at, status, items, customer_id').gte('created_at', rangeStart.toISOString()).neq('status', 'cancelled').order('created_at', { ascending: true }),
       client.from('reviews').select('rating'),
       client.from('customers').select('id, churn_risk'),
       client.from('alerts').select('*').order('created_at', { ascending: false }).limit(5),
@@ -76,6 +76,46 @@ export async function GET(request: Request) {
     const avgRating = reviews.length ? Math.round((reviews.reduce((s, r) => s + r.rating, 0) / reviews.length) * 10) / 10 : 0;
     const positiveRate = reviews.length ? Math.round((reviews.filter((r) => r.rating >= 4).length / reviews.length) * 1000) / 10 : 0;
 
+    // 热销时段（按小时）
+    const hourMap = new Map<number, { orders: number; revenue: number }>();
+    for (const o of orders) {
+      const h = new Date(o.created_at).getHours();
+      const cur = hourMap.get(h) ?? { orders: 0, revenue: 0 };
+      hourMap.set(h, { orders: cur.orders + 1, revenue: cur.revenue + Number(o.total ?? 0) });
+    }
+    const hotHours = [...hourMap.entries()]
+      .map(([hour, v]) => ({ hour, orders: v.orders, revenue: Math.round(v.revenue * 100) / 100 }))
+      .sort((a, b) => b.orders - a.orders)
+      .slice(0, 6);
+
+    // 菜品组合（共现）
+    const pairMap = new Map<string, number>();
+    for (const o of orders) {
+      const names = Array.from(new Set(((o.items as { name: string }[]) ?? []).map((i) => i.name)));
+      for (let i = 0; i < names.length; i++) {
+        for (let j = i + 1; j < names.length; j++) {
+          const key = [names[i], names[j]].sort().join(' + ');
+          pairMap.set(key, (pairMap.get(key) ?? 0) + 1);
+        }
+      }
+    }
+    const combos = [...pairMap.entries()]
+      .map(([combo, count]) => ({ combo, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    // 复购（按 customer_id 订单数）
+    const orderCountByCustomer = new Map<string, number>();
+    for (const o of orders) {
+      if (o.customer_id) orderCountByCustomer.set(o.customer_id, (orderCountByCustomer.get(o.customer_id) ?? 0) + 1);
+    }
+    const repeatCustomers = Array.from(orderCountByCustomer.values()).filter((c) => c > 1).length;
+    const repeat = {
+      repeatCustomers,
+      totalBuyers: orderCountByCustomer.size,
+      rate: Math.round((repeatCustomers / (orderCountByCustomer.size || 1)) * 1000) / 10,
+    };
+
     return json({
       kpi: {
         todayRevenue: Math.round(todayRevenue * 100) / 100,
@@ -91,6 +131,7 @@ export async function GET(request: Request) {
       revenueTrend,
       channels,
       topDishes,
+      orderIntel: { hotHours, combos, repeat },
       totals: { customers: customers.length, churnHigh: customers.filter((c) => c.churn_risk === 'high').length },
       alerts: alertsRes.data ?? [],
     });

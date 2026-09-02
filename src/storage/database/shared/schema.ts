@@ -10,6 +10,7 @@ import {
   numeric,
   jsonb,
   index,
+  primaryKey,
   vector,
 } from "drizzle-orm/pg-core";
 
@@ -18,6 +19,69 @@ export const healthCheck = pgTable("health_check", {
   id: serial().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow(),
 });
+
+// ---------- 平台 / 多租户 ----------
+export const tenants = pgTable("tenants", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 128 }).notNull(),
+  slug: varchar("slug", { length: 64 }).notNull().unique(),
+  plan: varchar("plan", { length: 20 }).notNull().default("free"),
+  status: varchar("status", { length: 20 }).notNull().default("active"),
+  created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const businesses = pgTable("businesses", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  tenant_id: varchar("tenant_id", { length: 36 }).notNull().references(() => tenants.id),
+  name: varchar("name", { length: 128 }).notNull(),
+  industry: varchar("industry", { length: 30 }).notNull().default("restaurant"),
+  location: varchar("location", { length: 128 }),
+  language: varchar("language", { length: 8 }).notNull().default("en"),
+  currency: varchar("currency", { length: 8 }).notNull().default("USD"),
+  brand_style: jsonb("brand_style").$type<Record<string, unknown>>().notNull().default({}),
+  schema_config: jsonb("schema_config").$type<Record<string, unknown>>().notNull().default({}),
+  created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const users = pgTable("users", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  tenant_id: varchar("tenant_id", { length: 36 }).notNull().references(() => tenants.id),
+  business_id: varchar("business_id", { length: 36 }).references(() => businesses.id),
+  email: varchar("email", { length: 255 }).notNull(),
+  name: varchar("name", { length: 128 }),
+  created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const roles = pgTable("roles", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 30 }).notNull(),
+  permissions: jsonb("permissions").$type<string[]>().notNull().default([]),
+});
+
+export const userRoles = pgTable(
+  "user_roles",
+  {
+    user_id: varchar("user_id", { length: 36 }).notNull().references(() => users.id),
+    role_id: varchar("role_id", { length: 36 }).notNull().references(() => roles.id),
+  },
+  (table) => [primaryKey({ columns: [table.user_id, table.role_id] })]
+);
+
+export const auditLogs = pgTable(
+  "audit_logs",
+  {
+    id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+    tenant_id: varchar("tenant_id", { length: 36 }).notNull(),
+    actor_id: varchar("actor_id", { length: 36 }),
+    action: varchar("action", { length: 40 }).notNull(),
+    entity: varchar("entity", { length: 40 }).notNull(),
+    entity_id: varchar("entity_id", { length: 36 }),
+    before: jsonb("before").$type<Record<string, unknown>>(),
+    after: jsonb("after").$type<Record<string, unknown>>(),
+    created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("audit_logs_tenant_idx").on(table.tenant_id), index("audit_logs_entity_idx").on(table.entity)]
+);
 
 // ---------- 经营核心 ----------
 export const products = pgTable(
@@ -67,6 +131,9 @@ export const orders = pgTable(
     customer_id: varchar("customer_id", { length: 36 }).references(() => customers.id),
     items: jsonb("items").$type<{ name: string; qty: number; price: number }[]>().notNull().default([]),
     total: numeric("total", { precision: 10, scale: 2 }).notNull().default("0"),
+    tip: numeric("tip", { precision: 10, scale: 2 }).notNull().default("0"),
+    tip_percent: numeric("tip_percent", { precision: 5, scale: 2 }),
+    tip_staff_id: varchar("tip_staff_id", { length: 36 }),
     channel: varchar("channel", { length: 20 }).notNull().default("dine_in"),
     status: varchar("status", { length: 20 }).notNull().default("pending"),
     source: varchar("source", { length: 20 }).notNull().default("native"),
@@ -337,4 +404,28 @@ export const settings = pgTable("settings", {
   ai_prefs: jsonb("ai_prefs").$type<Record<string, unknown>>().notNull().default({}),
   model_assign: jsonb("model_assign").$type<Record<string, string>>().notNull().default({}),
   updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ---------- 定时任务状态（轻量 KV，供 scheduler 记录推送水位线） ----------
+export const cronState = pgTable("cron_state", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").$type<Record<string, unknown>>().notNull().default({}),
+  updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ---------- 员工（用于小费归因，顾客下单后选择服务员工） ----------
+export const staff = pgTable("staff", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 128 }).notNull(),
+  role: varchar("role", { length: 50 }),
+  photo_url: text("photo_url"),
+  is_active: boolean("is_active").notNull().default(true),
+  created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ---------- 企业长期记忆（AI COO 沉淀的经营事实/经验） ----------
+export const businessMemories = pgTable("business_memories", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  content: text("content").notNull(),
+  created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

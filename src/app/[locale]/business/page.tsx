@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
-import { Plus, X, Sparkles, Bot, RefreshCw, Factory, QrCode, Download, Copy, Check, Trash2, ImagePlus, Video, ExternalLink, Pencil, ClipboardList } from 'lucide-react';
+import { Plus, X, Sparkles, Bot, RefreshCw, Factory, QrCode, Download, Copy, Check, Trash2, ImagePlus, Video, ExternalLink, Pencil, ClipboardList, Users } from 'lucide-react';
 import QRCode from 'qrcode';
 import { fmtCurrency, fmtDateTime } from '@/lib/format';
 import { Link } from '@/i18n/navigation';
 
-type Tab = 'products' | 'orders' | 'inventory' | 'qr';
+type Tab = 'products' | 'orders' | 'inventory' | 'qr' | 'staff';
 
 interface Product {
   id: string;
@@ -45,6 +45,8 @@ interface Order {
   customer_name: string | null;
   items: { name: string; qty: number; price: number }[];
   total: string;
+  tip: string | number | null;
+  tip_percent: string | number | null;
   channel: string;
   status: string;
   source: string;
@@ -63,6 +65,15 @@ interface InventoryItem {
   safety_stock: string;
   supplier: string | null;
   synced_at: string | null;
+}
+
+interface Staff {
+  id: string;
+  name: string;
+  role: string | null;
+  photo_url: string | null;
+  is_active: boolean;
+  tipTotal: number;
 }
 
 const ORDER_STATUS_COLORS: Record<string, string> = {
@@ -94,6 +105,7 @@ export default function BusinessPage() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [prodForm, setProdForm] = useState({ name: '', category: '招牌菜', price: '', cost: '', description: '', image_url: '', video_url: '' });
   const [prodSaving, setProdSaving] = useState(false);
+  const [prodGenLoading, setProdGenLoading] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -118,6 +130,15 @@ export default function BusinessPage() {
   const [orderStatusFilter, setOrderStatusFilter] = useState('all');
   const [orderTableFilter, setOrderTableFilter] = useState('all');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [tipStats, setTipStats] = useState<{ todayTip: number; weekTip: number; tipByTable: { table_no: string; tip: number }[] }>({ todayTip: 0, weekTip: 0, tipByTable: [] });
+  const [tipInsight, setTipInsight] = useState<string>('');
+  const [tipInsightLoading, setTipInsightLoading] = useState(false);
+
+  // 员工
+  const [staffList, setStaffList] = useState<Staff[]>([]);
+  const [staffForm, setStaffForm] = useState<{ id: string | null; name: string; role: string; photo_url: string }>({ id: null, name: '', role: '', photo_url: '' });
+  const [uploadingStaffPhoto, setUploadingStaffPhoto] = useState(false);
+  const staffPhotoRef = useRef<HTMLInputElement>(null);
 
   // 库存
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -136,7 +157,57 @@ export default function BusinessPage() {
     const data = await res.json();
     setOrders(data.orders ?? []);
     setOrderTables(data.tables ?? []);
+    setTipStats(data.tipStats ?? { todayTip: 0, weekTip: 0, tipByTable: [] });
   }, []);
+
+  const loadTipInsight = async () => {
+    setTipInsightLoading(true);
+    setTipInsight('');
+    try {
+      const res = await fetch(`/api/business/tip-insight?locale=${locale}`);
+      const data = await res.json();
+      setTipInsight(data.insight ?? '');
+    } catch {
+      setTipInsight('');
+    } finally {
+      setTipInsightLoading(false);
+    }
+  };
+
+  const loadStaff = useCallback(async () => {
+    const res = await fetch('/api/business/staff');
+    const data = await res.json();
+    setStaffList(data.staff ?? []);
+  }, []);
+
+  const uploadStaffPhoto = async (file: File) => {
+    setUploadingStaffPhoto(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch('/api/upload', { method: 'POST', body: form });
+      const data = await res.json();
+      if (data.url) setStaffForm((f) => ({ ...f, photo_url: data.url }));
+    } finally {
+      setUploadingStaffPhoto(false);
+    }
+  };
+
+  const saveStaff = async () => {
+    if (!staffForm.name.trim()) return;
+    await fetch('/api/business/staff', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: staffForm.id, name: staffForm.name, role: staffForm.role, photo_url: staffForm.photo_url }),
+    });
+    setStaffForm({ id: null, name: '', role: '', photo_url: '' });
+    await loadStaff();
+  };
+
+  const deleteStaff = async (id: string) => {
+    await fetch(`/api/business/staff?id=${id}`, { method: 'DELETE' });
+    await loadStaff();
+  };
 
   const loadInventory = useCallback(async () => {
     const res = await fetch('/api/business/inventory');
@@ -164,8 +235,9 @@ export default function BusinessPage() {
     if (tab === 'products') loadProducts();
     else if (tab === 'orders') loadOrders(orderStatusFilter, orderTableFilter);
     else if (tab === 'inventory') loadInventory();
+    else if (tab === 'staff') loadStaff();
     else loadQrCodes();
-  }, [tab, orderStatusFilter, orderTableFilter, loadProducts, loadOrders, loadInventory, loadQrCodes]);
+  }, [tab, orderStatusFilter, orderTableFilter, loadProducts, loadOrders, loadInventory, loadQrCodes, loadStaff]);
 
   const filteredProducts = useMemo(
     () => (prodCatFilter === 'all' ? products : products.filter((p) => p.category === prodCatFilter)),
@@ -216,6 +288,32 @@ export default function BusinessPage() {
       alert(e instanceof Error ? e.message : 'Upload failed');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const generateProduct = async () => {
+    const image = prodForm.image_url || undefined;
+    const brief = window.prompt(t('aiBriefPrompt'));
+    if (!brief && !image) return;
+    setProdGenLoading(true);
+    try {
+      const res = await fetch('/api/business/products/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brief: brief ?? '', image, locale }),
+      });
+      const data = await res.json();
+      const p = data.product;
+      if (p) {
+        setProdForm((f) => ({
+          ...f,
+          name: p.name ?? f.name,
+          description: p.description ?? f.description,
+          category: p.category ?? f.category,
+        }));
+      }
+    } finally {
+      setProdGenLoading(false);
     }
   };
 
@@ -312,6 +410,7 @@ export default function BusinessPage() {
     { key: 'products', label: t('tabProducts') },
     { key: 'orders', label: t('tabOrders') },
     { key: 'inventory', label: t('tabInventory') },
+    { key: 'staff', label: t('tabStaff') },
     { key: 'qr', label: t('tabQr') },
   ];
 
@@ -436,6 +535,38 @@ export default function BusinessPage() {
       {/* 订单管理面板 */}
       {tab === 'orders' && (
         <div>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="rounded-md bg-primary/10 p-4">
+              <p className="text-xs text-on-surface-variant">{t('tipToday')}</p>
+              <p className="text-xl font-bold text-primary mt-0.5">{fmtCurrency(tipStats.todayTip)}</p>
+            </div>
+            <div className="rounded-md bg-success/10 p-4">
+              <p className="text-xs text-on-surface-variant">{t('tipWeek')}</p>
+              <p className="text-xl font-bold text-success mt-0.5">{fmtCurrency(tipStats.weekTip)}</p>
+            </div>
+          </div>
+          {tipStats.tipByTable.length > 0 && (
+            <div className="rounded-md bg-surface-container/60 p-4 mb-4">
+              <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide mb-2">{t('tipByTable')}</p>
+              <div className="flex flex-wrap gap-2">
+                {tipStats.tipByTable.map((tb) => (
+                  <span key={tb.table_no} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface text-sm">
+                    <span className="font-semibold text-on-surface">{tb.table_no}</span>
+                    <span className="font-medium text-success">{fmtCurrency(tb.tip)}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="rounded-md bg-surface-container/60 p-4 mb-4">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <p className="text-sm font-semibold">{t('tipInsight')}</p>
+              <button onClick={loadTipInsight} disabled={tipInsightLoading} className="px-3 py-1.5 rounded-md bg-primary text-on-primary text-xs font-medium hover:opacity-90 disabled:opacity-60 shrink-0">
+                {tipInsightLoading ? tc('loading') : t('tipInsightBtn')}
+              </button>
+            </div>
+            {tipInsight && <div className="text-sm text-on-surface whitespace-pre-wrap leading-relaxed">{tipInsight}</div>}
+          </div>
           <div className="flex items-center gap-2 mb-4 flex-wrap">
             {['all', 'pending', 'preparing', 'done', 'cancelled'].map((st) => (
               <button
@@ -492,7 +623,12 @@ export default function BusinessPage() {
                     </span>
                     <span className="text-xs text-on-surface-variant">{fmtDateTime(o.created_at, locale)}</span>
                     <span className="text-sm truncate">{o.items.map((it) => `${it.name} ×${it.qty}`).join('、')}</span>
-                    <span className="text-sm font-semibold">{fmtCurrency(o.total)}</span>
+                    <span className="text-sm font-semibold">
+                      {fmtCurrency(o.total)}
+                      {Number(o.tip ?? 0) > 0 && (
+                        <span className="block text-[11px] font-medium text-success">+ {fmtCurrency(Number(o.tip ?? 0))} {t('tip')}</span>
+                      )}
+                    </span>
                     <span className={`inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium w-fit ${CHANNEL_BADGE[o.channel] ?? CHANNEL_BADGE.dine_in}`}>
                       {t(`channels.${o.channel}` as 'channels.dine_in')}
                     </span>
@@ -635,6 +771,98 @@ export default function BusinessPage() {
                 })
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 员工管理面板 */}
+      {tab === 'staff' && (
+        <div className="space-y-5">
+          <div className="bg-surface rounded-lg shadow-card p-6">
+            <h3 className="text-base font-semibold mb-1">{t('staffTitle')}</h3>
+            <p className="text-xs text-on-surface-variant mb-5">{t('staffNote')}</p>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1.5">{t('staffName')}</label>
+                <input
+                  value={staffForm.name}
+                  onChange={(e) => setStaffForm((f) => ({ ...f, name: e.target.value }))}
+                  placeholder={t('staffNamePh')}
+                  className="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1.5">{t('staffRole')}</label>
+                <input
+                  value={staffForm.role}
+                  onChange={(e) => setStaffForm((f) => ({ ...f, role: e.target.value }))}
+                  placeholder={t('staffRolePh')}
+                  className="w-full bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1.5">{t('staffPhoto')}</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={staffPhotoRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadStaffPhoto(f); e.target.value = ''; }}
+                  />
+                  <button
+                    onClick={() => staffPhotoRef.current?.click()}
+                    disabled={uploadingStaffPhoto}
+                    className="px-3 py-2 rounded-md bg-surface-container text-on-surface text-sm hover:bg-surface-container-high disabled:opacity-60"
+                  >
+                    {uploadingStaffPhoto ? tc('loading') : staffForm.photo_url ? t('staffChangePhoto') : t('staffUploadPhoto')}
+                  </button>
+                  {staffForm.photo_url && <img src={staffForm.photo_url} alt="" className="w-9 h-9 rounded-md object-cover" />}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 flex items-center gap-2 justify-end">
+              {staffForm.id && (
+                <button onClick={() => setStaffForm({ id: null, name: '', role: '', photo_url: '' })} className="px-4 py-2 rounded-md text-sm font-medium bg-surface-container text-on-surface hover:bg-surface-container-high">
+                  {t('staffCancel')}
+                </button>
+              )}
+              <button onClick={saveStaff} disabled={!staffForm.name.trim()} className="px-4 py-2 rounded-md text-sm font-medium bg-primary text-on-primary hover:opacity-90 disabled:opacity-60">
+                {staffForm.id ? tc('save') : t('staffAdd')}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {staffList.length === 0 ? (
+              <p className="col-span-full px-5 py-10 text-center text-sm text-on-surface-variant">{tc('noData')}</p>
+            ) : (
+              staffList.map((s) => (
+                <div key={s.id} className="bg-surface rounded-lg shadow-card p-4">
+                  <div className="w-14 h-14 rounded-full bg-surface-container overflow-hidden mx-auto mb-2">
+                    {s.photo_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={s.photo_url} alt={s.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-on-surface-variant/40">
+                        <Users className="w-7 h-7" />
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-sm font-semibold text-on-surface text-center truncate">{s.name}</p>
+                  {s.role && <p className="text-xs text-on-surface-variant text-center mt-0.5">{s.role}</p>}
+                  <p className="text-xs text-success font-medium text-center mt-1">{t('staffTipTotal', { amount: fmtCurrency(s.tipTotal) })}</p>
+                  <div className="flex items-center justify-center gap-2 mt-3">
+                    <button onClick={() => setStaffForm({ id: s.id, name: s.name, role: s.role ?? '', photo_url: s.photo_url ?? '' })} className="p-1.5 rounded-md bg-surface-container text-on-surface-variant hover:text-on-surface">
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => deleteStaff(s.id)} className="p-1.5 rounded-md bg-surface-container text-error hover:bg-error/10">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}
@@ -799,12 +1027,22 @@ export default function BusinessPage() {
           <div className="bg-surface rounded-xl shadow-dialog max-w-md w-full p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-base font-semibold">{editingProduct ? t('editProduct') : t('newProduct')}</h3>
-              <button
-                onClick={() => setShowProdModal(false)}
-                className="w-8 h-8 rounded-md hover:bg-surface-container flex items-center justify-center text-on-surface-variant transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={generateProduct}
+                  disabled={prodGenLoading}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary/10 text-primary text-xs font-medium hover:bg-primary/15 disabled:opacity-60"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {prodGenLoading ? tc('loading') : t('aiGenerate')}
+                </button>
+                <button
+                  onClick={() => setShowProdModal(false)}
+                  className="w-8 h-8 rounded-md hover:bg-surface-container flex items-center justify-center text-on-surface-variant transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
             <div className="space-y-4">
               <div>

@@ -20,6 +20,11 @@ type DashboardData = {
   revenueTrend: { date: string; amount: number }[];
   channels: { channel: string; count: number; pct: number }[];
   topDishes: { name: string; quantity: number; revenue: number }[];
+  orderIntel: {
+    hotHours: { hour: number; orders: number; revenue: number }[];
+    combos: { combo: string; count: number }[];
+    repeat: { repeatCustomers: number; totalBuyers: number; rate: number };
+  };
   totals: { customers: number; churnHigh: number };
   alerts: { id: string; type: string; title: string; content: string; created_at: string }[];
 };
@@ -366,6 +371,48 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* 智能经营洞察 */}
+      {data?.orderIntel && (
+        <div className="bg-card rounded-lg shadow-card p-5 mt-6">
+          <h2 className="text-base font-semibold mb-4 flex items-center gap-2">
+            <span className="w-6 h-6 rounded-md bg-primary/10 text-primary flex items-center justify-center"><Sparkles className="w-3.5 h-3.5" /></span>
+            {t('orderIntel')}
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <div>
+              <p className="text-xs text-muted-foreground mb-2">{t('hotHours')}</p>
+              <div className="flex flex-wrap gap-2">
+                {data.orderIntel.hotHours.map((h) => (
+                  <span key={h.hour} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-primary/10 text-primary text-xs font-medium">
+                    {h.hour}:00 · {h.orders}
+                  </span>
+                ))}
+                {data.orderIntel.hotHours.length === 0 && <span className="text-xs text-muted-foreground">—</span>}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-2">{t('combos')}</p>
+              <div className="space-y-1.5">
+                {data.orderIntel.combos.map((c) => (
+                  <div key={c.combo} className="flex items-center justify-between text-sm">
+                    <span className="font-medium truncate">{c.combo}</span>
+                    <span className="text-xs text-muted-foreground shrink-0 ml-2">×{c.count}</span>
+                  </div>
+                ))}
+                {data.orderIntel.combos.length === 0 && <span className="text-xs text-muted-foreground">—</span>}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-2">{t('repeatRate')}</p>
+              <p className="text-2xl font-bold text-primary">{data.orderIntel.repeat.rate}%</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {data.orderIntel.repeat.repeatCustomers} / {data.orderIntel.repeat.totalBuyers}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

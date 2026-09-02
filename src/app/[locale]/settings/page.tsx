@@ -4,13 +4,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import { useRouter, usePathname } from '@/i18n/navigation';
 import {
-  Store, Languages, KeyRound, Inbox, Blocks, SlidersHorizontal, Database,
+  Store, Languages, KeyRound, Inbox, Blocks, SlidersHorizontal, Database, MessageCircle,
   X, Zap, Plus, Mail, Server, ShieldCheck, Factory, Square, ShoppingBag,
   CreditCard, Wallet, Plug, Check, Minus, RefreshCw, Trash2, TriangleAlert, CircleCheck, CircleX,
+  Send,
 } from 'lucide-react';
 import { fmtDateTime } from '@/lib/format';
+import { CHANNEL_PRESETS, type ChannelKey } from '@/lib/channels-presets';
 
-type Group = 'business' | 'locale' | 'models' | 'mailbox' | 'integrations' | 'ai' | 'data';
+type Group = 'business' | 'locale' | 'models' | 'mailbox' | 'integrations' | 'channels' | 'ai' | 'data';
 
 interface Provider {
   id: string;
@@ -48,6 +50,12 @@ interface Integration {
 const PROVIDER_INITIALS: Record<string, string> = {
   claude: 'C', openai: 'O', gemini: 'G', deepseek: 'D', doubao: '豆',
   kimi: 'K', qwen: '通', glm: '智', grok: 'X', custom: '',
+};
+
+const CHANNEL_LABELS: Record<ChannelKey, string> = {
+  telegram: 'Telegram', whatsapp: 'WhatsApp', slack: 'Slack', discord: 'Discord',
+  mattermost: 'Mattermost', matrix: 'Matrix', feishu: 'Feishu', wecom: 'WeCom', dingtalk: 'DingTalk',
+  signal: 'Signal', bluebubbles: 'BlueBubbles (iMessage)', weixin: 'WeChat', qqbot: 'QQ Bot',
 };
 
 const INT_FIELDS: Record<string, { key: string; secret?: boolean; placeholder?: string }[]> = {
@@ -137,6 +145,13 @@ export default function SettingsPage() {
   const [intModal, setIntModal] = useState<string | null>(null);
   const [intForm, setIntForm] = useState<Record<string, string>>({});
   const [intTest, setIntTest] = useState<{ state: 'idle' | 'testing' | 'ok' | 'fail'; error?: string }>({ state: 'idle' });
+  // 社交通讯
+  const [channels, setChannels] = useState<string[]>([]);
+  const [chModal, setChModal] = useState<ChannelKey | null>(null);
+  const [chForm, setChForm] = useState<Record<string, string>>({});
+  const [chTest, setChTest] = useState<{ state: 'idle' | 'testing' | 'ok' | 'fail'; error?: string }>({ state: 'idle' });
+  const [chSending, setChSending] = useState(false);
+  const [chSendTip, setChSendTip] = useState('');
   // 数据
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [wipeModal, setWipeModal] = useState(false);
@@ -172,6 +187,12 @@ export default function SettingsPage() {
     setIntegrations(data.integrations ?? []);
   }, []);
 
+  const loadChannels = useCallback(async () => {
+    const res = await fetch('/api/channels');
+    const data = await res.json();
+    setChannels(data.channels ?? []);
+  }, []);
+
   const loadCounts = useCallback(async () => {
     const res = await fetch('/api/settings/overview');
     const data = await res.json();
@@ -186,8 +207,9 @@ export default function SettingsPage() {
     if (group === 'models') loadProviders();
     if (group === 'mailbox') loadAccounts();
     if (group === 'integrations') loadIntegrations();
+    if (group === 'channels') loadChannels();
     if (group === 'data') loadCounts();
-  }, [group, loadProviders, loadAccounts, loadIntegrations, loadCounts]);
+  }, [group, loadProviders, loadAccounts, loadIntegrations, loadChannels, loadCounts]);
 
   const saveSection = async (key: string, value: unknown) => {
     await fetch('/api/settings', {
@@ -313,6 +335,52 @@ export default function SettingsPage() {
     setter(data.ok ? { state: 'ok' } : { state: 'fail', error: data.error });
   };
 
+  // 社交通讯
+  const saveChannel = async (provider: string, config: Record<string, string>) => {
+    await fetch('/api/channels', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, config }),
+    });
+    setChModal(null);
+    await loadChannels();
+    flashSaved();
+  };
+
+  const disconnectChannel = async (provider: string) => {
+    await fetch(`/api/channels?provider=${provider}`, { method: 'DELETE' });
+    await loadChannels();
+  };
+
+  const testChannel = async (provider: string, config: Record<string, unknown>) => {
+    setChTest({ state: 'testing' });
+    const res = await fetch('/api/channels/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, config }),
+    });
+    const data = await res.json();
+    setChTest(data.ok ? { state: 'ok' } : { state: 'fail', error: data.error });
+  };
+
+  const sendBriefing = async (provider?: string) => {
+    setChSending(true);
+    setChSendTip('');
+    try {
+      const res = await fetch('/api/channels/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(provider ? { provider, text: t('testMessage') } : {}),
+      });
+      const data = await res.json();
+      setChSendTip(data.ok ? t('briefingSent', { count: data.sent?.length ?? 0 }) : (data.error ?? t('sendFail')));
+    } catch {
+      setChSendTip(t('sendFail'));
+    } finally {
+      setChSending(false);
+    }
+  };
+
   const wipeData = async () => {
     setWiping(true);
     try {
@@ -333,6 +401,7 @@ export default function SettingsPage() {
     { key: 'models', icon: KeyRound, label: t('groupModels') },
     { key: 'mailbox', icon: Inbox, label: t('groupMailbox') },
     { key: 'integrations', icon: Blocks, label: t('groupIntegrations') },
+    { key: 'channels', icon: MessageCircle, label: t('groupChannels') },
     { key: 'ai', icon: SlidersHorizontal, label: t('groupAi') },
     { key: 'data', icon: Database, label: t('groupData') },
   ];
@@ -857,6 +926,108 @@ export default function SettingsPage() {
             </div>
           )}
 
+          {/* 社交通讯 */}
+          {group === 'channels' && (
+            <div className="bg-surface rounded-lg shadow-card p-6">
+              <h2 className="text-base font-semibold mb-1">{t('groupChannels')}</h2>
+              <p className="text-xs text-on-surface-variant mb-5">{t('channelsNote')}</p>
+
+              <div className="rounded-md bg-surface-container/60 p-5 mb-6">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <span className="w-10 h-10 rounded-md bg-primary/10 text-primary flex items-center justify-center">
+                      <Send className="w-5 h-5" />
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold">{t('pushBriefing')}</p>
+                      <p className="text-xs text-on-surface-variant mt-0.5">{t('pushBriefingNote')}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => sendBriefing()} disabled={chSending || channels.length === 0} className={`${primaryBtn} shrink-0`}>
+                    {chSending ? tc('loading') : t('pushNow')}
+                  </button>
+                </div>
+                {chSendTip && <p className="text-xs text-on-surface-variant mt-3">{chSendTip}</p>}
+              </div>
+
+              <div className="rounded-md bg-surface-container/60 p-5 mb-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <span className="w-10 h-10 rounded-md bg-primary/10 text-primary flex items-center justify-center">
+                    <RefreshCw className="w-5 h-5" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold">{t('autoPush')}</p>
+                    <p className="text-xs text-on-surface-variant mt-0.5">{t('autoPushNote')}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelCls}>{t('briefingTime')}</label>
+                    <input
+                      type="time"
+                      value={(aiPrefs.channel_briefing_time as string) ?? '08:00'}
+                      onChange={(e) => setSettings((s) => s && { ...s, ai_prefs: { ...s.ai_prefs, channel_briefing_time: e.target.value } })}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium">{t('anomalyPush')}</p>
+                      <p className="text-xs text-on-surface-variant">{t('anomalyPushNote')}</p>
+                    </div>
+                    <Toggle on={aiPrefs.channel_anomaly_push !== false} onChange={(v) => setSettings((s) => s && { ...s, ai_prefs: { ...s.ai_prefs, channel_anomaly_push: v } })} />
+                  </div>
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <button onClick={() => saveSection('ai_prefs', aiPrefs)} className={primaryBtn}>{tc('save')}</button>
+                </div>
+              </div>
+
+              <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide mb-3">{t('channels')}</p>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {CHANNEL_PRESETS.map((preset) => {
+                  const connected = channels.includes(preset.key);
+                  return (
+                    <div key={preset.key} className="rounded-md bg-surface-container/60 p-5">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <span className="w-10 h-10 rounded-md bg-on-surface/10 text-on-surface flex items-center justify-center">
+                            <MessageCircle className="w-5 h-5" />
+                          </span>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-semibold">{CHANNEL_LABELS[preset.key]}</p>
+                              <StatusBadge connected={connected} connectedText={tc('connected')} disconnectedText={preset.ready ? tc('notConfigured') : t('soon')} />
+                            </div>
+                            <p className="text-xs text-on-surface-variant mt-0.5">{t(`channelNote.${preset.key}`)}</p>
+                          </div>
+                        </div>
+                        {preset.ready ? (
+                          <button onClick={() => { setChModal(preset.key); setChForm({}); setChTest({ state: 'idle' }); }} className="text-sm text-primary font-medium hover:underline shrink-0">
+                            {connected ? tc('manage') : tc('configure')}
+                          </button>
+                        ) : (
+                          <span className="text-xs text-on-surface-variant/60 shrink-0">{t('soon')}</span>
+                        )}
+                      </div>
+                      {connected ? (
+                        <div className="flex flex-wrap gap-2">
+                          <button onClick={() => sendBriefing(preset.key)} disabled={chSending} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-surface text-xs hover:bg-surface-container-high transition-colors disabled:opacity-60">
+                            <Send className="w-3 h-3" />
+                            {t('sendTest')}
+                          </button>
+                          <button onClick={() => disconnectChannel(preset.key)} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-surface text-xs text-error">
+                            {t('disconnect')}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* AI 偏好 */}
           {group === 'ai' && (
             <div className="bg-surface rounded-lg shadow-card p-6">
@@ -1217,6 +1388,60 @@ export default function SettingsPage() {
                 {intTest.state === 'testing' ? tc('loading') : tc('testConnection')}
               </button>
               <button onClick={() => saveIntegration(intModal, intForm, [])} className={primaryBtn}>{tc('save')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 社交通讯连接弹窗 */}
+      {chModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-on-surface/40 backdrop-blur-sm" onClick={() => setChModal(null)} />
+          <div className="bg-surface rounded-xl shadow-dialog max-w-lg w-full p-6 relative max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Plug className="w-5 h-5 text-primary" />
+                {t('configChannel', { name: CHANNEL_LABELS[chModal] })}
+              </h3>
+              <button onClick={() => setChModal(null)} className="p-1.5 rounded-md hover:bg-surface-container transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-4 mb-4">
+              {(CHANNEL_PRESETS.find((c) => c.key === chModal)?.fields ?? []).map((field) => (
+                <div key={field.key}>
+                  <label className={labelCls}>{t(`channelFields.${field.key}`)}</label>
+                  <input
+                    type={field.secret ? 'password' : 'text'}
+                    value={chForm[field.key] ?? ''}
+                    onChange={(e) => setChForm({ ...chForm, [field.key]: e.target.value })}
+                    placeholder={field.placeholder}
+                    className={`${inputCls} font-mono`}
+                  />
+                </div>
+              ))}
+            </div>
+            {chTest.state === 'ok' && (
+              <div className="mb-4 rounded-md bg-success/10 p-3 flex items-center gap-2">
+                <CircleCheck className="w-4 h-4 text-success shrink-0" />
+                <span className="text-xs text-success font-medium">{t('testOk')}</span>
+              </div>
+            )}
+            {chTest.state === 'fail' && (
+              <div className="mb-4 rounded-md bg-error/10 p-3 flex items-center gap-2">
+                <CircleX className="w-4 h-4 text-error shrink-0" />
+                <span className="text-xs text-error font-medium">{t('testFail', { error: chTest.error ?? '' })}</span>
+              </div>
+            )}
+            <div className="rounded-md bg-surface-container/60 px-4 py-3 mb-5">
+              <p className="text-xs text-on-surface-variant">{t(`channelTip.${chModal}`)}</p>
+            </div>
+            <div className="flex items-center justify-between">
+              <button onClick={() => testChannel(chModal, chForm)} disabled={chTest.state === 'testing'} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium bg-surface-container text-on-surface hover:bg-surface-container-high active:scale-[0.98] transition-all disabled:opacity-60">
+                <Zap className="w-3.5 h-3.5" />
+                {chTest.state === 'testing' ? tc('loading') : tc('testConnection')}
+              </button>
+              <button onClick={() => saveChannel(chModal, chForm)} className={primaryBtn}>{tc('save')}</button>
             </div>
           </div>
         </div>

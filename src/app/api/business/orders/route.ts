@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
 
   let q = supabase
     .from('orders')
-    .select('id, order_no, customer_id, items, total, channel, status, source, external_id, created_at')
+    .select('id, order_no, customer_id, items, total, channel, status, source, external_id, table_no, notes, created_at')
     .order('created_at', { ascending: false })
     .limit(100);
   if (status && status !== 'all') q = q.eq('status', status);

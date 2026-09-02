@@ -48,6 +48,8 @@ export async function POST(request: NextRequest) {
       cost: body.cost ?? 0,
       stock: body.stock ?? 0,
       description: body.description ?? null,
+      image_url: body.image_url ?? null,
+      video_url: body.video_url ?? null,
     })
     .select('id')
     .single();
@@ -59,7 +61,7 @@ export async function PATCH(request: NextRequest) {
   const body = await request.json();
   const supabase = getSupabaseClient();
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  for (const k of ['name', 'category', 'price', 'cost', 'stock', 'status', 'description'] as const) {
+  for (const k of ['name', 'category', 'price', 'cost', 'stock', 'status', 'description', 'image_url', 'video_url'] as const) {
     if (body[k] !== undefined) update[k] = body[k];
   }
   const { error } = await supabase.from('products').update(update).eq('id', body.id);

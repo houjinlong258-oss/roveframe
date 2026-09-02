@@ -36,7 +36,8 @@
     "syncNow": "Sincronizar",
     "back": "Volver",
     "generating": "Generando…",
-    "noData": "Sin datos aún"
+    "noData": "Sin datos aún",
+    "copy": "Copiar"
   },
   "topbar": {
     "alerts": "Alertas",
@@ -373,7 +374,33 @@
     "prodName": "Nombre del producto",
     "prodCost": "Costo",
     "prodDesc": "Descripción",
-    "prodDescPlaceholder": "Descripción opcional para el marketing con IA"
+    "prodDescPlaceholder": "Descripción opcional para el marketing con IA",
+    "tabQr": "QR de pedidos",
+    "editProduct": "Editar producto",
+    "prodImage": "Imagen del producto",
+    "prodVideo": "Video del producto",
+    "uploadImage": "Subir imagen",
+    "uploadVideo": "Subir video",
+    "mediaNote": "Imagen hasta 5MB, video hasta 50MB. Visible en la tienda H5 al guardar.",
+    "storeLinks": "Tienda y API del menú",
+    "storeLinksNote": "La tienda H5 funciona de inmediato. La API del menú se genera automáticamente desde tus productos (nombre, precio, imagen, video) y puede vincularse a cualquier página.",
+    "storefrontUrl": "Tienda H5",
+    "menuApi": "API del menú",
+    "menuApiNote": "La petición GET devuelve info de la tienda, categorías y todos los productos activos con URLs de medios. Los cambios se aplican en tiempo real.",
+    "openStore": "Abrir tienda",
+    "qrGenerate": "Generar código QR de pedido",
+    "qrGenerateNote": "Un código por mesa. Los clientes lo escanean para abrir la tienda H5 con la mesa vinculada y los pedidos llegan a la pestaña de pedidos.",
+    "qrGenerateBtn": "Generar",
+    "qrPrivateRooms": "Salas privadas",
+    "qrMainHall": "Salón principal",
+    "qrRemarkPlaceholder": "Nota (p. ej. Junto a la ventana / Sala 2)",
+    "qrTable": "Mesa {table}",
+    "qrNoRemark": "Sin nota",
+    "qrScans": "{count} escaneos",
+    "qrDownload": "Descargar PNG",
+    "qrEmpty": "Aún no hay códigos QR. Genera uno arriba para una mesa.",
+    "orderTable": "Mesa",
+    "orderNotes": "Notas"
   },
   "settings": {
     "title": "Ajustes",
@@ -567,5 +594,22 @@
     "wipeConfirmTitle": "Confirmar borrado total",
     "wipeConfirm": "Se eliminarán todos los productos, pedidos, clientes, reseñas, correos y documentos de ejemplo. Esta acción no se puede deshacer. ¿Continuar?",
     "wipeConfirmButton": "Confirmar borrado"
+  },
+  "store": {
+    "all": "Todo",
+    "table": "Mesa",
+    "cart": "Carrito",
+    "total": "Total",
+    "placeOrder": "Realizar pedido",
+    "placing": "Enviando...",
+    "placeFailed": "Error al realizar el pedido. Inténtalo de nuevo.",
+    "orderSuccess": "¡Pedido realizado!",
+    "orderSuccessDesc": "La cocina ha recibido tu pedido. Espera un momento.",
+    "orderNo": "N.º de pedido",
+    "backToMenu": "Volver al menú",
+    "notePlaceholder": "Notas para la cocina (p. ej. poco picante)",
+    "sold": "{count} vendidos",
+    "empty": "No hay artículos en esta categoría",
+    "loadFailed": "Error al cargar el menú. Escanea el código QR de nuevo."
   }
 }

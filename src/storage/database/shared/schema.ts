@@ -32,6 +32,8 @@ export const products = pgTable(
     sales_count: integer("sales_count").notNull().default(0),
     status: varchar("status", { length: 20 }).notNull().default("active"),
     description: text("description"),
+    image_url: text("image_url"),
+    video_url: text("video_url"),
     created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -69,6 +71,8 @@ export const orders = pgTable(
     status: varchar("status", { length: 20 }).notNull().default("pending"),
     source: varchar("source", { length: 20 }).notNull().default("native"),
     external_id: varchar("external_id", { length: 128 }),
+    table_no: varchar("table_no", { length: 20 }),
+    notes: text("notes"),
     created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
@@ -265,6 +269,17 @@ export const reservations = pgTable(
   },
   (table) => [index("reservations_reserved_at_idx").on(table.reserved_at), index("reservations_status_idx").on(table.status)]
 );
+
+// ---------- 点餐二维码（一桌一码） ----------
+export const storeQrCodes = pgTable("store_qr_codes", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  table_no: varchar("table_no", { length: 20 }).notNull().unique(),
+  remark: varchar("remark", { length: 128 }),
+  is_active: boolean("is_active").notNull().default(true),
+  scan_count: integer("scan_count").notNull().default(0),
+  created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
 
 // ---------- 设置与集成 ----------
 export const modelConfigs = pgTable(

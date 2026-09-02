@@ -4,7 +4,7 @@
 
 **RoveFrame AI Business OS** — 面向中小企业的 AI COO 智能经营平台。通过集成 AI Agent、知识库、商业数据分析，为商家提供 24/7 智能运营助手。
 
-当前阶段：Phase 1 已完成——10 个页面全部按原型实现，Supabase 数据链路、AI 路由层、RAG、真实邮件发送、多语言（en/zh/es）均已打通并通过 test_run 全量验收。
+当前阶段：Phase 1 已完成——10 个管理页全部按原型实现，Supabase 数据链路、AI 路由层、RAG、真实邮件发送、多语言（en/zh/es）均已打通并通过 test_run 全量验收。Phase 2 已完成——扫码点餐闭环：商品媒体（图片/视频上传至 Supabase Storage）、自动生成的店铺菜单 API、H5 点餐商城（/store）、一桌一码点餐二维码（store_qr_codes 表，商家可备注）。
 
 详细产品规划见 `RoveFrame_AI_Business_OS_Fused_Blueprint.md`。
 
@@ -37,11 +37,12 @@
 │   │   │   ├── customers/          # 客户智能（360 视图 + 评分 + 挽留）
 │   │   │   ├── marketing/          # 营销增长（AI 内容生成 + 逐人个性化发送）
 │   │   │   ├── emails/             # 邮件中心（AI 分类 + 草稿 + 真实 SMTP 发送）
-│   │   │   ├── business/           # 经营数据（产品/订单/库存三 Tab）
+│   │   │   ├── business/           # 经营数据（产品/订单/库存/点餐二维码四 Tab；产品弹窗支持图片视频上传与编辑）
 │   │   │   ├── reservations/       # 预约管理
 │   │   │   ├── settings/           # 设置（7 分组）
+│   │   │   ├── store/              # H5 点餐商城（面向顾客，AppShell 对其旁路，桌号经 ?table= 绑定）
 │   │   │   └── layout.tsx          # html/body + NextIntlClientProvider + AppShell
-│   │   └── api/            # API 路由（与页面一一对应）
+│   │   └── api/            # API 路由（与页面一一对应；api/store/* 为公开接口，api/upload 为媒体上传）
 │   ├── components/
 │   │   ├── layout/         # app-shell / sidebar / topbar（顶栏在上、侧栏在下）
 │   │   ├── ui/             # Shadcn UI 组件库
@@ -70,10 +71,12 @@
 ## 数据层（Supabase）
 
 - 客户端：`getSupabaseClient()`（**同步导出**，service_role_key，无 Auth 场景），来自 `@/storage/database/supabase-client`
-- 18 张表；**易错字段**：`orders.total`（非 total_amount）、`items` 元素用 `qty`（非 quantity）；`settings` 是**单行 jsonb**（business/locale/ai_prefs/model_assign），不是 key-value
+- 19 张表；**易错字段**：`orders.total`（非 total_amount）、`items` 元素用 `qty`（非 quantity）；`settings` 是**单行 jsonb**（business/locale/ai_prefs/model_assign），不是 key-value
 - RAG：`match_doc_chunks(query_embedding vector(1024), match_count int)` RPC，余弦距离
 - 加密凭据：model_configs.credentials / email_accounts.credentials / integration_configs.credentials 均为 AES-256-GCM JSON 字符串（`@/lib/crypto`）
-- seed 数据约定：邮件分类 inquiry/business/complaint/supplier/other；预约状态 pending/confirmed/arrived/cancelled/completed；桌位 A1-A4 包间、B1-B8 大厅
+- seed 数据约定：邮件分类 inquiry/business/complaint/supplier/other；预约状态 pending/confirmed/arrived/cancelled/completed；桌位 A1-A4 包间、B1-B8 大厅（与 store_qr_codes 一一对应）
+- **扫码点餐**：`api/store/menu`（公开，商品含 image_url/video_url，带 ?table= 时累计桌码 scan_count）、`api/store/orders`（服务端按商品表计价，source='qr'，orders.table_no/notes）、`api/store/qr-codes`（一桌一码 upsert）；H5 商城 `[locale]/store` 由 AppShell 正则旁路后台框架
+- **媒体上传**：`api/upload`（multipart）→ Supabase Storage 公共桶 `product-media`（首次上传自动建桶），图片 ≤5MB、视频 ≤50MB；二维码图用 `qrcode` 包前端转 dataURL
 
 ## AI 路由层
 
@@ -90,6 +93,8 @@
 3. **invokeChat 返回 string**，不是 `{ text }`
 4. **React Compiler lint**：渲染期不能重赋值累积变量（如环形图 gradient stops），用 reduce 前缀和
 5. **i18n 键**：改页面后跑 `messages/*.json` 与源码 t() 比对（见 git 历史中的扫描脚本模式），杜绝 MISSING_MESSAGE
+6. **Next.js 路由里 fire-and-forget Promise 会被丢弃**（void promise.then() 不执行）——副作用写库（扫码计数、销量累计）必须 await
+7. **api-helpers 导出**是 `json/jsonError/getErrorMessage/sseResponse`，不是 ok/err
 
 ## 包管理规范
 

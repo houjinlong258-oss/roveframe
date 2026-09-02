@@ -1,11 +1,18 @@
 'use client';
 
 import { useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const pathname = usePathname();
+
+  // H5 点餐商城面向顾客，独立全屏，不带管理后台框架
+  if (/\/store(\/|$)/.test(pathname)) {
+    return <>{children}</>;
+  }
 
   return (
     <div className="min-h-screen">

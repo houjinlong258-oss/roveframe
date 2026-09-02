@@ -36,7 +36,8 @@
     "syncNow": "立即同步",
     "back": "返回",
     "generating": "生成中…",
-    "noData": "暂无数据"
+    "noData": "暂无数据",
+    "copy": "复制"
   },
   "topbar": {
     "alerts": "实时告警",
@@ -373,7 +374,33 @@
     "prodName": "产品名称",
     "prodCost": "成本",
     "prodDesc": "描述",
-    "prodDescPlaceholder": "可选描述，AI 生成营销内容时使用"
+    "prodDescPlaceholder": "可选描述，AI 生成营销内容时使用",
+    "tabQr": "点餐二维码",
+    "editProduct": "编辑商品",
+    "prodImage": "商品图片",
+    "prodVideo": "商品视频",
+    "uploadImage": "上传图片",
+    "uploadVideo": "上传视频",
+    "mediaNote": "图片不超过 5MB，视频不超过 50MB，保存后即刻在 H5 商城展示。",
+    "storeLinks": "店铺链接与菜单 API",
+    "storeLinksNote": "H5 点餐商城开箱即用；菜单 API 根据商品（名称/价格/图片/视频）自动生成，可对接任意前端展示页面。",
+    "storefrontUrl": "点餐商城",
+    "menuApi": "菜单 API",
+    "menuApiNote": "GET 请求返回店铺信息、分类与全部在售商品（含媒体地址），商品更新实时生效。",
+    "openStore": "打开商城",
+    "qrGenerate": "生成点餐二维码",
+    "qrGenerateNote": "一个码固定一个餐位。顾客扫码进入 H5 商城自动绑定桌号下单，订单直达「订单管理」。",
+    "qrGenerateBtn": "生成二维码",
+    "qrPrivateRooms": "包间",
+    "qrMainHall": "大厅",
+    "qrRemarkPlaceholder": "备注（如：靠窗位 / 2 号包间）",
+    "qrTable": "{table} 桌",
+    "qrNoRemark": "未备注",
+    "qrScans": "扫码 {count} 次",
+    "qrDownload": "下载 PNG",
+    "qrEmpty": "还没有二维码，在上方为餐位生成一个吧",
+    "orderTable": "桌号",
+    "orderNotes": "备注"
   },
   "settings": {
     "title": "设置",
@@ -567,5 +594,22 @@
     "wipeConfirmTitle": "确认清空全部数据",
     "wipeConfirm": "将删除全部示例产品、订单、客户、评论、邮件与知识文档。此操作不可恢复，确定继续吗？",
     "wipeConfirmButton": "确认清空"
+  },
+  "store": {
+    "all": "全部",
+    "table": "桌号",
+    "cart": "购物车",
+    "total": "合计",
+    "placeOrder": "提交订单",
+    "placing": "提交中...",
+    "placeFailed": "下单失败，请重试",
+    "orderSuccess": "下单成功！",
+    "orderSuccessDesc": "厨房已收到您的订单，请稍候",
+    "orderNo": "订单号",
+    "backToMenu": "继续点餐",
+    "notePlaceholder": "给厨房的备注（如：少辣）",
+    "sold": "已售 {count}",
+    "empty": "该分类暂无商品",
+    "loadFailed": "菜单加载失败，请重新扫码"
   }
 }

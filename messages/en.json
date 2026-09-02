@@ -36,7 +36,8 @@
     "syncNow": "Sync now",
     "back": "Back",
     "generating": "Generating…",
-    "noData": "No data yet"
+    "noData": "No data yet",
+    "copy": "Copy"
   },
   "topbar": {
     "alerts": "Alerts",
@@ -373,7 +374,33 @@
     "prodName": "Product name",
     "prodCost": "Cost",
     "prodDesc": "Description",
-    "prodDescPlaceholder": "Optional description for AI to use in marketing"
+    "prodDescPlaceholder": "Optional description for AI to use in marketing",
+    "tabQr": "Order QR codes",
+    "editProduct": "Edit product",
+    "prodImage": "Product image",
+    "prodVideo": "Product video",
+    "uploadImage": "Upload image",
+    "uploadVideo": "Upload video",
+    "mediaNote": "Image up to 5MB, video up to 50MB. Shown on the H5 storefront immediately after saving.",
+    "storeLinks": "Storefront & menu API",
+    "storeLinksNote": "The H5 storefront is live out of the box. The menu API is generated automatically from your products (name, price, image, video) and can be linked to any display page.",
+    "storefrontUrl": "Storefront",
+    "menuApi": "Menu API",
+    "menuApiNote": "GET request returns store info, categories and all active products with media URLs. Updates apply in real time.",
+    "openStore": "Open storefront",
+    "qrGenerate": "Generate order QR code",
+    "qrGenerateNote": "One code per table. Customers scan it to open the H5 storefront with the table pre-bound, and orders go straight to the orders tab.",
+    "qrGenerateBtn": "Generate",
+    "qrPrivateRooms": "Private rooms",
+    "qrMainHall": "Main hall",
+    "qrRemarkPlaceholder": "Remark (e.g. Window seat / Room 2)",
+    "qrTable": "Table {table}",
+    "qrNoRemark": "No remark",
+    "qrScans": "{count} scans",
+    "qrDownload": "Download PNG",
+    "qrEmpty": "No QR codes yet. Generate one above for a table.",
+    "orderTable": "Table",
+    "orderNotes": "Notes"
   },
   "settings": {
     "title": "Settings",
@@ -567,5 +594,22 @@
     "wipeConfirmTitle": "Confirm wiping all data",
     "wipeConfirm": "All sample products, orders, customers, reviews, emails and knowledge docs will be deleted. This action cannot be undone. Continue?",
     "wipeConfirmButton": "Confirm wipe"
+  },
+  "store": {
+    "all": "All",
+    "table": "Table",
+    "cart": "Cart",
+    "total": "Total",
+    "placeOrder": "Place order",
+    "placing": "Placing...",
+    "placeFailed": "Failed to place order. Please try again.",
+    "orderSuccess": "Order placed!",
+    "orderSuccessDesc": "The kitchen has received your order. Please wait a moment.",
+    "orderNo": "Order no.",
+    "backToMenu": "Back to menu",
+    "notePlaceholder": "Notes for the kitchen (e.g. less spicy)",
+    "sold": "{count} sold",
+    "empty": "No items in this category",
+    "loadFailed": "Failed to load the menu. Please scan the QR code again."
   }
 }

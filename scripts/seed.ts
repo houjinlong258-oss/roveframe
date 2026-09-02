@@ -23,7 +23,7 @@ async function tableCount(table: string): Promise<number> {
 async function wipe() {
   const tables = [
     "doc_chunks", "chat_messages", "chat_sessions", "email_send_tasks", "emails", "email_accounts",
-    "reviews", "orders", "reservations", "marketing_contents", "alerts", "knowledge_docs",
+    "reviews", "orders", "reservations", "store_qr_codes", "marketing_contents", "alerts", "knowledge_docs",
     "inventory_items", "integration_configs", "model_configs", "products", "customers", "settings",
   ];
   for (const t of tables) {
@@ -231,9 +231,26 @@ async function main() {
     { customer_name: "David Park", phone: "+1-347-555-0188", party_size: 2, table_no: "A1", reserved_at: todayAt(12, 30), status: "arrived", source: "google" },
     { customer_name: "李芳", phone: "+1-347-555-0112", party_size: 3, table_no: "A2", reserved_at: todayAt(20), status: "pending", source: "phone" },
     { customer_name: "赵敏", phone: "+1-718-555-0109", party_size: 4, table_no: "A4", reserved_at: todayAt(20, 30), status: "pending", source: "website", notes: "First visit" },
-    { customer_name: "Mike Johnson", phone: "+1-212-555-0177", party_size: 2, table_no: "A06", reserved_at: todayAt(13), status: "completed", source: "google" },
+    { customer_name: "Mike Johnson", phone: "+1-212-555-0177", party_size: 2, table_no: "B6", reserved_at: todayAt(13), status: "completed", source: "google" },
   ]);
   if (e13) throw new Error(`reservations: ${e13.message}`);
+
+  // ---------- 点餐二维码（一桌一码） ----------
+  const { error: e13b } = await client.from("store_qr_codes").insert([
+    { table_no: "A1", remark: "包间 · 靠窗" },
+    { table_no: "A2", remark: "包间 · 中式屏风" },
+    { table_no: "A3", remark: "包间 · 8 人圆桌" },
+    { table_no: "A4", remark: "包间 · 安静角" },
+    { table_no: "B1", remark: "大厅 · 靠窗双人" },
+    { table_no: "B2", remark: "大厅 · 四人卡座" },
+    { table_no: "B3", remark: "大厅 · 四人卡座" },
+    { table_no: "B4", remark: "大厅 · 六人桌" },
+    { table_no: "B5", remark: "大厅 · 六人桌" },
+    { table_no: "B6", remark: "大厅 · 八人圆桌" },
+    { table_no: "B7", remark: "大厅 · 吧台" },
+    { table_no: "B8", remark: "大厅 · 吧台" },
+  ]);
+  if (e13b) throw new Error(`store_qr_codes: ${e13b.message}`);
 
   // ---------- 库存 ----------
   const { error: e14 } = await client.from("inventory_items").insert([

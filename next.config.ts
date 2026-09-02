@@ -17,12 +17,11 @@ const nextConfig: NextConfig = {
   },
 };
 
-// PWA: Serwist 注入 service worker (C-PWA-1.2)
-// 当前 disable=true(Sprint 1.4 写完 src/app/sw.ts 后改 false 启用)
+// PWA: Serwist 注入 service worker (C-PWA-1.4b 启用)
 const withSerwist = withSerwistInit({
   swSrc: 'src/app/sw.ts',
   swDest: 'public/sw.js',
-  disable: true,
+  disable: process.env.NODE_ENV === 'development',
   cacheOnNavigation: true,
   reloadOnOnline: true,
 });

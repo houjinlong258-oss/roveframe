@@ -8,7 +8,12 @@ interface CartItem {
 
 // H5 商城下单接口：价格以服务端商品表为准，不信任客户端金额
 export async function POST(request: NextRequest) {
-  const body = await request.json();
+  let body: { table_no?: unknown; note?: unknown; items?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
   const tableNo = typeof body.table_no === 'string' ? body.table_no.slice(0, 20) : null;
   const note = typeof body.note === 'string' ? body.note.slice(0, 500) : null;
   const rawItems: CartItem[] = Array.isArray(body.items) ? body.items : [];

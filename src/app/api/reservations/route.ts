@@ -86,6 +86,7 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   const body = await request.json();
+  if (!body.id) return NextResponse.json({ error: 'id required' }, { status: 400 });
   const supabase = getSupabaseClient();
   const update: Record<string, unknown> = {};
   if (body.status) update.status = body.status;

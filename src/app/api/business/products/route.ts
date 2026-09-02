@@ -59,6 +59,7 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   const body = await request.json();
+  if (!body.id) return NextResponse.json({ error: 'id required' }, { status: 400 });
   const supabase = getSupabaseClient();
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
   for (const k of ['name', 'category', 'price', 'cost', 'stock', 'status', 'description', 'image_url', 'video_url'] as const) {

@@ -29,6 +29,11 @@ export async function GET(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   const body = await request.json();
+  if (!body.id) return NextResponse.json({ error: 'id required' }, { status: 400 });
+  const allowed = ['pending', 'preparing', 'done', 'cancelled'];
+  if (!allowed.includes(body.status)) {
+    return NextResponse.json({ error: 'invalid status' }, { status: 400 });
+  }
   const supabase = getSupabaseClient();
   const { error } = await supabase.from('orders').update({ status: body.status }).eq('id', body.id);
   if (error) throw new Error(error.message);

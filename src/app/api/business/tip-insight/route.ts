@@ -1,24 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { getForwardHeaders } from '@/lib/api-helpers';
 import { invokeChat } from '@/lib/ai/router';
+import { getTenantContext } from '@/lib/tenant';
+import { tenantTable } from '@/lib/tenant-db';
 
 // AI 小费洞察：基于近 7 天小费数据生成可执行建议（含员工表现排名、桌位、时段）
+// （P0-S2 完整版：tenant 过滤）
 export async function GET(request: NextRequest) {
+  const ctx = getTenantContext(request);
   const locale = request.nextUrl.searchParams.get('locale') ?? 'en';
   const forwardHeaders = getForwardHeaders(request);
-  const supabase = getSupabaseClient();
 
   const weekStart = new Date();
   weekStart.setHours(0, 0, 0, 0);
   weekStart.setDate(weekStart.getDate() - 6);
 
-  const { data } = await supabase
-    .from('orders')
-    .select('tip, tip_percent, table_no, tip_staff_id, created_at')
+  const ordersRes = await tenantTable(ctx.tenantId, 'orders', 'tip, tip_percent, table_no, tip_staff_id, created_at')
     .gte('created_at', weekStart.toISOString())
     .neq('status', 'cancelled');
-  const orders = (data ?? []) as {
+  const orders = (ordersRes.data ?? []) as {
     tip: string | number | null;
     tip_percent: string | number | null;
     table_no: string | null;
@@ -26,8 +26,10 @@ export async function GET(request: NextRequest) {
     created_at: string;
   }[];
 
-  const { data: staffRows } = await supabase.from('staff').select('id, name');
-  const staffName = new Map<string, string>((staffRows ?? []).map((s) => [s.id, s.name]));
+  const staffRes = await tenantTable(ctx.tenantId, 'staff', 'id, name');
+  const staffName = new Map<string, string>(
+    ((staffRes.data ?? []) as { id: string; name: string }[]).map((s) => [s.id, s.name]),
+  );
 
   const tipped = orders.filter((o) => Number(o.tip ?? 0) > 0);
   const totalTip = orders.reduce((s, o) => s + Number(o.tip ?? 0), 0);

@@ -1,21 +1,33 @@
 import { NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { getTenantContext } from '@/lib/tenant';
+import { tenantTable, plainTable } from '@/lib/tenant-db';
 
 // 库存（ERPNext 同步数据，未接入时回落平台数据）
-export async function GET() {
-  const supabase = getSupabaseClient();
+// （P0-S2 完整版：inventory_items 按 tenant 过滤；integration_configs 是平台配置，plainTable 不过滤）
+export async function GET(request: Request) {
+  const ctx = getTenantContext(request);
 
-  const { data: items, error } = await supabase.from('inventory_items').select('*').order('name');
-  if (error) throw new Error(error.message);
+  const itemsRes = await tenantTable(ctx.tenantId, 'inventory_items').order('name');
+  if (itemsRes.error) throw new Error(itemsRes.error.message);
 
-  const { data: erp } = await supabase
-    .from('integration_configs')
-    .select('provider, status, last_sync_at, is_enabled')
-    .eq('provider', 'erpnext')
-    .maybeSingle();
+  // integration_configs 是平台级配置（不是业务数据），用 plainTable
+  const erpRes = await plainTable('integration_configs')
+    .select('provider, status, last_sync_at, is_enabled') as unknown as {
+      eq: (c: string, v: unknown) => {
+        maybeSingle: () => Promise<{ data: unknown; error: { message: string } | null }>;
+      };
+    };
+  const erp = await erpRes.eq('provider', 'erpnext').maybeSingle();
+  const erpRow = erp.data as { status?: string; last_sync_at?: string } | null;
 
-  const list = items ?? [];
-  const lowStock = list.filter((i) => Number(i.current_stock) > 0 && Number(i.current_stock) < Number(i.safety_stock)).length;
+  const list = (itemsRes.data ?? []) as {
+    current_stock: number | string;
+    safety_stock: number | string;
+    [k: string]: unknown;
+  }[];
+  const lowStock = list.filter(
+    (i) => Number(i.current_stock) > 0 && Number(i.current_stock) < Number(i.safety_stock),
+  ).length;
   const outOfStock = list.filter((i) => Number(i.current_stock) <= 0).length;
 
   return NextResponse.json({
@@ -23,8 +35,8 @@ export async function GET() {
     stats: { total: list.length, lowStock, outOfStock },
     source: {
       provider: 'erpnext',
-      connected: erp?.status === 'connected',
-      lastSyncAt: erp?.last_sync_at ?? null,
+      connected: erpRow?.status === 'connected',
+      lastSyncAt: erpRow?.last_sync_at ?? null,
     },
   });
 }

@@ -1,11 +1,12 @@
-import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { json, jsonError, getErrorMessage } from '@/lib/api-helpers';
+import { getTenantContext } from '@/lib/tenant';
+import { tenantTable } from '@/lib/tenant-db';
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const range = Math.min(Number(searchParams.get('range') ?? 7) || 7, 30);
-    const client = getSupabaseClient();
+    const ctx = getTenantContext(request);
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -13,18 +14,30 @@ export async function GET(request: Request) {
     rangeStart.setDate(rangeStart.getDate() - (range - 1));
 
     const [ordersRes, reviewsRes, customersRes, alertsRes] = await Promise.all([
-      client.from('orders').select('total, channel, created_at, status, items, customer_id').gte('created_at', rangeStart.toISOString()).neq('status', 'cancelled').order('created_at', { ascending: true }),
-      client.from('reviews').select('rating'),
-      client.from('customers').select('id, churn_risk'),
-      client.from('alerts').select('*').order('created_at', { ascending: false }).limit(5),
+      tenantTable(ctx.tenantId, 'orders', 'total, channel, created_at, status, items, customer_id')
+        .gte('created_at', rangeStart.toISOString())
+        .neq('status', 'cancelled')
+        .order('created_at', { ascending: true }),
+      tenantTable(ctx.tenantId, 'reviews', 'rating'),
+      tenantTable(ctx.tenantId, 'customers', 'id, churn_risk'),
+      tenantTable(ctx.tenantId, 'alerts')
+        .order('created_at', { ascending: false })
+        .limit(5),
     ]);
     if (ordersRes.error) throw new Error(ordersRes.error.message);
     if (reviewsRes.error) throw new Error(reviewsRes.error.message);
     if (customersRes.error) throw new Error(customersRes.error.message);
 
-    const orders = ordersRes.data ?? [];
-    const reviews = reviewsRes.data ?? [];
-    const customers = customersRes.data ?? [];
+    const orders = (ordersRes.data ?? []) as {
+      total: number | string | null;
+      channel: string;
+      created_at: string;
+      status: string;
+      items: { name: string; qty: number; price: number }[];
+      customer_id: string | null;
+    }[];
+    const reviews = (reviewsRes.data ?? []) as { rating: number }[];
+    const customers = (customersRes.data ?? []) as { id: string; churn_risk: string }[];
 
     // 今日 KPI
     const todayOrders = orders.filter((o) => new Date(o.created_at) >= todayStart);
@@ -34,12 +47,15 @@ export async function GET(request: Request) {
     const lastWeekStart = new Date(todayStart);
     lastWeekStart.setDate(lastWeekStart.getDate() - 7);
     const lastWeekEnd = new Date(todayStart);
-    const { data: lastWeekOrders } = await client
-      .from('orders').select('total')
-      .gte('created_at', lastWeekStart.toISOString()).lt('created_at', lastWeekEnd.toISOString())
+    const lastWeekOrdersRes = await tenantTable(ctx.tenantId, 'orders', 'total')
+      .gte('created_at', lastWeekStart.toISOString())
+      .lt('created_at', lastWeekEnd.toISOString())
       .neq('status', 'cancelled');
-    const lastWeekRevenue = (lastWeekOrders ?? []).reduce((s, o) => s + Number(o.total ?? 0), 0);
-    const weekRevenue = orders.filter((o) => new Date(o.created_at) >= new Date(todayStart.getTime() - 6 * 86400000)).reduce((s, o) => s + Number(o.total ?? 0), 0);
+    const lastWeekOrders = (lastWeekOrdersRes.data ?? []) as { total: number | string | null }[];
+    const lastWeekRevenue = lastWeekOrders.reduce((s, o) => s + Number(o.total ?? 0), 0);
+    const weekRevenue = orders
+      .filter((o) => new Date(o.created_at) >= new Date(todayStart.getTime() - 6 * 86400000))
+      .reduce((s, o) => s + Number(o.total ?? 0), 0);
     const revenueDelta = lastWeekRevenue > 0 ? Math.round(((weekRevenue - lastWeekRevenue) / lastWeekRevenue) * 1000) / 10 : 0;
 
     // 营收趋势（按天）
@@ -53,18 +69,25 @@ export async function GET(request: Request) {
       const key = new Date(o.created_at).toISOString().slice(0, 10);
       if (trendMap.has(key)) trendMap.set(key, (trendMap.get(key) ?? 0) + Number(o.total ?? 0));
     }
-    const revenueTrend = [...trendMap.entries()].map(([date, amount]) => ({ date, amount: Math.round(amount * 100) / 100 }));
+    const revenueTrend = [...trendMap.entries()].map(([date, amount]) => ({
+      date,
+      amount: Math.round(amount * 100) / 100,
+    }));
 
     // 渠道占比
     const channelMap = new Map<string, number>();
     for (const o of orders) channelMap.set(o.channel, (channelMap.get(o.channel) ?? 0) + 1);
     const totalOrders = orders.length || 1;
-    const channels = [...channelMap.entries()].map(([channel, count]) => ({ channel, count, pct: Math.round((count / totalOrders) * 1000) / 10 }));
+    const channels = [...channelMap.entries()].map(([channel, count]) => ({
+      channel,
+      count,
+      pct: Math.round((count / totalOrders) * 1000) / 10,
+    }));
 
     // 热销菜品
     const dishMap = new Map<string, { name: string; quantity: number; revenue: number }>();
     for (const o of orders) {
-      for (const item of (o.items as Array<{ name: string; qty: number; price: number }>) ?? []) {
+      for (const item of o.items ?? []) {
         const cur = dishMap.get(item.name) ?? { name: item.name, quantity: 0, revenue: 0 };
         cur.quantity += item.qty;
         cur.revenue += item.qty * item.price;
@@ -73,8 +96,12 @@ export async function GET(request: Request) {
     }
     const topDishes = [...dishMap.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 5);
 
-    const avgRating = reviews.length ? Math.round((reviews.reduce((s, r) => s + r.rating, 0) / reviews.length) * 10) / 10 : 0;
-    const positiveRate = reviews.length ? Math.round((reviews.filter((r) => r.rating >= 4).length / reviews.length) * 1000) / 10 : 0;
+    const avgRating = reviews.length
+      ? Math.round((reviews.reduce((s, r) => s + r.rating, 0) / reviews.length) * 10) / 10
+      : 0;
+    const positiveRate = reviews.length
+      ? Math.round((reviews.filter((r) => r.rating >= 4).length / reviews.length) * 1000) / 10
+      : 0;
 
     // 热销时段（按小时）
     const hourMap = new Map<number, { orders: number; revenue: number }>();
@@ -91,7 +118,7 @@ export async function GET(request: Request) {
     // 菜品组合（共现）
     const pairMap = new Map<string, number>();
     for (const o of orders) {
-      const names = Array.from(new Set(((o.items as { name: string }[]) ?? []).map((i) => i.name)));
+      const names = Array.from(new Set((o.items ?? []).map((i) => i.name)));
       for (let i = 0; i < names.length; i++) {
         for (let j = i + 1; j < names.length; j++) {
           const key = [names[i], names[j]].sort().join(' + ');

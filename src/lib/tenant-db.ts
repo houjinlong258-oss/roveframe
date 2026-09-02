@@ -31,6 +31,7 @@ type FilterBuilder = {
   in: (col: string, vals: unknown[]) => FilterBuilder;
   is: (col: string, val: unknown) => FilterBuilder;
   match: (q: Record<string, unknown>) => FilterBuilder;
+  not: (col: string, op: string, val?: unknown) => FilterBuilder;
   order: (col: string, opts?: { ascending?: boolean }) => FilterBuilder;
   limit: (n: number) => FilterBuilder;
   range: (from: number, to: number) => FilterBuilder;

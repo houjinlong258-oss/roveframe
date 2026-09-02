@@ -13,6 +13,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   if (/\/store(\/|$)/.test(pathname)) {
     return <>{children}</>;
   }
+  // 登录/注册页独立全屏（不带后台框架）
+  if (/\/auth\//.test(pathname)) {
+    return <>{children}</>;
+  }
 
   return (
     <div className="min-h-screen">

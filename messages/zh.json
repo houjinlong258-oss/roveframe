@@ -700,4 +700,21 @@
     "empty": "该分类暂无商品",
     "loadFailed": "菜单加载失败，请重新扫码"
   }
+},
+  "auth": {
+    "loginTitle": "登录",
+    "signupTitle": "创建企业",
+    "signupSubtitle": "30 秒搭建你的 AI 商业系统",
+    "email": "邮箱",
+    "password": "密码",
+    "login": "登录",
+    "signup": "创建企业",
+    "submitting": "处理中...",
+    "noAccount": "还没有账号?",
+    "signupLink": "立即注册",
+    "haveAccount": "已有账号?",
+    "loginLink": "去登录",
+    "businessName": "企业名称",
+    "industry": "行业"
+  }
 }

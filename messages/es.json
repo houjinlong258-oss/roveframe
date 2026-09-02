@@ -700,4 +700,21 @@
     "empty": "No hay artículos en esta categoría",
     "loadFailed": "Error al cargar el menú. Escanea el código QR de nuevo."
   }
+},
+  "auth": {
+    "loginTitle": "Iniciar sesión",
+    "signupTitle": "Crea tu negocio",
+    "signupSubtitle": "Configura tu AI Business OS en 30 segundos.",
+    "email": "Correo",
+    "password": "Contraseña",
+    "login": "Iniciar sesión",
+    "signup": "Crear negocio",
+    "submitting": "Procesando...",
+    "noAccount": "¿Aún no tienes cuenta?",
+    "signupLink": "Crear una",
+    "haveAccount": "¿Ya tienes cuenta?",
+    "loginLink": "Iniciar sesión",
+    "businessName": "Nombre del negocio",
+    "industry": "Industria"
+  }
 }

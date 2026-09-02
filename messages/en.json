@@ -700,4 +700,21 @@
     "empty": "No items in this category",
     "loadFailed": "Failed to load the menu. Please scan the QR code again."
   }
+},
+  "auth": {
+    "loginTitle": "Sign in",
+    "signupTitle": "Create your business",
+    "signupSubtitle": "Set up your AI Business OS in 30 seconds.",
+    "email": "Email",
+    "password": "Password",
+    "login": "Sign in",
+    "signup": "Create business",
+    "submitting": "Working...",
+    "noAccount": "No account yet?",
+    "signupLink": "Create one",
+    "haveAccount": "Already have an account?",
+    "loginLink": "Sign in",
+    "businessName": "Business name",
+    "industry": "Industry"
+  }
 }

@@ -1,27 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { getTenantContext } from '@/lib/tenant';
+import { tenantTable } from '@/lib/tenant-db';
 
 export async function GET(request: NextRequest) {
-  const supabase = getSupabaseClient();
+  const ctx = getTenantContext(request);
   const id = request.nextUrl.searchParams.get('id');
 
   if (id) {
-    const { data: customer, error } = await supabase.from('customers').select('*').eq('id', id).maybeSingle();
-    if (error) throw new Error(error.message);
+    const customerRes = await tenantTable(ctx.tenantId, 'customers').eq('id', id).maybeSingle();
+    if (customerRes.error) throw new Error(customerRes.error.message);
+    const customer = customerRes.data as Record<string, unknown> | null;
     if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
-    const { data: customerOrders, error: oErr } = await supabase
-      .from('orders')
-      .select('id, order_no, items, total, status, channel, created_at')
+    const ordersRes = await tenantTable(
+      ctx.tenantId,
+      'orders',
+      'id, order_no, items, total, status, channel, created_at',
+    )
       .eq('customer_id', id)
       .order('created_at', { ascending: false })
       .limit(10);
-    if (oErr) throw new Error(oErr.message);
-    return NextResponse.json({ customer, orders: customerOrders ?? [] });
+    if (ordersRes.error) throw new Error(ordersRes.error.message);
+    return NextResponse.json({ customer, orders: ordersRes.data ?? [] });
   }
 
-  const { data: rows, error } = await supabase.from('customers').select('*').order('total_spent', { ascending: false });
-  if (error) throw new Error(error.message);
-  const list = rows ?? [];
+  const rowsRes = await tenantTable(ctx.tenantId, 'customers')
+    .order('total_spent', { ascending: false });
+  if (rowsRes.error) throw new Error(rowsRes.error.message);
+  const list = (rowsRes.data ?? []) as { created_at: string; churn_risk: string; total_spent: string; visit_count: number }[];
 
   const now = Date.now();
   const monthAgo = new Date(now - 30 * 86400000).toISOString();

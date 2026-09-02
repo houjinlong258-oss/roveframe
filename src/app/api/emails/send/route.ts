@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { decrypt } from '@/lib/crypto';
 import nodemailer from 'nodemailer';
+import { getTenantContext } from '@/lib/tenant';
+import { tenantTable, updateWithTenant } from '@/lib/tenant-db';
 
 interface SmtpCredentials {
   smtp_user?: string;
@@ -10,6 +11,7 @@ interface SmtpCredentials {
 
 // 通过绑定的邮箱账号真实发送回复
 export async function POST(request: NextRequest) {
+  const ctx = getTenantContext(request);
   const body = await request.json();
   const emailId = body.emailId as string;
   const replyBody = (body.reply as string) ?? '';
@@ -18,16 +20,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'emailId and reply required' }, { status: 400 });
   }
 
-  const supabase = getSupabaseClient();
-  const { data: email, error } = await supabase.from('emails').select('*').eq('id', emailId).maybeSingle();
-  if (error) throw new Error(error.message);
+  const emailRes = await tenantTable(ctx.tenantId, 'emails').eq('id', emailId).maybeSingle();
+  if (emailRes.error) throw new Error(emailRes.error.message);
+  const email = emailRes.data as { from_addr: string; subject: string } | null;
   if (!email) return NextResponse.json({ error: 'Email not found' }, { status: 404 });
 
   // 选发件账号
-  let q = supabase.from('email_accounts').select('*').eq('status', 'active');
-  q = accountId ? q.eq('id', accountId) : q.eq('is_default', true);
-  const { data: account, error: aErr } = await q.maybeSingle();
-  if (aErr) throw new Error(aErr.message);
+  const q = tenantTable(ctx.tenantId, 'email_accounts', '*').eq('status', 'active');
+  const accountQ = accountId
+    ? (q as unknown as { eq: (c: string, v: unknown) => typeof q }).eq('id', accountId)
+    : (q as unknown as { eq: (c: string, v: unknown) => typeof q }).eq('is_default', true);
+  const accountRes = await (accountQ as unknown as {
+    maybeSingle: () => Promise<{ data: unknown; error: { message: string } | null }>;
+  }).maybeSingle();
+  if (accountRes.error) throw new Error(accountRes.error.message);
+  const account = accountRes.data as {
+    smtp_host?: string;
+    smtp_port?: number;
+    credentials_encrypted?: string;
+    email: string;
+    display_name?: string | null;
+  } | null;
   if (!account) {
     return NextResponse.json({ error: 'no_account', message: 'No active email account. Configure one in Settings.' }, { status: 400 });
   }
@@ -61,10 +74,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'send_failed', message: msg }, { status: 502 });
   }
 
-  const { error: upErr } = await supabase
-    .from('emails')
-    .update({ status: 'replied', reply_draft: replyBody })
-    .eq('id', emailId);
+  const { error: upErr } = await updateWithTenant(ctx.tenantId, 'emails', emailId, {
+    status: 'replied',
+    reply_draft: replyBody,
+  });
   if (upErr) throw new Error(upErr.message);
 
   return NextResponse.json({ ok: true });

@@ -1,20 +1,20 @@
-import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { getForwardHeaders, jsonError, getErrorMessage, sseResponse } from '@/lib/api-helpers';
 import { streamChat, type ChatMessage } from '@/lib/ai/router';
+import { getTenantContext } from '@/lib/tenant';
+import { tenantTable, updateWithTenant } from '@/lib/tenant-db';
 
 export async function POST(request: Request) {
   try {
+    const ctx = getTenantContext(request);
     const body = (await request.json()) as { review_id: string; locale?: string };
     if (!body.review_id) return jsonError('missing review_id', 400);
     const locale = body.locale ?? 'en';
-    const client = getSupabaseClient();
 
-    const { data: review, error } = await client
-      .from('reviews')
-      .select('author_name, platform, rating, content, sentiment')
+    const reviewRes = await tenantTable(ctx.tenantId, 'reviews', 'author_name, platform, rating, content, sentiment')
       .eq('id', body.review_id)
       .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (reviewRes.error) throw new Error(reviewRes.error.message);
+    const review = reviewRes.data as { author_name: string; platform: string; rating: number; content: string; sentiment: string } | null;
     if (!review) return jsonError('review not found', 404);
 
     const systemPrompt = locale === 'zh'
@@ -37,15 +37,20 @@ export async function POST(request: Request) {
       },
     ];
 
-    // 流式生成 + 结束后落库草稿
+    // 流式生成 + 结束后落库草稿（tenant 化）
+    const tenantId = ctx.tenantId;
+    const reviewId = body.review_id;
     async function* wrapped(): AsyncGenerator<string> {
       let full = '';
       for await (const chunk of streamChat('agent', messages, getForwardHeaders(request))) {
         full += chunk;
         yield chunk;
       }
-      const db = getSupabaseClient();
-      await db.from('reviews').update({ reply_content: full, reply_status: 'draft' }).eq('id', body.review_id);
+      const { error: upErr } = await updateWithTenant(tenantId, 'reviews', reviewId, {
+        reply_content: full,
+        reply_status: 'draft',
+      });
+      if (upErr) throw new Error(upErr.message);
     }
 
     return sseResponse(wrapped());

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { streamChat } from '@/lib/ai/router';
 import { sseResponse } from '@/lib/api-helpers';
+import { getTenantContext } from '@/lib/tenant';
+import { tenantTable, updateWithTenant } from '@/lib/tenant-db';
 import { HeaderUtils } from 'coze-coding-dev-sdk';
 
 interface CustomerRow {
@@ -23,13 +24,13 @@ function daysSince(iso: string | null): number {
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const mode = (body.mode as string) ?? 'retention';
-  const supabase = getSupabaseClient();
+  const ctx = getTenantContext(request);
 
   if (mode === 'score') {
     // 批量 AI 评分：基于消费行为启发式 + AI 解释
-    const { data: rows, error } = await supabase.from('customers').select('*');
-    if (error) throw new Error(error.message);
-    const list = (rows ?? []) as CustomerRow[];
+    const rowsRes = await tenantTable(ctx.tenantId, 'customers');
+    if (rowsRes.error) throw new Error(rowsRes.error.message);
+    const list = (rowsRes.data ?? []) as CustomerRow[];
 
     const scored = list.map((c) => {
       const days = daysSince(c.last_visit_at);
@@ -42,10 +43,10 @@ export async function POST(request: NextRequest) {
     });
 
     for (const s of scored) {
-      const { error: upErr } = await supabase
-        .from('customers')
-        .update({ ai_score: s.ai_score, churn_risk: s.churn_risk })
-        .eq('id', s.id);
+      const { error: upErr } = await updateWithTenant(ctx.tenantId, 'customers', s.id, {
+        ai_score: s.ai_score,
+        churn_risk: s.churn_risk,
+      });
       if (upErr) throw new Error(upErr.message);
     }
     return NextResponse.json({ scored: scored.length });
@@ -54,8 +55,9 @@ export async function POST(request: NextRequest) {
   // 单个客户挽留方案（流式）
   const customerId = body.customerId as string;
   if (!customerId) return NextResponse.json({ error: 'customerId required' }, { status: 400 });
-  const { data: c, error } = await supabase.from('customers').select('*').eq('id', customerId).maybeSingle();
-  if (error) throw new Error(error.message);
+  const cRes = await tenantTable(ctx.tenantId, 'customers').eq('id', customerId).maybeSingle();
+  if (cRes.error) throw new Error(cRes.error.message);
+  const c = cRes.data as CustomerRow | null;
   if (!c) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
 
   const forwardHeaders = HeaderUtils.extractForwardHeaders(request.headers);
@@ -75,7 +77,7 @@ export async function POST(request: NextRequest) {
           content: `Customer: ${c.name}. Tags: ${(c.tags as string[]).join(', ')}. Total spent: $${c.total_spent}. Visits: ${c.visit_count}. Last visit: ${daysSince(c.last_visit_at)} days ago. Churn risk: ${c.churn_risk}. Preference notes: ${c.preference_notes ?? 'none'}.`,
         },
       ],
-      forwardHeaders
-    )
+      forwardHeaders,
+    ),
   );
 }

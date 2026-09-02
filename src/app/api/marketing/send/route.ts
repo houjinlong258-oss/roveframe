@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { invokeChat } from '@/lib/ai/router';
+import { getTenantContext } from '@/lib/tenant';
+import { insertWithTenant, tenantTable } from '@/lib/tenant-db';
 import { HeaderUtils } from 'coze-coding-dev-sdk';
 
 interface CustomerRow {
@@ -21,11 +22,11 @@ function daysSince(iso: string | null): number {
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
 }
 
-async function selectSegment(segment: string): Promise<CustomerRow[]> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase.from('customers').select('*').not('email', 'is', null);
-  if (error) throw new Error(error.message);
-  const all = (data ?? []) as CustomerRow[];
+async function selectSegment(ctx: { tenantId: string }, segment: string): Promise<CustomerRow[]> {
+  const res = await tenantTable(ctx.tenantId, 'customers', '*')
+    .not('email', 'is', null);
+  if (res.error) throw new Error(res.error.message);
+  const all = (res.data ?? []) as CustomerRow[];
   if (segment === 'high_value') return all.filter((c) => Number(c.total_spent) >= 800).sort((a, b) => Number(b.total_spent) - Number(a.total_spent));
   if (segment === 'risk') return all.filter((c) => c.churn_risk === 'high' || daysSince(c.last_visit_at) > 30);
   if (segment === 'new') return all.filter((c) => daysSince(c.created_at) <= 30);
@@ -34,17 +35,20 @@ async function selectSegment(segment: string): Promise<CustomerRow[]> {
 
 // 个性化预览：为最多 3 位客户各生成一封差异化邮件
 export async function POST(request: NextRequest) {
+  const ctx = getTenantContext(request);
   const body = await request.json();
   const action = (body.action as string) ?? 'preview';
   const segment = (body.segment as string) ?? 'all';
   const brief = ((body.brief as string) ?? '').trim();
   const locale = (body.locale as string) ?? 'en';
 
-  const customers = await selectSegment(segment);
+  const customers = await selectSegment(ctx, segment);
   if (customers.length === 0) return NextResponse.json({ error: 'No customers with email in this segment' }, { status: 400 });
 
-  const supabase = getSupabaseClient();
-  const { data: account } = await supabase.from('email_accounts').select('id, email, display_name, status').eq('is_default', true).maybeSingle();
+  const accountRes = await tenantTable(ctx.tenantId, 'email_accounts', 'id, email, display_name, status')
+    .eq('is_default', true)
+    .maybeSingle();
+  const account = accountRes.data as { id: string; email: string } | null;
 
   if (action === 'count') {
     return NextResponse.json({ count: customers.length, sender: account?.email ?? null });
@@ -71,7 +75,7 @@ Do not use placeholders like {name} — write the final text.`,
           content: `Campaign brief: ${brief || 'win-back / member appreciation campaign'}\n\nCustomer profile: name=${c.name}, visits=${c.visit_count}, total_spent=$${c.total_spent}, last_visit=${daysSince(c.last_visit_at)} days ago, tags=${c.tags.join(',')}, notes=${c.preference_notes ?? 'none'}`,
         },
       ],
-      forwardHeaders
+      forwardHeaders,
     );
     return { customer: { id: c.id, name: c.name, email: c.email }, raw: text };
   };
@@ -83,7 +87,6 @@ Do not use placeholders like {name} — write the final text.`,
   }
 
   if (action === 'send') {
-    // 逐人生成 + 入队限流（每封间隔 60s）
     if (!account) return NextResponse.json({ error: 'No default email account configured' }, { status: 400 });
     let queued = 0;
     for (const c of customers) {
@@ -93,7 +96,7 @@ Do not use placeholders like {name} — write the final text.`,
         const bodyMatch = raw.split('---');
         const subject = subjectMatch?.[1]?.trim() ?? 'A message from us';
         const emailBody = (bodyMatch[1] ?? raw).replace(/PROFILE:[\s\S]*$/, '').trim();
-        const { error } = await supabase.from('email_send_tasks').insert({
+        const { error } = await insertWithTenant(ctx.tenantId, 'email_send_tasks', {
           account_id: account.id,
           to_addr: customer.email!,
           subject,

@@ -1,25 +1,32 @@
-import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { json, jsonError, getErrorMessage } from '@/lib/api-helpers';
+import { getTenantContext } from '@/lib/tenant';
+import { tenantTable, updateWithTenant } from '@/lib/tenant-db';
 
 export async function GET(request: Request) {
   try {
+    const ctx = getTenantContext(request);
     const { searchParams } = new URL(request.url);
     const platform = searchParams.get('platform');
     const sentiment = searchParams.get('sentiment');
     const pending = searchParams.get('pending') === 'true';
-    const client = getSupabaseClient();
 
-    let query = client.from('reviews').select('*').order('created_at', { ascending: false }).limit(50);
-    if (platform && platform !== 'all') query = query.eq('platform', platform);
-    if (sentiment && sentiment !== 'all') query = query.eq('sentiment', sentiment);
-    if (pending) query = query.eq('reply_status', 'none');
-    const { data, error } = await query;
+    const q = tenantTable(ctx.tenantId, 'reviews')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    const chained = (() => {
+      let b: typeof q = q;
+      if (platform && platform !== 'all') b = (b as unknown as { eq: (c: string, v: unknown) => typeof b }).eq('platform', platform);
+      if (sentiment && sentiment !== 'all') b = (b as unknown as { eq: (c: string, v: unknown) => typeof b }).eq('sentiment', sentiment);
+      if (pending) b = (b as unknown as { eq: (c: string, v: unknown) => typeof b }).eq('reply_status', 'none');
+      return b;
+    })();
+    const { data, error } = await chained;
     if (error) throw new Error(error.message);
 
     // 统计
-    const { data: all, error: sErr } = await client.from('reviews').select('rating, sentiment, reply_status');
-    if (sErr) throw new Error(sErr.message);
-    const rows = all ?? [];
+    const allRes = await tenantTable(ctx.tenantId, 'reviews', 'rating, sentiment, reply_status');
+    if (allRes.error) throw new Error(allRes.error.message);
+    const rows = (allRes.data ?? []) as { rating: number; sentiment: string; reply_status: string }[];
     const avgRating = rows.length ? Math.round((rows.reduce((s, r) => s + r.rating, 0) / rows.length) * 10) / 10 : 0;
     const positiveRate = rows.length ? Math.round((rows.filter((r) => r.rating >= 4).length / rows.length) * 100) : 0;
     const pendingCount = rows.filter((r) => r.reply_status === 'none').length;
@@ -38,16 +45,16 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
+    const ctx = getTenantContext(request);
     const body = (await request.json()) as { id: string; reply_content?: string; reply_status?: string };
     if (!body.id) return jsonError('missing id', 400);
-    const client = getSupabaseClient();
     const updates: Record<string, string> = {};
     if (body.reply_content !== undefined) updates.reply_content = body.reply_content;
     if (body.reply_status) {
       updates.reply_status = body.reply_status;
       if (body.reply_status === 'published') updates.status = 'replied';
     }
-    const { error } = await client.from('reviews').update(updates).eq('id', body.id);
+    const { error } = await updateWithTenant(ctx.tenantId, 'reviews', body.id, updates);
     if (error) throw new Error(error.message);
     return json({ ok: true });
   } catch (error) {

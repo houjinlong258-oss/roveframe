@@ -1,6 +1,6 @@
 # RoveFrame 开发进度报告
 
-> 更新时间：2026-09-04（AI Coding Agent 演示更新）
+> 更新时间：2026-09-02
 > 覆盖范围：从「Ph1 垂直 SaaS」到「AI Business Generator 平台」的全部工作。
 > 状态口径分三级：✅ 代码就位（typecheck+lint 通过）｜ ⚠️ 代码就位但未部署激活（等 SQL 迁移）｜ ❌ 未做
 
@@ -139,8 +139,3 @@
 3. **P1 生成核心**（上传中心 → Business Understanding → Schema Engine → 前端生成）。
 4. **P2**（Docker 部署 + Stripe 商业化）。
 
-## Approval Pipeline Guarantee
-
-Every change proposed by the AI Coding Agent must pass human review, the
-automated test gate (unit tests + type check), and remains rollbackable via
-`git revert`. See /enterprise/approvals for the review console.

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import { Sparkles, Users, UserPlus, Wallet, UserX, Search, X, HeartHandshake } from 'lucide-react';
 import { fmtCurrency, fmtDate } from '@/lib/format';
+import { safeFetchJson } from '@/lib/utils';
 import { Markdown } from '@/components/markdown';
 
 interface Customer {
@@ -68,10 +69,9 @@ export default function CustomersPage() {
   const planRef = useRef(false);
 
   const load = useCallback(async () => {
-    const res = await fetch('/api/customers');
-    const data = await res.json();
-    setCustomers(data.customers ?? []);
-    setStats(data.stats ?? null);
+    const data = await safeFetchJson('/api/customers');
+    setCustomers(data?.customers ?? []);
+    setStats(data?.stats ?? null);
     setLoading(false);
   }, []);
 
@@ -97,9 +97,8 @@ export default function CustomersPage() {
     setSelected(c);
     setPlan('');
     setDetailOrders([]);
-    const res = await fetch(`/api/customers?id=${c.id}`);
-    const data = await res.json();
-    setDetailOrders(data.orders ?? []);
+    const data = await safeFetchJson(`/api/customers?id=${c.id}`);
+    setDetailOrders(data?.orders ?? []);
   };
 
   const generatePlan = async () => {

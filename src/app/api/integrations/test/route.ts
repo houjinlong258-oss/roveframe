@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getTenantContext, requirePermission } from '@/lib/tenant';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 // 集成连通性测试：按服务商调用真实只读接口
-export async function POST(request: NextRequest) {
+async function testIntegration(request: NextRequest) {
+  const context = await getTenantContext(request);
+  requirePermission(context, 'integrations:write');
   const body = await request.json();
   const provider: string = body.provider;
   const config = body.config ?? {};
@@ -67,3 +71,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : 'connection failed' });
   }
 }
+
+export const POST = protectBusinessMutation(
+  { permission: 'integrations:write', action: 'integrations.test', entity: 'integration_configs' },
+  testIntegration,
+);

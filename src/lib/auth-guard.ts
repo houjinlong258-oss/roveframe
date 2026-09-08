@@ -50,6 +50,10 @@ export const PUBLIC_API_PREFIXES: readonly string[] = [
   '/api/store/orders',
   '/api/store/staff', // 店员通过链接内 token 访问（顾客端呼叫店员）
   '/api/customer/favorites', // 顾客端 PWA
+  '/api/webhooks', // POS/支付平台推送入口（无会话凭据，handler 内 HMAC 验签）
+  '/api/agent/approvals/events', // RoveAgent 服务间审批事件推送（无会话凭据，handler 内 X-RoveAgent-Key 共享密钥校验）
+  '/api/onboarding/parse', // 自然语言解析草稿（纯函数无副作用，确认写入走 /api/onboarding/confirm 需登录）
+  '/api/health', // 部署 preflight / 健康检查（无会话凭据，仅返回缺表与降级状态）
 ];
 
 export function isPublicApiPath(pathname: string): boolean {

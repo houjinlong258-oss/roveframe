@@ -1,5 +1,5 @@
 // 社交通讯渠道静态预设（无服务端依赖，客户端可直接 import）
-// 平台清单与凭据字段对齐 Hermes（gateway/platforms + config 环境变量）
+// 平台清单与凭据字段对齐 RoveAgent Core gateway/platforms 与配置环境变量。
 
 export type ChannelKey =
   | 'telegram'

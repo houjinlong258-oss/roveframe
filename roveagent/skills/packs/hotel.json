@@ -1,0 +1,24 @@
+{
+  "key": "hotel",
+  "name": "Hotel Pack",
+  "agents": ["ceo", "operations", "marketing", "customer", "finance", "devops"],
+  "connectors": ["cloudbeds", "mews", "opera", "stripe"],
+  "skills": [
+    "daily-briefing",
+    "booking-optimizer",
+    "guest-service",
+    "review-response",
+    "revenue-management",
+    "housekeeping-triage"
+  ],
+  "templates": {
+    "daily_report": "Occupancy / ADR / RevPAR / Arrivals / Guest Issues",
+    "upsell_message": "Pre-arrival upgrade offer for high-LTV guests",
+    "review_reply": "24h SLA response draft for negative reviews"
+  },
+  "knowledge_base": [
+    "rooms.md",
+    "policies.md",
+    "local-attractions.md"
+  ]
+}

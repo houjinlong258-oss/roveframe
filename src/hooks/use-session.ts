@@ -5,15 +5,14 @@ import { useCallback, useEffect, useState } from 'react';
 /**
  * 客户端 session hook（P0-S2 完整版：Part G）
  *
- * 存储: localStorage('roveframe:session')
- * 内容: { accessToken, userId, tenantId, businessId, role, email, name }
+ * 会话凭据: 服务端 HttpOnly cookie `rf_session`（前端不可读取）
+ * 内存状态: { userId, tenantId, businessId, role, email, name }
  *
  * 范围: 仅做 session 状态管理 + 调 /api/auth/{login,signup} 拿 token
  * 路由守卫 / 强制登录跳转 留到 P0-S3 RBAC 做。
  */
 
 export interface Session {
-  accessToken: string;
   userId: string;
   tenantId: string;
   businessId: string | null;
@@ -21,8 +20,6 @@ export interface Session {
   email: string;
   name: string | null;
 }
-
-const STORAGE_KEY = 'roveframe:session';
 
 export interface SessionAPI {
   session: Session | null;
@@ -35,7 +32,7 @@ export interface SessionAPI {
     industry: string,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
   logout: () => void;
-  /** 显式用 token 调 API（其他 hook 内部用） */
+  /** 同源请求自动携带 HttpOnly 会话 cookie。 */
   authedFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }
 
@@ -44,19 +41,38 @@ export function useSession(): SessionAPI {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) setSession(JSON.parse(stored) as Session);
-    } catch {
-      // corrupted: 清掉
-      try { localStorage.removeItem(STORAGE_KEY); } catch { /* noop */ }
-    } finally {
-      setLoading(false);
-    }
+    let active = true;
+    fetch('/api/auth/me')
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return response.json() as Promise<{
+          user_id: string;
+          tenant_id: string;
+          business_id: string | null;
+          role: string;
+          email: string;
+          name: string | null;
+        }>;
+      })
+      .then((data) => {
+        if (!active || !data) return;
+        setSession({
+          userId: data.user_id,
+          tenantId: data.tenant_id,
+          businessId: data.business_id,
+          role: data.role,
+          email: data.email,
+          name: data.name,
+        });
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
   }, []);
 
   const persist = useCallback((next: Session) => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* quota? */ }
     setSession(next);
   }, []);
 
@@ -73,7 +89,6 @@ export function useSession(): SessionAPI {
           return { ok: false, error: body.error ?? `HTTP ${res.status}` };
         }
         const data = (await res.json()) as {
-          access_token: string;
           user_id: string;
           tenant_id: string;
           business_id: string | null;
@@ -82,7 +97,6 @@ export function useSession(): SessionAPI {
           name: string | null;
         };
         persist({
-          accessToken: data.access_token,
           userId: data.user_id,
           tenantId: data.tenant_id,
           businessId: data.business_id,
@@ -121,13 +135,11 @@ export function useSession(): SessionAPI {
           return { ok: false, error: body.error ?? `HTTP ${res.status}` };
         }
         const data = (await res.json()) as {
-          access_token: string;
           user_id: string;
           tenant_id: string;
           business_id: string | null;
         };
         persist({
-          accessToken: data.access_token,
           userId: data.user_id,
           tenantId: data.tenant_id,
           businessId: data.business_id,
@@ -144,17 +156,15 @@ export function useSession(): SessionAPI {
   );
 
   const logout = useCallback(() => {
-    try { localStorage.removeItem(STORAGE_KEY); } catch { /* noop */ }
+    void fetch('/api/auth/logout', { method: 'POST' });
     setSession(null);
   }, []);
 
   const authedFetch = useCallback(
     async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
-      const headers = new Headers(init.headers);
-      if (session) headers.set('Authorization', `Bearer ${session.accessToken}`);
-      return fetch(input, { ...init, headers });
+      return fetch(input, { ...init, credentials: 'same-origin' });
     },
-    [session],
+    [],
   );
 
   return { session, loading, login, signup, logout, authedFetch };

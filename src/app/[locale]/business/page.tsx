@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { Plus, X, Sparkles, Bot, RefreshCw, Factory, QrCode, Download, Copy, Check, Trash2, ImagePlus, Video, ExternalLink, Pencil, ClipboardList, Users } from 'lucide-react';
 import QRCode from 'qrcode';
 import { fmtCurrency, fmtDateTime } from '@/lib/format';
+import { safeFetchJson } from '@/lib/utils';
 import { Link } from '@/i18n/navigation';
 
 type Tab = 'products' | 'orders' | 'inventory' | 'qr' | 'staff';
@@ -28,6 +29,7 @@ interface Product {
 interface QrCodeRow {
   id: string;
   table_no: string;
+  public_token: string;
   remark: string | null;
   is_active: boolean;
   scan_count: number;
@@ -146,27 +148,24 @@ export default function BusinessPage() {
   const [erpSource, setErpSource] = useState<{ connected: boolean; lastSyncAt: string | null } | null>(null);
 
   const loadProducts = useCallback(async () => {
-    const res = await fetch('/api/business/products');
-    const data = await res.json();
-    setProducts(data.products ?? []);
-    setProdCats(data.categories ?? []);
+    const data = await safeFetchJson('/api/business/products');
+    setProducts(data?.products ?? []);
+    setProdCats(data?.categories ?? []);
   }, []);
 
   const loadOrders = useCallback(async (status: string, table: string) => {
-    const res = await fetch(`/api/business/orders?status=${status}&table=${table}`);
-    const data = await res.json();
-    setOrders(data.orders ?? []);
-    setOrderTables(data.tables ?? []);
-    setTipStats(data.tipStats ?? { todayTip: 0, weekTip: 0, tipByTable: [] });
+    const data = await safeFetchJson(`/api/business/orders?status=${status}&table=${table}`);
+    setOrders(data?.orders ?? []);
+    setOrderTables(data?.tables ?? []);
+    setTipStats(data?.tipStats ?? { todayTip: 0, weekTip: 0, tipByTable: [] });
   }, []);
 
   const loadTipInsight = async () => {
     setTipInsightLoading(true);
     setTipInsight('');
     try {
-      const res = await fetch(`/api/business/tip-insight?locale=${locale}`);
-      const data = await res.json();
-      setTipInsight(data.insight ?? '');
+      const data = await safeFetchJson(`/api/business/tip-insight?locale=${locale}`);
+      setTipInsight(data?.insight ?? '');
     } catch {
       setTipInsight('');
     } finally {
@@ -175,9 +174,8 @@ export default function BusinessPage() {
   };
 
   const loadStaff = useCallback(async () => {
-    const res = await fetch('/api/business/staff');
-    const data = await res.json();
-    setStaffList(data.staff ?? []);
+    const data = await safeFetchJson('/api/business/staff');
+    setStaffList(data?.staff ?? []);
   }, []);
 
   const uploadStaffPhoto = async (file: File) => {
@@ -210,22 +208,20 @@ export default function BusinessPage() {
   };
 
   const loadInventory = useCallback(async () => {
-    const res = await fetch('/api/business/inventory');
-    const data = await res.json();
-    setInventory(data.items ?? []);
-    setInvStats(data.stats ?? null);
-    setErpSource(data.source ?? null);
+    const data = await safeFetchJson('/api/business/inventory');
+    setInventory(data?.items ?? []);
+    setInvStats(data?.stats ?? null);
+    setErpSource(data?.source ?? null);
   }, []);
 
   const loadQrCodes = useCallback(async () => {
-    const res = await fetch('/api/store/qr-codes');
-    const data = await res.json();
-    const codes: QrCodeRow[] = data.codes ?? [];
+    const data = await safeFetchJson('/api/store/qr-codes');
+    const codes: QrCodeRow[] = data?.codes ?? [];
     setQrCodes(codes);
     // 为每个码生成二维码图片
     const images: Record<string, string> = {};
     for (const c of codes) {
-      const url = `${window.location.origin}/store?table=${encodeURIComponent(c.table_no)}`;
+      const url = `${window.location.origin}/store?token=${encodeURIComponent(c.public_token)}`;
       images[c.id] = await QRCode.toDataURL(url, { width: 512, margin: 1, color: { dark: '#131B2E', light: '#FFFFFF' } });
     }
     setQrImages(images);
@@ -372,7 +368,7 @@ export default function BusinessPage() {
     await loadQrCodes();
   };
 
-  const storeUrl = (table: string) => `${origin}/store?table=${encodeURIComponent(table)}`;
+  const storeUrl = (token: string) => `${origin}/store?token=${encodeURIComponent(token)}`;
 
   const copyText = async (key: string, text: string) => {
     await navigator.clipboard.writeText(text);
@@ -980,14 +976,14 @@ export default function BusinessPage() {
                     <Download className="w-3.5 h-3.5" />
                   </button>
                   <button
-                    onClick={() => copyText(c.id, storeUrl(c.table_no))}
+                    onClick={() => copyText(c.id, storeUrl(c.public_token))}
                     className="w-8 h-8 rounded-md bg-surface-container hover:bg-surface-container-high flex items-center justify-center text-on-surface-variant transition-colors"
                     title={tc('copy')}
                   >
                     {copied === c.id ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
                   </button>
                   <a
-                    href={storeUrl(c.table_no)}
+                    href={storeUrl(c.public_token)}
                     target="_blank"
                     rel="noreferrer"
                     className="w-8 h-8 rounded-md bg-surface-container hover:bg-surface-container-high flex items-center justify-center text-on-surface-variant transition-colors"

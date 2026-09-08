@@ -2,20 +2,21 @@ import { NextRequest, NextResponse } from 'next/server';
 import { streamChat, invokeChat } from '@/lib/ai/router';
 import { getBusinessContext } from '@/lib/business-context';
 import { sseResponse } from '@/lib/api-helpers';
-import { getTenantContext } from '@/lib/tenant';
-import { tenantTable, updateWithTenant } from '@/lib/tenant-db';
+import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
+import { scopedTable, updateWithScope } from '@/lib/tenant-db';
 import { HeaderUtils } from 'coze-coding-dev-sdk';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 // AI 处理邮件：summarize=生成摘要 / reply=生成回复草稿（流式）
-export async function POST(request: NextRequest) {
-  const ctx = getTenantContext(request);
+async function classifyOrDraftEmail(request: NextRequest) {
+  const ctx = requireBusinessContext(await getTenantContext(request));
   const body = await request.json();
   const emailId = body.emailId as string;
   const action = (body.action as string) ?? 'reply';
   const locale = (body.locale as string) ?? 'en';
   if (!emailId) return NextResponse.json({ error: 'emailId required' }, { status: 400 });
 
-  const emailRes = await tenantTable(ctx.tenantId, 'emails').eq('id', emailId).maybeSingle();
+  const emailRes = await scopedTable(ctx, 'emails').eq('id', emailId).maybeSingle();
   if (emailRes.error) throw new Error(emailRes.error.message);
   const email = emailRes.data as { from_name: string | null; from_addr: string; subject: string; content: string } | null;
   if (!email) return NextResponse.json({ error: 'Email not found' }, { status: 404 });
@@ -26,7 +27,7 @@ export async function POST(request: NextRequest) {
   const mailLang = /[一-龥]/.test(email.content) ? '中文（与来信一致）' : 'the same language as the incoming email';
 
   if (action === 'summarize') {
-    const ctxText = await getBusinessContext();
+    const ctxText = await getBusinessContext(ctx.tenantId, ctx.businessId);
     const text = await invokeChat(
       'agent',
       [
@@ -37,8 +38,9 @@ export async function POST(request: NextRequest) {
         { role: 'user', content: `From: ${email.from_name ?? ''} <${email.from_addr}>\nSubject: ${email.subject}\n\n${email.content}` },
       ],
       forwardHeaders,
+      { tenantId: ctx.tenantId, businessId: ctx.businessId, userId: ctx.userId },
     );
-    const { error: upErr } = await updateWithTenant(ctx.tenantId, 'emails', emailId, { ai_summary: text });
+    const { error: upErr } = await updateWithScope(ctx, 'emails', emailId, { ai_summary: text });
     if (upErr) throw new Error(upErr.message);
     return NextResponse.json({ summary: text });
   }
@@ -58,6 +60,12 @@ export async function POST(request: NextRequest) {
         },
       ],
       forwardHeaders,
+      { tenantId: ctx.tenantId, businessId: ctx.businessId, userId: ctx.userId },
     ),
   );
 }
+
+export const POST = protectBusinessMutation(
+  { permission: 'emails:write', action: 'emails.classify_or_draft', entity: 'emails' },
+  classifyOrDraftEmail,
+);

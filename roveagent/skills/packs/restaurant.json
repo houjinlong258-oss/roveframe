@@ -1,0 +1,24 @@
+{
+  "key": "restaurant",
+  "name": "Restaurant Pack",
+  "agents": ["ceo", "operations", "marketing", "customer", "devops"],
+  "connectors": ["square", "toast", "clover", "lightspeed", "shopify_pos", "erpnext"],
+  "skills": [
+    "daily-briefing",
+    "review-response",
+    "win-back-campaign",
+    "menu-optimization",
+    "inventory-forecast",
+    "reservation-triage"
+  ],
+  "templates": {
+    "daily_report": "Revenue / Orders / Customers / Best Sellers / Problems",
+    "win_back_email": "Personalized re-engagement email for 21+ day inactive customers",
+    "review_reply": "24h SLA response draft for negative reviews"
+  },
+  "knowledge_base": [
+    "menu.md",
+    "policies.md",
+    "supplier-contacts.md"
+  ]
+}

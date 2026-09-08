@@ -29,6 +29,7 @@ test('blocks a tool when the role lacks the required permission', async () => {
     description: 'Reply to a review',
     action: 'reviews:reply',
     risk: 'external_side_effect',
+    approvalPolicy: 'manager',
     requiredPermission: 'reviews:write',
     timeoutMs: 100,
     inputSchema: z.object({ reviewId: z.string() }),

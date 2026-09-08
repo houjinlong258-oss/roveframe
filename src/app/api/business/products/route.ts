@@ -1,21 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantContext } from '@/lib/tenant';
+import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
 import {
-  insertWithTenant,
-  tenantTable,
-  updateWithTenant,
+  insertWithScope,
+  scopedTable,
+  updateWithScope,
 } from '@/lib/tenant-db';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 // 产品管理（P0-S2 完整版：tenant 过滤 + tenant_id 注入）
 export async function GET(request: NextRequest) {
-  const ctx = getTenantContext(request);
-  const { data, error } = await tenantTable(ctx.tenantId, 'products')
+  const ctx = requireBusinessContext(await getTenantContext(request));
+  const { data, error } = await scopedTable(ctx, 'products')
     .order('sales_count', { ascending: false });
   if (error) throw new Error(error.message);
 
   // 本周销量/营收（近 7 天订单明细聚合）
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
-  const { data: weekOrders, error: oErr } = await tenantTable(ctx.tenantId, 'orders', 'items')
+  const { data: weekOrders, error: oErr } = await scopedTable(ctx, 'orders', 'items')
     .gte('created_at', weekAgo)
     .neq('status', 'cancelled');
   if (oErr) throw new Error(oErr.message);
@@ -42,10 +43,10 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ products, categories });
 }
 
-export async function POST(request: NextRequest) {
+async function createProduct(request: NextRequest) {
   const body = await request.json();
-  const ctx = getTenantContext(request);
-  const { data, error } = await insertWithTenant(ctx.tenantId, 'products', {
+  const ctx = requireBusinessContext(await getTenantContext(request));
+  const { data, error } = await insertWithScope(ctx, 'products', {
     name: body.name,
     category: body.category ?? '招牌菜',
     price: body.price ?? 0,
@@ -61,10 +62,10 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ id: (data as { id: string }).id });
 }
 
-export async function PATCH(request: NextRequest) {
+async function updateProduct(request: NextRequest) {
   const body = await request.json();
   if (!body.id) return NextResponse.json({ error: 'id required' }, { status: 400 });
-  const ctx = getTenantContext(request);
+  const ctx = requireBusinessContext(await getTenantContext(request));
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
   for (const k of [
     'name',
@@ -79,7 +80,16 @@ export async function PATCH(request: NextRequest) {
   ] as const) {
     if (body[k] !== undefined) update[k] = body[k];
   }
-  const { error } = await updateWithTenant(ctx.tenantId, 'products', body.id, update);
+  const { error } = await updateWithScope(ctx, 'products', body.id, update);
   if (error) throw new Error(error.message);
   return NextResponse.json({ ok: true });
 }
+
+export const POST = protectBusinessMutation(
+  { permission: 'products:write', action: 'products.create', entity: 'products' },
+  createProduct,
+);
+export const PATCH = protectBusinessMutation(
+  { permission: 'products:write', action: 'products.update', entity: 'products' },
+  updateProduct,
+);

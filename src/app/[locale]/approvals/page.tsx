@@ -59,6 +59,32 @@ const STATUS_STYLES: Record<ProposalStatus, string> = {
   rolled_back: 'bg-purple-100 text-purple-800',
 };
 
+// 经营动作审批（agent_approvals，含 RoveAgent 门控推送的 requires_approval 事件）
+interface AgentApproval {
+  id: string;
+  action_type: string;
+  title: string;
+  description?: string | null;
+  status: 'pending' | 'approved' | 'executing' | 'executed' | 'rejected' | 'expired' | 'failed';
+  tool_name?: string | null;
+  risk_level?: string | null;
+  required_role?: string | null;
+  invocation_id?: string | null;
+  execution_id?: string | null;
+  created_at: string;
+  payload: Record<string, unknown>;
+}
+
+const BIZ_STATUS_STYLES: Record<AgentApproval['status'], string> = {
+  pending: 'bg-amber-100 text-amber-800',
+  approved: 'bg-green-100 text-green-800',
+  executing: 'bg-blue-100 text-blue-800',
+  executed: 'bg-green-100 text-green-800',
+  rejected: 'bg-gray-200 text-gray-600',
+  expired: 'bg-gray-100 text-gray-500',
+  failed: 'bg-red-100 text-red-800',
+};
+
 const RISK_STYLES: Record<Proposal['riskLevel'], string> = {
   safe: 'bg-green-100 text-green-700',
   moderate: 'bg-amber-100 text-amber-700',
@@ -71,12 +97,15 @@ const RISK_STYLES: Record<Proposal['riskLevel'], string> = {
 
 export default function ApprovalsPage() {
   const t = useTranslations('approvals');
+  const [tab, setTab] = useState<'code' | 'business'>('code');
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Proposal | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [bizApprovals, setBizApprovals] = useState<AgentApproval[]>([]);
+  const [bizLoading, setBizLoading] = useState(false);
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -92,13 +121,40 @@ export default function ApprovalsPage() {
     setDetail(data?.proposal ?? null);
   }, []);
 
+  const loadBiz = useCallback(async () => {
+    setBizLoading(true);
+    const data = await safeFetchJson<{ approvals: AgentApproval[] }>('/api/agent/approvals');
+    setBizApprovals(data?.approvals ?? []);
+    setBizLoading(false);
+  }, []);
+
   useEffect(() => {
     loadList();
-  }, [loadList]);
+    loadBiz();
+  }, [loadList, loadBiz]);
 
   useEffect(() => {
     if (selectedId) loadDetail(selectedId);
   }, [selectedId, loadDetail]);
+
+  async function bizAction(id: string, action: 'approve' | 'reject') {
+    setActionBusy(action);
+    setNotice(null);
+    try {
+      const res = await fetch('/api/agent/approvals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approval_id: id, action }),
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) setNotice(data?.error ?? `HTTP ${res.status}`);
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActionBusy(null);
+      await loadBiz();
+    }
+  }
 
   async function doAction(kind: 'approve' | 'reject' | 'apply' | 'rollback', id: string) {
     setActionBusy(kind);
@@ -161,6 +217,94 @@ export default function ApprovalsPage() {
         </div>
       )}
 
+      {/* 标签页：代码变更 / 经营动作 */}
+      <div className="flex gap-1 border-b border-outline">
+        {(['code', 'business'] as const).map((k) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              tab === k
+                ? 'border-primary text-primary'
+                : 'border-transparent text-on-surface-variant hover:text-on-surface'
+            }`}
+          >
+            {t(`tabs.${k}`)}
+            {k === 'business' && bizApprovals.filter((a) => a.status === 'pending').length > 0 && (
+              <span className="ml-1.5 text-[11px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                {bizApprovals.filter((a) => a.status === 'pending').length}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'business' && (
+        <div className="rounded-lg border border-outline bg-surface overflow-hidden">
+          <div className="px-4 py-3 border-b border-outline text-sm font-semibold flex items-center justify-between">
+            <span>{t('biz.listTitle', { count: bizApprovals.filter((a) => a.status === 'pending').length })}</span>
+            <button
+              onClick={loadBiz}
+              className="flex items-center gap-1 text-xs text-on-surface-variant hover:text-on-surface"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> {t('refresh')}
+            </button>
+          </div>
+          <div className="divide-y divide-outline">
+            {bizLoading && <div className="p-6 text-sm text-on-surface-variant">{t('loading')}</div>}
+            {!bizLoading && bizApprovals.length === 0 && (
+              <div className="p-6 text-sm text-on-surface-variant">{t('biz.empty')}</div>
+            )}
+            {bizApprovals.map((a) => (
+              <div key={a.id} className="px-4 py-3 flex items-start gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium">{a.title}</span>
+                    <span className={`text-[11px] px-1.5 py-0.5 rounded ${BIZ_STATUS_STYLES[a.status]}`}>
+                      {t(`biz.status.${a.status}`)}
+                    </span>
+                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-surface-container text-on-surface-variant">
+                      {t.has(`biz.type.${a.action_type}`) ? t(`biz.type.${a.action_type}`) : a.action_type}
+                    </span>
+                    {a.risk_level && (
+                      <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-50 text-red-700">
+                        {a.risk_level} · {a.required_role}
+                      </span>
+                    )}
+                  </div>
+                  {a.description && (
+                    <p className="text-xs text-on-surface-variant mt-1">{a.description}</p>
+                  )}
+                  <div className="text-[11px] text-on-surface-variant mt-1">{fmtDateTime(a.created_at)}</div>
+                  <div className="text-[11px] text-on-surface-variant mt-1 font-mono">
+                    {a.tool_name}{a.execution_id ? ` · ${a.execution_id.slice(0, 8)}` : ''}
+                  </div>
+                </div>
+                {a.status === 'pending' && (
+                  <div className="flex gap-2 shrink-0">
+                    <button
+                      disabled={actionBusy !== null}
+                      onClick={() => bizAction(a.id, 'approve')}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      <Check className="w-3.5 h-3.5" /> {t('approve')}
+                    </button>
+                    <button
+                      disabled={actionBusy !== null}
+                      onClick={() => bizAction(a.id, 'reject')}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs rounded-md border border-outline hover:bg-surface-container disabled:opacity-50"
+                    >
+                      <X className="w-3.5 h-3.5" /> {t('reject')}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === 'code' && (
       <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-5">
         {/* 提案列表 */}
         <div className="rounded-lg border border-outline bg-surface overflow-hidden">
@@ -308,6 +452,7 @@ export default function ApprovalsPage() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

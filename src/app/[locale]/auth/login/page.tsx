@@ -7,6 +7,7 @@ import { useSession } from '@/hooks/use-session';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Link } from '@/i18n/navigation';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -17,8 +18,16 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // 登录成功后回跳：仅接受站内路径（防开放式重定向），事件期读 window 无 hydration 风险
+  function getPostLoginTarget(): string {
+    if (typeof window === 'undefined') return '/';
+    const next = new URLSearchParams(window.location.search).get('next');
+    if (next && next.startsWith('/') && !next.startsWith('//')) return next;
+    return '/';
+  }
+
   useEffect(() => {
-    if (session) router.replace('/');
+    if (session) router.replace(getPostLoginTarget());
   }, [session, router]);
 
   async function onSubmit(e: React.FormEvent) {
@@ -31,7 +40,7 @@ export default function LoginPage() {
       setError(res.error);
       return;
     }
-    router.replace('/');
+    router.replace(getPostLoginTarget());
   }
 
   return (
@@ -67,9 +76,9 @@ export default function LoginPage() {
         </Button>
         <p className="text-sm text-muted-foreground text-center">
           {t('noAccount')}{' '}
-          <a href="/auth/signup" className="underline text-primary">
+          <Link href="/auth/signup" className="underline text-primary">
             {t('signupLink')}
-          </a>
+          </Link>
         </p>
       </form>
     </div>

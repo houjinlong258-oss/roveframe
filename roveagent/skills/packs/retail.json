@@ -1,0 +1,24 @@
+{
+  "key": "retail",
+  "name": "Retail Pack",
+  "agents": ["ceo", "operations", "marketing", "customer", "finance", "devops"],
+  "connectors": ["square", "clover", "shopify_pos", "lightspeed"],
+  "skills": [
+    "daily-briefing",
+    "inventory-forecast",
+    "pricing-optimizer",
+    "win-back-campaign",
+    "review-response",
+    "planogram-analysis"
+  ],
+  "templates": {
+    "daily_report": "Revenue / Transactions / Avg Basket / Sell-through / Stockouts",
+    "promo_brief": "Promotion uplift estimate with margin impact",
+    "review_reply": "24h SLA response draft for negative reviews"
+  },
+  "knowledge_base": [
+    "catalog.md",
+    "policies.md",
+    "supplier-contacts.md"
+  ]
+}

@@ -28,6 +28,7 @@ import {
   updateProposalStatus,
 } from '@/lib/coding-agent/persistent-store';
 import { CodingTask, CodingTaskType, ProposalStatus } from '@/lib/coding-agent/types';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 const VALID_TASK_TYPES = new Set<CodingTaskType>([
   'add_feature', 'fix_bug', 'add_config', 'add_workflow',
@@ -198,6 +199,12 @@ async function handlePatch(request: NextRequest, ctx: AuthContext): Promise<Resp
 // Exports — withAuth 统一鉴权 + 角色门控
 // ---------------------------------------------------------------------------
 
-export const POST = withAuth(handlePost, { roles: ['owner', 'manager'] });
+export const POST = protectBusinessMutation(
+  { permission: 'coding:propose', action: 'coding_agent.propose', entity: 'coding_proposal' },
+  withAuth(handlePost, { roles: ['owner', 'manager'] }),
+);
 export const GET = withAuth(handleGet);
-export const PATCH = withAuth(handlePatch, { roles: ['owner', 'manager'] });
+export const PATCH = protectBusinessMutation(
+  { permission: 'coding:propose', action: 'coding_agent.review', entity: 'coding_proposal' },
+  withAuth(handlePatch, { roles: ['owner', 'manager'] }),
+);

@@ -5,7 +5,12 @@ import { notFound } from 'next/navigation';
 import { Inspector } from 'react-dev-inspector';
 import { routing } from '@/i18n/routing';
 import { AppShell } from '@/components/layout/app-shell';
+import { ThemeProvider } from '@/components/theme/theme-provider';
 import '../globals.css';
+
+// 首屏防闪烁： hydration 前按 localStorage 偏好 / 本地时间（06:00–18:00 为昼）解析主题
+// 顾客端 H5 点餐商城（/store）保持品牌固定样式，不随主题切换
+const THEME_INIT_SCRIPT = `(function(){try{if(/\\/store(\\/|$)/.test(location.pathname))return;var m=localStorage.getItem('roveframe-theme')||'system';var h=new Date().getHours();var r=m==='system'?(h>=6&&h<18?'light':'dark'):m;var d=document.documentElement;if(r==='dark'){d.classList.add('dark')}else{d.classList.remove('dark')}}catch(e){}})();`;
 
 export const metadata: Metadata = {
   title: {
@@ -33,11 +38,14 @@ export default async function LocaleLayout({
   setRequestLocale(locale);
 
   return (
-    <html lang={locale}>
+    <html lang={locale} suppressHydrationWarning>
       <body>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <Inspector />
         <NextIntlClientProvider>
-          <AppShell>{children}</AppShell>
+          <ThemeProvider>
+            <AppShell>{children}</AppShell>
+          </ThemeProvider>
         </NextIntlClientProvider>
       </body>
     </html>

@@ -16,6 +16,7 @@ import { json, jsonError } from '@/lib/api-helpers';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { resolveUserByToken } from '@/lib/auth';
 import { getTenantContext } from '@/lib/tenant';
+import { protectTenantMutation } from '@/lib/mutation-guard';
 
 interface InviteBody {
   email: string;
@@ -23,7 +24,7 @@ interface InviteBody {
   business_id?: string;
 }
 
-export async function POST(request: Request) {
+async function inviteUser(request: Request) {
   const auth = request.headers.get('authorization');
   if (!auth) {
     return jsonError('missing Authorization header', 401);
@@ -52,8 +53,24 @@ export async function POST(request: Request) {
   }
 
   const client = getSupabaseClient();
-  const ctx = getTenantContext(request);
+  const ctx = await getTenantContext(request);
   const targetBusinessId = body.business_id ?? me.data.businessId ?? null;
+  if (!targetBusinessId) {
+    return jsonError('business_id required for an invitation', 400);
+  }
+  // Never trust a client-supplied business_id. It must belong to this tenant;
+  // managers are additionally confined to their own business.
+  const { data: business, error: businessError } = await client
+    .from('businesses')
+    .select('id, tenant_id')
+    .eq('id', targetBusinessId)
+    .eq('tenant_id', ctx.tenantId)
+    .maybeSingle();
+  if (businessError) return jsonError(`business lookup failed: ${businessError.message}`, 500);
+  if (!business) return jsonError('business does not belong to your tenant', 403);
+  if (me.data.role === 'manager' && me.data.businessId !== targetBusinessId) {
+    return jsonError('managers may only invite users to their own business', 403);
+  }
 
   // 1) Supabase 生成 invite link（admin API，需 service_role）
   const { data, error } = await client.auth.admin.inviteUserByEmail(body.email, {
@@ -88,3 +105,8 @@ export async function POST(request: Request) {
     201,
   );
 }
+
+export const POST = protectTenantMutation(
+  { permission: 'users:write', action: 'users.invite', entity: 'users' },
+  inviteUser,
+);

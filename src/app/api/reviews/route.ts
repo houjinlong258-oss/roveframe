@@ -1,16 +1,17 @@
-import { json, jsonError, getErrorMessage } from '@/lib/api-helpers';
+import { json, jsonError, errorResponse } from '@/lib/api-helpers';
 import { getTenantContext } from '@/lib/tenant';
-import { tenantTable, updateWithTenant } from '@/lib/tenant-db';
+import { scopedTable, updateWithScope } from '@/lib/tenant-db';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 export async function GET(request: Request) {
   try {
-    const ctx = getTenantContext(request);
+    const ctx = await getTenantContext(request);
     const { searchParams } = new URL(request.url);
     const platform = searchParams.get('platform');
     const sentiment = searchParams.get('sentiment');
     const pending = searchParams.get('pending') === 'true';
 
-    const q = tenantTable(ctx.tenantId, 'reviews')
+    const q = scopedTable(ctx, 'reviews')
       .order('created_at', { ascending: false })
       .limit(50);
     const chained = (() => {
@@ -24,7 +25,7 @@ export async function GET(request: Request) {
     if (error) throw new Error(error.message);
 
     // 统计
-    const allRes = await tenantTable(ctx.tenantId, 'reviews', 'rating, sentiment, reply_status');
+    const allRes = await scopedTable(ctx, 'reviews', 'rating, sentiment, reply_status');
     if (allRes.error) throw new Error(allRes.error.message);
     const rows = (allRes.data ?? []) as { rating: number; sentiment: string; reply_status: string }[];
     const avgRating = rows.length ? Math.round((rows.reduce((s, r) => s + r.rating, 0) / rows.length) * 10) / 10 : 0;
@@ -39,13 +40,13 @@ export async function GET(request: Request) {
 
     return json({ reviews: data ?? [], stats: { avgRating, positiveRate, pendingCount, sentimentDist, total: rows.length } });
   } catch (error) {
-    return jsonError(getErrorMessage(error));
+    return errorResponse(error);
   }
 }
 
-export async function PATCH(request: Request) {
+async function updateReview(request: Request) {
   try {
-    const ctx = getTenantContext(request);
+    const ctx = await getTenantContext(request);
     const body = (await request.json()) as { id: string; reply_content?: string; reply_status?: string };
     if (!body.id) return jsonError('missing id', 400);
     const updates: Record<string, string> = {};
@@ -54,10 +55,15 @@ export async function PATCH(request: Request) {
       updates.reply_status = body.reply_status;
       if (body.reply_status === 'published') updates.status = 'replied';
     }
-    const { error } = await updateWithTenant(ctx.tenantId, 'reviews', body.id, updates);
+    const { error } = await updateWithScope(ctx, 'reviews', body.id, updates);
     if (error) throw new Error(error.message);
     return json({ ok: true });
   } catch (error) {
-    return jsonError(getErrorMessage(error));
+    return errorResponse(error);
   }
 }
+
+export const PATCH = protectBusinessMutation(
+  { permission: 'reviews:write', action: 'reviews.update', entity: 'reviews' },
+  updateReview,
+);

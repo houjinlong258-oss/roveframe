@@ -11,7 +11,9 @@
     "business": "经营数据",
     "settings": "设置",
     "brand": "RoveFrame",
-    "brandBadge": "AI COO"
+    "brandBadge": "AI COO",
+    "approvals": "变更审批",
+    "enterpriseApprovals": "变更审批"
   },
   "common": {
     "save": "保存",
@@ -73,7 +75,51 @@
     "priorityItems": "优先事项",
     "actionGenerate": "生成营销方案",
     "actionReply": "去回复",
-    "actionView": "查看客户"
+    "actionView": "查看客户",
+    "greetingMorning": "早上好",
+    "greetingAfternoon": "下午好",
+    "greetingEvening": "晚上好",
+    "commandSummary": "你的 AI 团队已完成今日经营分析，以下是最重要的事项。",
+    "commandHeadline": "今日营收 {delta} · 已成交 {orders} 单",
+    "yourTeam": "你的 AI 团队",
+    "openCommand": "进入指挥中心",
+    "openAgent": "打开 Agent",
+    "status": {
+      "active": "工作中",
+      "thinking": "分析中",
+      "idle": "空闲",
+      "attention": "需要关注"
+    },
+    "agentCeo": "CEO Agent",
+    "agentCeoRole": "战略与每日简报",
+    "agentCeoTask": "今日营收 {revenue}（较上周 {delta}），每日经营分析已完成。",
+    "agentCeoLast": "每日简报已推送",
+    "agentOps": "运营 Agent",
+    "agentOpsRole": "订单、库存与流程",
+    "agentOpsTaskRisk": "正在分析库存风险 —— {count} 条告警待处理",
+    "agentOpsTaskOk": "库存健康，持续监控订单流。",
+    "agentOpsLast": "库存巡检完成",
+    "agentMarketing": "营销 Agent",
+    "agentMarketingRole": "活动与增长",
+    "agentMarketingTask": "{count} 位高价值客户可启动挽留活动。",
+    "agentMarketingLast": "活动草稿已生成",
+    "agentCustomer": "客户 Agent",
+    "agentCustomerRole": "关系与留存",
+    "agentCustomerTaskRisk": "{count} 条差评待回复 —— 正在起草回复。",
+    "agentCustomerTaskOk": "舆情平稳，持续监测流失信号。",
+    "agentCustomerLast": "评论情绪分析完成",
+    "aiActivity": "AI 动态",
+    "aiActivityEmpty": "今天还没有 AI 动态。",
+    "actionApprove": "批准",
+    "actionReview": "审阅",
+    "actionExecute": "执行",
+    "recChurnTitle": "客户留存下降 —— {count} 位常客有流失风险",
+    "recChurnDesc": "是否启动会员挽留活动？AI 已为每位高风险客户准备好个性化邮件。",
+    "recReviewTitle": "{count} 条差评需要关注",
+    "recReviewDesc": "24 小时内回复可将挽回率提升 3 倍，AI 回复草稿已备好待你批准。",
+    "recGrowthTitle": "检测到周末营收增长势头",
+    "recGrowthDesc": "峰值日营收达 {revenue}，建议配合社媒活动放大热销菜品。",
+    "agentAnalyzing": "正在分析经营数据…"
   },
   "agent": {
     "title": "AI COO 助手",
@@ -92,7 +138,32 @@
     "ignore": "忽略",
     "sessions": "会话列表",
     "dataContext": "回答基于你的真实经营数据",
-    "send": "发送"
+    "send": "发送",
+    "yourTeam": "你的 AI 团队",
+    "team": {
+      "ceo": "CEO Agent",
+      "ceoRole": "经营分析与战略建议",
+      "ops": "运营 Agent",
+      "opsRole": "订单、库存、流程优化",
+      "mkt": "营销 Agent",
+      "mktRole": "营销活动与客户增长",
+      "cust": "客户 Agent",
+      "custRole": "评论、留存、客户关系",
+      "dev": "开发 Agent",
+      "devRole": "代码分析与修复",
+      "devops": "运维 Agent",
+      "devopsRole": "部署、监控、维护",
+      "statusActive": "就绪",
+      "openAgent": "打开 Agent",
+      "kickoff": {
+        "ceo": "作为我的 CEO Agent，请汇报昨日经营表现，并给出今天最重要的 3 件事。",
+        "ops": "作为我的运营 Agent，请分析当前订单与库存，指出今天需要关注的事项。",
+        "mkt": "作为我的营销 Agent，请基于客户数据提出未来 30 天的营收增长活动方案。",
+        "cust": "作为我的客户 Agent，请检查近期反馈与流失风险客户，给出挽留建议。",
+        "dev": "作为我的开发 Agent，请检查当前系统是否存在 bug 或改进机会。",
+        "devops": "作为我的运维 Agent，请检查部署健康状态并给出稳定性建议。"
+      }
+    }
   },
   "knowledge": {
     "title": "知识大脑",
@@ -484,12 +555,14 @@
     "cap": {
       "agent": "AI COO 对话助手",
       "content": "内容生成",
-      "rag": "知识库问答（RAG）"
+      "rag": "知识库问答（RAG）",
+      "light": "轻量任务"
     },
     "capNote": {
       "agent": "经营问答、分析洞察",
       "content": "营销文案、评论回复、邮件草稿",
-      "rag": "基于知识文档的回答生成"
+      "rag": "基于知识文档的回答生成",
+      "light": "分类、摘要、简报等轻量任务"
     },
     "autoMode": "自动（推荐）",
     "autoModeNote": "自动模式下，评论回复、邮件分类等轻量任务使用轻量模型；经营分析、方案生成等复杂任务使用你已接入的旗舰模型。",
@@ -569,7 +642,9 @@
     "intFields": {
       "square": {
         "accessToken": "Access Token",
-        "locationId": "门店 Location ID"
+        "locationId": "门店 Location ID（可逗号分隔）",
+        "signatureKey": "Webhook 签名密钥",
+        "webhookUrl": "Webhook 完整通知地址"
       },
       "shopify": {
         "shopDomain": "店铺域名",
@@ -585,7 +660,7 @@
       }
     },
     "intTips": {
-      "square": "Access Token 在 Square Developer 控制台 → Credentials 获取；Webhook 地址保存后自动生成。",
+      "square": "在 Square Developer 控制台获取 Token 和签名密钥，并保存包含 tenant/business 参数的完整公开 Webhook 地址。",
       "shopify": "在 Shopify 后台 → 应用 → 开发应用中创建自定义应用，获取 Admin API 令牌。",
       "stripe": "密钥在 Stripe Dashboard → 开发者 → API keys 中获取；保存后添加 Webhook 端点。",
       "paypal": "在 PayPal Developer Dashboard 创建应用以获取 Client ID / Secret。"
@@ -635,7 +710,7 @@
       "qqbot": "通过官方 QQ 机器人 API 接入 QQ 频道 — 需创建机器人。"
     },
     "channelTip": {
-      "telegram": "用 @BotFather 创建机器人获取 Token，先给自己的机器人发一条消息，再从 https://api.telegram.org/bot<TOKEN>/getUpdates 获取 chat_id。",
+      "telegram": "用 @BotFather 创建机器人获取 Token，先给自己的机器人发一条消息，再从 https://api.telegram.org/bot[TOKEN]/getUpdates 获取 chat_id。",
       "whatsapp": "在 Meta for Developers 创建 Business 类型应用并添加 WhatsApp，复制访问令牌与电话号码 ID；收件人号码使用 E.164 国际格式，如 +15551234567。",
       "slack": "在 Slack 创建应用并启用 Incoming Webhooks，复制目标频道的 Webhook URL。",
       "discord": "在 Discord 频道设置 > 集成 > Webhooks 中创建 Webhook URL。",
@@ -674,7 +749,26 @@
     "wipeButton": "清空数据",
     "wipeConfirmTitle": "确认清空全部数据",
     "wipeConfirm": "将删除全部示例产品、订单、客户、评论、邮件与知识文档。此操作不可恢复，确定继续吗？",
-    "wipeConfirmButton": "确认清空"
+    "wipeConfirmButton": "确认清空",
+    "groupAppearance": "外观",
+    "appearanceNote": "昼 / 夜双主题均为专业重设计，而非简单反色。",
+    "themeLight": "浅色",
+    "themeLightDesc": "Day 主题：干净、明亮、高级。",
+    "themeDark": "深色",
+    "themeDarkDesc": "Night 主题：深邃专注、空间层次。",
+    "themeSystem": "跟随时间",
+    "themeSystemDesc": "按本地时间自动切换：06:00-18:00 浅色，18:00-06:00 深色。",
+    "appearanceNow": "当前生效",
+    "searchProvider": "搜索服务商 / 协议…",
+    "adapterPending": "适配器待验收",
+    "testFailedBadge": "测试失败",
+    "fallbackActive": "已回落",
+    "displayNameLabel": "显示名称（可选）",
+    "keyKeepExisting": "已保存密钥：留空则保留现有密钥，仅修改其他配置",
+    "manualModelNote": "该服务商不支持模型列表发现，可手动填写模型 ID",
+    "timeoutMs": "超时（毫秒）",
+    "maxRetries": "重试次数",
+    "optInLocal": "允许本地/内网地址（http、loopback，显式 opt-in）"
   },
   "store": {
     "all": "全部",
@@ -729,5 +823,140 @@
     "retry": "重试",
     "goHome": "回到首页",
     "cacheHint": "最近浏览的页面已缓存,断网时仍可访问。"
+  },
+  "approvals": {
+    "title": "AI 变更审批",
+    "subtitle": "审查、批准、应用与回滚 AI 生成的代码提案。未经人工批准不会落盘任何修改。",
+    "refresh": "刷新",
+    "loading": "加载中…",
+    "empty": "暂无提案。可通过 POST /api/coding-agent 提交任务。",
+    "listTitle": "提案列表（{count}）",
+    "selectPrompt": "在左侧选择一个提案以审查其变更。",
+    "approve": "批准",
+    "reject": "拒绝",
+    "apply": "应用（写代码 + 跑测试）",
+    "applying": "应用中…",
+    "rollback": "回滚",
+    "rollingBack": "回滚中…",
+    "changesTitle": "变更清单（{count}）",
+    "applyLog": "Apply 日志",
+    "generatedAt": "生成于",
+    "decidedAt": "审批于",
+    "status": {
+      "pending_review": "待审批",
+      "approved": "已批准",
+      "rejected": "已拒绝",
+      "applied": "已应用",
+      "apply_failed": "应用失败",
+      "rolled_back": "已回滚",
+      "changes_requested": "要求修改"
+    },
+    "risk": {
+      "safe": "安全",
+      "moderate": "中等",
+      "review_required": "需审查"
+    },
+    "tabs": {
+      "code": "代码变更",
+      "business": "经营动作"
+    },
+    "biz": {
+      "listTitle": "待审批经营动作（{count}）",
+      "empty": "暂无待审批的经营动作。",
+      "status": {
+        "pending": "待审批",
+        "approved": "已批准",
+        "executing": "执行中",
+        "executed": "已执行",
+        "rejected": "已拒绝",
+        "expired": "已过期",
+        "failed": "执行失败"
+      },
+      "type": {
+        "purchase.create_draft": "采购草稿",
+        "marketing.create_draft_campaign": "营销活动",
+        "reviews.reply": "评论回复",
+        "roveagent.tool_call": "RoveAgent 工具调用",
+        "roveagent.task_step": "RoveAgent 任务"
+      },
+      "approvedDone": "已批准并执行",
+      "rejectedDone": "已拒绝"
+    }
+  },
+  "enterpriseApprovals": {
+    "title": "变更审批",
+    "subtitle": "企业级 AI 代码变更审批：统一 diff、合并前检查、全量审计留痕。",
+    "refresh": "刷新",
+    "loading": "加载中...",
+    "empty": "暂无提案。可通过 POST /api/coding-agent 提交任务。",
+    "listTitle": "提案（{count}）",
+    "selectPrompt": "从左侧选择提案以查看 diff 与检查结果。",
+    "agent": "代理",
+    "generatedAt": "生成于",
+    "decidedBy": "审批人",
+    "commit": "提交",
+    "reviewNote": "审批备注",
+    "status": {
+      "pending_review": "待审批",
+      "approved": "已批准",
+      "rejected": "已拒绝",
+      "changes_requested": "要求修改",
+      "applied": "已应用",
+      "apply_failed": "应用失败",
+      "rolled_back": "已回滚"
+    },
+    "risk": {
+      "safe": "安全",
+      "moderate": "中等",
+      "review_required": "需审查"
+    },
+    "operation": {
+      "create": "新文件",
+      "modify": "修改",
+      "delete": "删除"
+    },
+    "checks": {
+      "title": "合并前检查",
+      "permission": "权限检查",
+      "security": "安全扫描",
+      "testGate": "测试门禁",
+      "rollback": "回滚",
+      "pass": "通过",
+      "fail": "失败",
+      "notRun": "未运行",
+      "problems": "{count} 个路径违规",
+      "findings": "{count} 项发现",
+      "gateSteps": "应用时执行",
+      "rollbackReady": "可回滚",
+      "rollbackNo": "不可回滚"
+    },
+    "decision": {
+      "title": "审批决策",
+      "notePlaceholder": "添加审批备注（要求修改时必填）...",
+      "noteRequired": "要求修改时必须填写备注",
+      "approve": "批准",
+      "requestChanges": "要求修改",
+      "reject": "拒绝",
+      "apply": "应用（写入代码并运行测试）",
+      "applying": "应用中...",
+      "rollback": "回滚",
+      "rollingBack": "回滚中...",
+      "gateNote": "应用会合入变更并运行单元测试与类型检查；失败将自动 revert。"
+    },
+    "files": {
+      "title": "变更文件（{count}）",
+      "tooLarge": "文件过大，无法内联 diff。",
+      "rationale": "变更说明"
+    },
+    "activity": {
+      "title": "活动记录",
+      "empty": "暂无审计事件。"
+    }
+  },
+  "theme": {
+    "label": "外观",
+    "light": "浅色",
+    "dark": "深色",
+    "system": "跟随时间"
   }
 }

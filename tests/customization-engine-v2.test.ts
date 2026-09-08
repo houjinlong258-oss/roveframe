@@ -97,10 +97,23 @@ describe('NL Engine v2: keyword fallback still works', () => {
   });
 
   test('async path falls back to keyword when AI unavailable', async () => {
-    const res = await nlCustomizationEngine.parseAndApplyNLIntentAsync('添加低库存自动提醒工作流');
-    assert.equal(res.success, true);
-    assert.equal(res.templateId, 'low_stock_alert');
-    assert.equal(res.channel, 'keyword');
+    // 环境无关地强制 AI 不可用：本地/CI 有真实 .env 与可用 Provider 时，
+    // AI 通道会合法返回 channel='ai'，本用例专测降级契约，必须打桩。
+    const engine = nlCustomizationEngine as unknown as {
+      classifyWithAI: () => Promise<unknown>;
+    };
+    const original = engine.classifyWithAI;
+    engine.classifyWithAI = async () => {
+      throw new Error('AI unavailable (test stub)');
+    };
+    try {
+      const res = await nlCustomizationEngine.parseAndApplyNLIntentAsync('添加低库存自动提醒工作流');
+      assert.equal(res.success, true);
+      assert.equal(res.templateId, 'low_stock_alert');
+      assert.equal(res.channel, 'keyword');
+    } finally {
+      engine.classifyWithAI = original;
+    }
   });
 
   test('applied workflow lands in active customization bundle', () => {

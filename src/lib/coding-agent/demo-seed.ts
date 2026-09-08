@@ -12,8 +12,13 @@
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { saveProposal, getProposalById } from './persistent-store';
 import { demoStoreFileExists } from './proposal-store';
+import type { CodingProposal } from './types';
+
+interface DemoProposalStore {
+  saveProposal: (proposal: CodingProposal, tenantId: string) => Promise<void>;
+  getProposalById: (id: string, tenantId?: string) => Promise<CodingProposal | undefined>;
+}
 
 export const DEMO_USER_ID = 'demo-owner';
 export const DEMO_TENANT_ID = 'tenant_demo';
@@ -60,12 +65,12 @@ function buildModifiedDoc(): string {
 }
 
 /** 幂等：后备文件已存在（含历史状态）则跳过；否则按 id 判重 */
-export async function seedApprovalDemo(): Promise<void> {
+export async function seedApprovalDemo(store: DemoProposalStore): Promise<void> {
   if (demoStoreFileExists()) return;
-  if (await getProposalById('cprop_demo_widget', DEMO_TENANT_ID)) return;
+  if (await store.getProposalById('cprop_demo_widget', DEMO_TENANT_ID)) return;
 
   const now = new Date().toISOString();
-  await saveProposal(
+  await store.saveProposal(
     {
       id: 'cprop_demo_widget',
       taskId: 'task_demo_widget',
@@ -91,7 +96,7 @@ export async function seedApprovalDemo(): Promise<void> {
     DEMO_TENANT_ID
   );
 
-  await saveProposal(
+  await store.saveProposal(
     {
       id: 'cprop_demo_readme',
       taskId: 'task_demo_readme',

@@ -104,7 +104,7 @@ describe('Enterprise: memory layers degrade gracefully', () => {
   test('assembles with all layers unavailable (no DB) without throwing', async () => {
     const ctx = await assembleMemoryContext({
       tenantId: 'tenant_nope',
-      businessId: null,
+      businessId: 'business_nope',
       customerId: 'cust_nope',
     });
     assert.equal(ctx.layers.length, 4);
@@ -116,7 +116,7 @@ describe('Enterprise: memory layers degrade gracefully', () => {
   });
 
   test('customer layer omitted when customerId not given', async () => {
-    const ctx = await assembleMemoryContext({ tenantId: 't', businessId: null });
+    const ctx = await assembleMemoryContext({ tenantId: 't', businessId: 'b' });
     assert.equal(ctx.layers.length, 3);
   });
 });

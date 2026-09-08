@@ -19,8 +19,10 @@ const PROBE_INTERVAL_MS = 60_000;
 // 幂等（demo-seed 内部按 id 判重）；生产环境永不生效。
 if (process.env.RF_E2E_DEMO === '1' && process.env.COZE_PROJECT_ENV !== 'PROD') {
   void import('./demo-seed')
-    .then((m) => m.seedApprovalDemo())
-    .catch(() => undefined);
+    .then((m) => m.seedApprovalDemo({ saveProposal, getProposalById }))
+    .catch((error: unknown) => {
+      console.warn('[demo] approval seed unavailable:', error instanceof Error ? error.name : 'unknown_error');
+    });
 }
 
 // null = 未探测；true = DB 模式；false = 内存回退

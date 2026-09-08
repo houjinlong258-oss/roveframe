@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantContext } from '@/lib/tenant';
-import { tenantTable } from '@/lib/tenant-db';
+import { scopedTable } from '@/lib/tenant-db';
 
 export async function GET(request: NextRequest) {
-  const ctx = getTenantContext(request);
+  const ctx = await getTenantContext(request);
   const id = request.nextUrl.searchParams.get('id');
 
   if (id) {
-    const customerRes = await tenantTable(ctx.tenantId, 'customers').eq('id', id).maybeSingle();
+    const customerRes = await scopedTable(ctx, 'customers').eq('id', id).maybeSingle();
     if (customerRes.error) throw new Error(customerRes.error.message);
     const customer = customerRes.data as Record<string, unknown> | null;
     if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
-    const ordersRes = await tenantTable(
-      ctx.tenantId,
+    const ordersRes = await scopedTable(
+      ctx,
       'orders',
       'id, order_no, items, total, status, channel, created_at',
     )
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ customer, orders: ordersRes.data ?? [] });
   }
 
-  const rowsRes = await tenantTable(ctx.tenantId, 'customers')
+  const rowsRes = await scopedTable(ctx, 'customers')
     .order('total_spent', { ascending: false });
   if (rowsRes.error) throw new Error(rowsRes.error.message);
   const list = (rowsRes.data ?? []) as { created_at: string; churn_risk: string; total_spent: string; visit_count: number }[];

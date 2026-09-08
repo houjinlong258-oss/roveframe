@@ -15,6 +15,58 @@ import { getSupabaseClient } from '@/storage/database/supabase-client';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
+export const SESSION_COOKIE_NAME = 'rf_session';
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+
+export type AuthenticatedUser = {
+  userId: string;
+  email: string;
+  tenantId: string;
+  businessId: string | null;
+  role: 'owner' | 'manager' | 'staff';
+  name: string | null;
+};
+
+function tokenFromAuthorizationHeader(value: string | null): string | null {
+  if (!value) return null;
+  const match = /^Bearer\s+([^\s]+)$/i.exec(value.trim());
+  return match?.[1] ?? null;
+}
+
+function tokenFromCookieHeader(value: string | null): string | null {
+  if (!value) return null;
+  const encoded = value
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${SESSION_COOKIE_NAME}=`))
+    ?.slice(SESSION_COOKIE_NAME.length + 1);
+  if (!encoded) return null;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return null;
+  }
+}
+
+/** Browser cookie first, then Bearer token for API clients and server integrations. */
+export function getRequestAccessToken(request: Request): string | null {
+  return (
+    tokenFromAuthorizationHeader(request.headers.get('authorization')) ??
+    tokenFromCookieHeader(request.headers.get('cookie'))
+  );
+}
+
+export function sessionCookieHeader(accessToken: string): string {
+  // Secure 仅生产环境启用：本地 http://localhost 开发时浏览器会拒绝存储 Secure cookie
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  return `${SESSION_COOKIE_NAME}=${encodeURIComponent(accessToken)}; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}; HttpOnly${secure}; SameSite=Lax`;
+}
+
+export function clearSessionCookieHeader(): string {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  return `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly${secure}; SameSite=Lax`;
+}
+
 /** 从 name 生成 url-safe slug；fallback 到时间戳 */
 function slugFromName(name: string): string {
   const base = name
@@ -141,14 +193,7 @@ export async function signInAndGetToken(opts: {
 
 /** 用 access_token 解析当前 user + 关联 public.users */
 export async function resolveUserByToken(token: string): Promise<
-  Result<{
-    userId: string;
-    email: string;
-    tenantId: string;
-    businessId: string | null;
-    role: string;
-    name: string | null;
-  }>
+  Result<AuthenticatedUser>
 > {
   const client = getSupabaseClient();
   const { data: userData, error: userErr } = await client.auth.getUser(token);
@@ -179,6 +224,15 @@ export async function resolveUserByToken(token: string): Promise<
     name: string | null;
     role: string;
   };
+  if (row.tenant_id !== appMeta.tenant_id) {
+    return { ok: false, error: 'tenant claim does not match public.users' };
+  }
+  if (appMeta.business_id && row.business_id !== appMeta.business_id) {
+    return { ok: false, error: 'business claim does not match public.users' };
+  }
+  if (row.role !== 'owner' && row.role !== 'manager' && row.role !== 'staff') {
+    return { ok: false, error: 'public.users has an invalid role' };
+  }
   return {
     ok: true,
     data: {
@@ -190,4 +244,11 @@ export async function resolveUserByToken(token: string): Promise<
       name: row.name,
     },
   };
+}
+
+/** Verifies a request credential with Supabase and resolves the matching tenant user. */
+export async function resolveUserByRequest(request: Request): Promise<Result<AuthenticatedUser>> {
+  const token = getRequestAccessToken(request);
+  if (!token) return { ok: false, error: 'missing session credential' };
+  return resolveUserByToken(token);
 }

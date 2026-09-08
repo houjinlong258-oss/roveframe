@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { decrypt } from '@/lib/crypto';
 import nodemailer from 'nodemailer';
-import { getTenantContext } from '@/lib/tenant';
-import { tenantTable, updateWithTenant } from '@/lib/tenant-db';
+import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
+import { scopedTable, updateWithScope } from '@/lib/tenant-db';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 interface SmtpCredentials {
   smtp_user?: string;
@@ -10,8 +11,8 @@ interface SmtpCredentials {
 }
 
 // 通过绑定的邮箱账号真实发送回复
-export async function POST(request: NextRequest) {
-  const ctx = getTenantContext(request);
+async function sendEmail(request: NextRequest) {
+  const ctx = requireBusinessContext(await getTenantContext(request));
   const body = await request.json();
   const emailId = body.emailId as string;
   const replyBody = (body.reply as string) ?? '';
@@ -20,13 +21,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'emailId and reply required' }, { status: 400 });
   }
 
-  const emailRes = await tenantTable(ctx.tenantId, 'emails').eq('id', emailId).maybeSingle();
+  const emailRes = await scopedTable(ctx, 'emails').eq('id', emailId).maybeSingle();
   if (emailRes.error) throw new Error(emailRes.error.message);
   const email = emailRes.data as { from_addr: string; subject: string } | null;
   if (!email) return NextResponse.json({ error: 'Email not found' }, { status: 404 });
 
   // 选发件账号
-  const q = tenantTable(ctx.tenantId, 'email_accounts', '*').eq('status', 'active');
+  const q = scopedTable(ctx, 'email_accounts', '*').eq('status', 'active');
   const accountQ = accountId
     ? (q as unknown as { eq: (c: string, v: unknown) => typeof q }).eq('id', accountId)
     : (q as unknown as { eq: (c: string, v: unknown) => typeof q }).eq('is_default', true);
@@ -74,7 +75,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'send_failed', message: msg }, { status: 502 });
   }
 
-  const { error: upErr } = await updateWithTenant(ctx.tenantId, 'emails', emailId, {
+  const { error: upErr } = await updateWithScope(ctx, 'emails', emailId, {
     status: 'replied',
     reply_draft: replyBody,
   });
@@ -82,3 +83,8 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({ ok: true });
 }
+
+export const POST = protectBusinessMutation(
+  { permission: 'emails:send', action: 'emails.send', entity: 'emails' },
+  sendEmail,
+);

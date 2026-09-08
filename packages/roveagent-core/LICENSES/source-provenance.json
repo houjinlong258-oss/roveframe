@@ -1,0 +1,27 @@
+{
+  "kind": "local-source-extraction",
+  "files": [
+    {
+      "sha256": "d0d5b192b6cf555678a5507937a32f043cec8523250fec0fa26b09457f895047",
+      "path": "agent/iteration_budget.py"
+    },
+    {
+      "sha256": "a4928bd2599c107fd99d3d36f9fda7d8bf186b6098df2cf8eb8f99cf8f887aa0",
+      "path": "agent/repetition_guard.py"
+    },
+    {
+      "sha256": "5b2e7083680e6c728f2306adc73e5f814c444aaa9ff3e3b840206142c67a7149",
+      "path": "run_agent.py"
+    },
+    {
+      "sha256": "33924321c2ef848a7474d4daf4dd5ec1e98588aa54db967d92ea2fc6aa3ff56a",
+      "path": "agent/conversation_loop.py"
+    },
+    {
+      "sha256": "e29dfaf6905a8d396a58ea4bd84ad27057756bbd9599b5bec0971ae34d2a2118",
+      "path": "LICENSE"
+    }
+  ],
+  "source": "hermes-agent-2026.8.31",
+  "upstreamCommit": null
+}

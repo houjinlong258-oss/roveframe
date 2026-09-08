@@ -12,6 +12,7 @@ import { json, jsonError } from '@/lib/api-helpers';
 import { withAuth, type AuthContext } from '@/lib/auth-guard';
 import { writeAudit } from '@/lib/audit';
 import { rollbackProposal, applyEngineAvailable } from '@/lib/coding-agent/apply-engine';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 async function handlePost(request: NextRequest, ctx: AuthContext): Promise<Response> {
   let body: unknown;
@@ -48,4 +49,7 @@ async function handlePost(request: NextRequest, ctx: AuthContext): Promise<Respo
   return json({ ok: true, status: result.status, commitSha: result.commitSha, log: result.log });
 }
 
-export const POST = withAuth(handlePost, { roles: ['owner', 'manager'] });
+export const POST = protectBusinessMutation(
+  { permission: 'coding:apply', action: 'coding_agent.rollback', entity: 'coding_proposal' },
+  withAuth(handlePost, { roles: ['owner'] }),
+);

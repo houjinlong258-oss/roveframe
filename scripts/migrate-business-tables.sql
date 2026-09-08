@@ -78,6 +78,74 @@ create index if not exists orders_status_idx on public.orders (status);
 create index if not exists orders_created_at_idx on public.orders (created_at);
 create index if not exists orders_source_external_idx on public.orders (source, external_id);
 
+-- ---------- payments / payment_events ----------
+create table if not exists public.payments (
+  id varchar(36) primary key default gen_random_uuid(),
+  tenant_id varchar(36) not null references public.tenants(id),
+  business_id varchar(36) not null references public.businesses(id),
+  provider varchar(20) not null,
+  external_id varchar(255),
+  provider_payment_id varchar(255),
+  amount numeric(14,3) not null,
+  amount_minor bigint not null,
+  currency varchar(3) not null default 'USD',
+  status varchar(32) not null default 'pending',
+  description varchar(200),
+  reservation_id varchar(36),
+  order_id varchar(36),
+  checkout_url text,
+  failure_reason text,
+  refunded_amount_minor bigint not null default 0,
+  reconciled_at timestamptz,
+  created_by varchar(36),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.payments add column if not exists business_id varchar(36) references public.businesses(id);
+alter table public.payments add column if not exists provider_payment_id varchar(255);
+alter table public.payments add column if not exists refunded_amount_minor bigint not null default 0;
+alter table public.payments add column if not exists reconciled_at timestamptz;
+alter table public.payments alter column amount type numeric(14,3);
+create unique index if not exists payments_provider_external_idx
+  on public.payments (tenant_id, business_id, provider, external_id)
+  where external_id is not null;
+create index if not exists payments_tenant_status_idx on public.payments (tenant_id, business_id, status, created_at desc);
+create unique index if not exists payments_provider_payment_idx
+  on public.payments (tenant_id, business_id, provider, provider_payment_id)
+  where provider_payment_id is not null;
+
+create table if not exists public.payment_events (
+  id varchar(36) primary key default gen_random_uuid(),
+  tenant_id varchar(36) not null references public.tenants(id),
+  business_id varchar(36) not null references public.businesses(id),
+  provider varchar(20) not null,
+  external_event_id varchar(255) not null,
+  event_type varchar(100) not null,
+  payload jsonb not null default '{}'::jsonb,
+  processed_at timestamptz,
+  last_error text,
+  created_at timestamptz not null default now()
+);
+alter table public.payment_events add column if not exists business_id varchar(36) references public.businesses(id);
+alter table public.payment_events add column if not exists processed_at timestamptz;
+alter table public.payment_events add column if not exists last_error text;
+create unique index if not exists payment_events_provider_event_idx
+  on public.payment_events (tenant_id, business_id, provider, external_event_id);
+
+create table if not exists public.integration_events (
+  id varchar(36) primary key default gen_random_uuid(),
+  tenant_id varchar(36) not null references public.tenants(id),
+  business_id varchar(36) not null references public.businesses(id),
+  provider varchar(30) not null,
+  external_event_id varchar(255) not null,
+  event_type varchar(100) not null,
+  payload jsonb not null default '{}'::jsonb,
+  processed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists integration_events_provider_event_idx
+  on public.integration_events (tenant_id, business_id, provider, external_event_id);
+
 -- ---------- reviews ----------
 create table if not exists public.reviews (
   id varchar(36) primary key default gen_random_uuid(),
@@ -244,7 +312,8 @@ create index if not exists reservations_status_idx on public.reservations (statu
 -- ---------- store_qr_codes ----------
 create table if not exists public.store_qr_codes (
   id varchar(36) primary key default gen_random_uuid(),
-  table_no varchar(20) not null unique,
+  table_no varchar(20) not null,
+  public_token varchar(64) not null default encode(gen_random_bytes(24), 'hex'),
   remark varchar(128),
   is_active boolean not null default true,
   scan_count integer not null default 0,
@@ -255,7 +324,7 @@ create table if not exists public.store_qr_codes (
 -- ---------- model_configs ----------
 create table if not exists public.model_configs (
   id varchar(36) primary key default gen_random_uuid(),
-  provider varchar(30) not null unique,
+  provider varchar(30) not null,
   api_key_encrypted text,
   base_url varchar(500),
   default_model varchar(100),
@@ -269,7 +338,7 @@ create index if not exists model_configs_enabled_idx on public.model_configs (is
 -- ---------- integration_configs ----------
 create table if not exists public.integration_configs (
   id varchar(36) primary key default gen_random_uuid(),
-  provider varchar(30) not null unique,
+  provider varchar(30) not null,
   config_encrypted text,
   is_enabled boolean not null default false,
   sync_scope jsonb not null default '[]'::jsonb,
@@ -304,55 +373,171 @@ create table if not exists public.settings (
   updated_at timestamptz not null default now()
 );
 
--- ---------- 22 张业务表加 tenant_id(可空,回填后收紧) ----------
-alter table public.products add column if not exists tenant_id varchar(36);
-alter table public.customers add column if not exists tenant_id varchar(36);
-alter table public.orders add column if not exists tenant_id varchar(36);
-alter table public.reviews add column if not exists tenant_id varchar(36);
-alter table public.email_accounts add column if not exists tenant_id varchar(36);
-alter table public.emails add column if not exists tenant_id varchar(36);
-alter table public.email_send_tasks add column if not exists tenant_id varchar(36);
-alter table public.knowledge_docs add column if not exists tenant_id varchar(36);
-alter table public.doc_chunks add column if not exists tenant_id varchar(36);
-alter table public.chat_sessions add column if not exists tenant_id varchar(36);
-alter table public.chat_messages add column if not exists tenant_id varchar(36);
-alter table public.alerts add column if not exists tenant_id varchar(36);
-alter table public.marketing_contents add column if not exists tenant_id varchar(36);
-alter table public.reservations add column if not exists tenant_id varchar(36);
-alter table public.store_qr_codes add column if not exists tenant_id varchar(36);
-alter table public.model_configs add column if not exists tenant_id varchar(36);
-alter table public.integration_configs add column if not exists tenant_id varchar(36);
-alter table public.inventory_items add column if not exists tenant_id varchar(36);
-alter table public.settings add column if not exists tenant_id varchar(36);
+-- ---------- tenant + business scope hardening ----------
+-- Add both ownership columns to every operational table that exists. Existing
+-- pre-tenant rows are assigned to the documented default tenant. A business is
+-- inferred only when that tenant has exactly one business; ambiguous legacy
+-- rows abort the migration and require an explicit operator mapping.
+do $$
+declare table_name text;
+declare missing_business bigint;
+begin
+  foreach table_name in array array[
+    'products', 'orders', 'customers', 'reviews', 'staff', 'business_memories',
+    'reservations', 'inventory_items', 'store_qr_codes', 'chat_sessions',
+    'chat_messages', 'knowledge_docs', 'doc_chunks', 'marketing_contents',
+    'emails', 'email_accounts', 'email_send_tasks', 'alerts',
+    'integration_configs', 'model_configs', 'settings', 'payments',
+    'payment_events', 'integration_events', 'agent_actions', 'agent_approvals', 'agent_tasks',
+    'agent_task_runs', 'agent_events', 'notification_outbox', 'notifications',
+    'push_subscriptions'
+  ] loop
+    if to_regclass(format('public.%I', table_name)) is not null then
+      execute format('alter table public.%I add column if not exists tenant_id varchar(36)', table_name);
+      execute format('alter table public.%I add column if not exists business_id varchar(36) references public.businesses(id)', table_name);
+      execute format(
+        'update public.%I set tenant_id = %L where tenant_id is null',
+        table_name,
+        '00000000-0000-0000-0000-000000000000'
+      );
+      execute format(
+        'update public.%I row set business_id = only_business.id from '
+        '(select tenant_id, min(id) as id from public.businesses group by tenant_id having count(*) = 1) only_business '
+        'where row.business_id is null and only_business.tenant_id = row.tenant_id',
+        table_name
+      );
+      execute format('select count(*) from public.%I where business_id is null', table_name) into missing_business;
+      if missing_business > 0 then
+        raise exception 'business scope backfill required for %.% rows', table_name, missing_business;
+      end if;
+      execute format('alter table public.%I alter column tenant_id set not null', table_name);
+      execute format('alter table public.%I alter column business_id set not null', table_name);
+      execute format('create index if not exists %I on public.%I (tenant_id, business_id)', table_name || '_tenant_business_idx', table_name);
+    end if;
+  end loop;
+end $$;
 
--- ---------- 默认租户已在 migrate.sql 创建;此处只回填业务表 tenant_id ----------
-update public.products set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.customers set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.orders set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.reviews set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.email_accounts set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.emails set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.email_send_tasks set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.knowledge_docs set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.doc_chunks set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.chat_sessions set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.chat_messages set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.alerts set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.marketing_contents set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.reservations set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.store_qr_codes set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.model_configs set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.integration_configs set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.inventory_items set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
-update public.settings set tenant_id = '00000000-0000-0000-0000-000000000000' where tenant_id is null;
+-- Existing approval installations gain a frozen, single-use invocation record.
+do $$ begin
+  if to_regclass('public.agent_approvals') is not null then
+    alter table public.agent_approvals add column if not exists requester varchar(128);
+    alter table public.agent_approvals add column if not exists agent varchar(64) not null default 'business-agent';
+    alter table public.agent_approvals add column if not exists tool_name varchar(128);
+    alter table public.agent_approvals add column if not exists arguments jsonb not null default '{}'::jsonb;
+    alter table public.agent_approvals add column if not exists arguments_hash varchar(64);
+    alter table public.agent_approvals add column if not exists risk_level varchar(16) not null default 'medium';
+    alter table public.agent_approvals add column if not exists required_role varchar(20) not null default 'manager';
+    alter table public.agent_approvals add column if not exists invocation_id varchar(128);
+    alter table public.agent_approvals add column if not exists execution_id varchar(36);
+    alter table public.agent_approvals add column if not exists approved_by varchar(36);
+    alter table public.agent_approvals add column if not exists consumed_at timestamptz;
+    alter table public.agent_approvals add column if not exists executed_at timestamptz;
+    alter table public.agent_approvals add column if not exists failed_at timestamptz;
+    alter table public.agent_approvals add column if not exists execution_result jsonb;
+    alter table public.agent_approvals add column if not exists last_error text;
+    update public.agent_approvals set invocation_id = gen_random_uuid()::text where invocation_id is null or invocation_id = '';
+    alter table public.agent_approvals alter column invocation_id set not null;
+    create unique index if not exists agent_approvals_invocation_idx
+      on public.agent_approvals (tenant_id, business_id, invocation_id);
+  end if;
+end $$;
+
+-- Conversation ownership and bounded rolling summaries.
+do $$
+declare missing_user bigint;
+begin
+  if to_regclass('public.chat_sessions') is not null then
+    alter table public.chat_sessions add column if not exists user_id varchar(36) references public.users(id);
+    alter table public.chat_sessions add column if not exists summary text not null default '';
+    alter table public.chat_sessions add column if not exists summarized_message_count integer not null default 0;
+    update public.chat_sessions session_row
+    set user_id = only_user.id
+    from (
+      select tenant_id, business_id, min(id) as id
+      from public.users
+      where business_id is not null
+      group by tenant_id, business_id
+      having count(*) = 1
+    ) only_user
+    where session_row.user_id is null
+      and only_user.tenant_id = session_row.tenant_id
+      and only_user.business_id = session_row.business_id;
+    select count(*) into missing_user from public.chat_sessions where user_id is null;
+    if missing_user > 0 then
+      raise exception 'conversation user backfill required for chat_sessions.% rows', missing_user;
+    end if;
+    alter table public.chat_sessions alter column user_id set not null;
+    create index if not exists chat_sessions_tenant_business_user_idx
+      on public.chat_sessions (tenant_id, business_id, user_id, updated_at desc);
+  end if;
+
+  if to_regclass('public.chat_messages') is not null then
+    alter table public.chat_messages add column if not exists user_id varchar(36) references public.users(id);
+    update public.chat_messages message_row
+    set user_id = session_row.user_id
+    from public.chat_sessions session_row
+    where message_row.user_id is null
+      and session_row.id = message_row.session_id
+      and session_row.tenant_id = message_row.tenant_id
+      and session_row.business_id = message_row.business_id;
+    select count(*) into missing_user from public.chat_messages where user_id is null;
+    if missing_user > 0 then
+      raise exception 'conversation user backfill required for chat_messages.% rows', missing_user;
+    end if;
+    alter table public.chat_messages alter column user_id set not null;
+    create index if not exists chat_messages_tenant_business_user_idx
+      on public.chat_messages (tenant_id, business_id, user_id, created_at);
+  end if;
+end $$;
+
+-- Retry-safe public QR orders and per-business configuration uniqueness.
+drop index if exists public.orders_qr_idempotency_idx;
+create unique index orders_qr_idempotency_idx
+  on public.orders (tenant_id, business_id, external_id)
+  where source = 'qr' and external_id is not null;
+
+alter table public.store_qr_codes drop constraint if exists store_qr_codes_table_no_key;
+alter table public.store_qr_codes drop constraint if exists store_qr_codes_tenant_table_no_key;
+create unique index if not exists store_qr_codes_tenant_business_table_no_key
+  on public.store_qr_codes (tenant_id, business_id, table_no);
+create unique index if not exists store_qr_codes_public_token_key on public.store_qr_codes (public_token);
+create index if not exists store_qr_codes_public_token_idx on public.store_qr_codes (public_token) where is_active;
+
+alter table public.model_configs drop constraint if exists model_configs_provider_key;
+drop index if exists public.model_configs_tenant_provider_key;
+drop index if exists public.model_configs_tenant_business_provider_key;
+create unique index model_configs_tenant_business_provider_key
+  on public.model_configs (tenant_id, business_id, provider);
+
+alter table public.integration_configs drop constraint if exists integration_configs_provider_key;
+drop index if exists public.integration_configs_tenant_provider_key;
+drop index if exists public.integration_configs_tenant_business_provider_key;
+create unique index integration_configs_tenant_business_provider_key
+  on public.integration_configs (tenant_id, business_id, provider);
+
+drop index if exists public.settings_tenant_id_key;
+drop index if exists public.settings_tenant_business_key;
+create unique index settings_tenant_business_key
+  on public.settings (tenant_id, business_id);
+
+drop index if exists public.payments_provider_external_idx;
+create unique index payments_provider_external_idx
+  on public.payments (tenant_id, business_id, provider, external_id)
+  where external_id is not null;
+drop index if exists public.payment_events_provider_event_idx;
+create unique index payment_events_provider_event_idx
+  on public.payment_events (tenant_id, business_id, provider, external_event_id);
 
 -- =====================================================
--- RAG 向量检索 RPC(P0-S2 tenant 化要求:必须传 filter_tenant_id)
+-- RAG vector retrieval always requires exact tenant + business scope.
 -- =====================================================
-create or replace function public.match_doc_chunks(
+drop function if exists public.match_doc_chunks(text, int, varchar);
+drop function if exists public.match_doc_chunks(text, int, varchar, varchar);
+create function public.match_doc_chunks(
   query_embedding text,
-  match_count int default 5,
-  filter_tenant_id varchar(36) default null
+  match_count int,
+  filter_tenant_id varchar(36),
+  filter_business_id varchar(36)
 )
 returns table (
   id varchar(36),
@@ -372,7 +557,51 @@ as $$
     1 - (c.embedding <=> query_embedding::vector) as similarity
   from public.doc_chunks c
   join public.knowledge_docs d on d.id = c.doc_id
-  where (filter_tenant_id is null or d.tenant_id = filter_tenant_id)
+  where filter_tenant_id is not null
+    and filter_business_id is not null
+    and c.tenant_id = filter_tenant_id
+    and c.business_id = filter_business_id
+    and d.tenant_id = filter_tenant_id
+    and d.business_id = filter_business_id
   order by c.embedding <=> query_embedding::vector
   limit greatest(match_count, 1);
 $$;
+
+-- ---------- AI Provider 连接中心扩展（2026-09-05） ----------
+-- model_configs：协议/超时/重试/能力/模型缓存/脱敏测试错误/本地 opt-in/business 级配置
+alter table public.model_configs add column if not exists display_name varchar(120);
+alter table public.model_configs add column if not exists business_id varchar(36) references public.businesses(id);
+alter table public.model_configs add column if not exists timeout_ms int;
+alter table public.model_configs add column if not exists max_retries int;
+alter table public.model_configs add column if not exists last_test_error varchar(500);
+alter table public.model_configs add column if not exists models_cache jsonb;
+alter table public.model_configs add column if not exists models_updated_at timestamptz;
+alter table public.model_configs add column if not exists opt_in_local boolean not null default false;
+-- Provider configuration is unique for one exact tenant + business pair.
+drop index if exists public.model_configs_tenant_business_provider_key;
+create unique index model_configs_tenant_business_provider_key
+  on public.model_configs (tenant_id, business_id, provider);
+
+-- ---------- AI 用量账本 ----------
+create table if not exists public.ai_usage_ledger (
+  id varchar(36) primary key default gen_random_uuid(),
+  tenant_id varchar(36),
+  business_id varchar(36),
+  user_id varchar(36),
+  agent varchar(60),
+  provider varchar(40) not null,
+  model varchar(120) not null,
+  input_tokens int,
+  output_tokens int,
+  -- 无可靠价格数据时保持 null，不伪造精确成本
+  estimated_cost_usd numeric(12, 6),
+  status varchar(20) not null default 'ok',
+  error_code varchar(40),
+  correlation_id varchar(64) not null,
+  latency_ms int,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists emails_mailbox_external_idx
+  on public.emails (tenant_id, business_id, mailbox_id, external_id) where external_id is not null;
+create index if not exists ai_usage_ledger_tenant_idx on public.ai_usage_ledger (tenant_id, created_at desc);
+create index if not exists ai_usage_ledger_correlation_idx on public.ai_usage_ledger (correlation_id);

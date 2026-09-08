@@ -1,0 +1,9 @@
+RoveAgent Core
+==============
+
+This product includes software derived from hermes-agent v0.21.0,
+Copyright (c) 2025 Nous Research, licensed under the MIT License.
+The original license text is included in the LICENSE file in this
+directory. All modifications and the enterprise layer
+(tenant/RBAC/approval/audit/connectors) are Copyright (c) 2026
+RoveFrame.

@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { json, jsonError, getErrorMessage } from '@/lib/api-helpers';
+import { json, jsonError, errorResponse } from '@/lib/api-helpers';
+import { getTenantContext, requirePermission } from '@/lib/tenant';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 const BUCKET = 'product-media';
 const MAX_IMAGE = 5 * 1024 * 1024;
@@ -22,8 +24,10 @@ async function ensureBucket(): Promise<void> {
   bucketReady = true;
 }
 
-export async function POST(request: NextRequest) {
+async function uploadProductMedia(request: NextRequest) {
   try {
+    const context = await getTenantContext(request);
+    requirePermission(context, 'products:write');
     const form = await request.formData();
     const file = form.get('file');
     if (!(file instanceof File)) return jsonError('No file provided', 400);
@@ -38,7 +42,7 @@ export async function POST(request: NextRequest) {
 
     const supabase = getSupabaseClient();
     const ext = (file.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
-    const path = `products/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const path = `products/${context.tenantId}/${crypto.randomUUID()}.${ext}`;
     const buffer = Buffer.from(await file.arrayBuffer());
 
     const { error } = await supabase.storage.from(BUCKET).upload(path, buffer, {
@@ -50,6 +54,11 @@ export async function POST(request: NextRequest) {
     const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
     return json({ url: data.publicUrl, type: isImage ? 'image' : 'video' });
   } catch (e) {
-    return jsonError(getErrorMessage(e), 500);
+    return errorResponse(e);
   }
 }
+
+export const POST = protectBusinessMutation(
+  { permission: 'products:write', action: 'products.upload_media', entity: 'product_media' },
+  uploadProductMedia,
+);

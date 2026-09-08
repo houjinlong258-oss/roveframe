@@ -11,7 +11,9 @@
     "business": "Datos",
     "settings": "Ajustes",
     "brand": "RoveFrame",
-    "brandBadge": "AI COO"
+    "brandBadge": "AI COO",
+    "approvals": "Aprobaciones",
+    "enterpriseApprovals": "Revisión"
   },
   "common": {
     "save": "Guardar",
@@ -73,7 +75,51 @@
     "priorityItems": "Prioridades",
     "actionGenerate": "Crear campaña",
     "actionReply": "Responder",
-    "actionView": "Ver clientes"
+    "actionView": "Ver clientes",
+    "greetingMorning": "Buenos días",
+    "greetingAfternoon": "Buenas tardes",
+    "greetingEvening": "Buenas noches",
+    "commandSummary": "Tu equipo de IA ha analizado tu negocio. Esto es lo más importante ahora.",
+    "commandHeadline": "Ingresos {delta} hoy · {orders} pedidos hasta ahora",
+    "yourTeam": "Tu equipo de IA",
+    "openCommand": "Abrir centro de mando",
+    "openAgent": "Abrir agente",
+    "status": {
+      "active": "Activo",
+      "thinking": "Analizando",
+      "idle": "Inactivo",
+      "attention": "Requiere atención"
+    },
+    "agentCeo": "Agente CEO",
+    "agentCeoRole": "Estrategia e informe diario",
+    "agentCeoTask": "Ingresos de hoy: {revenue} ({delta} vs semana pasada). Análisis diario completo.",
+    "agentCeoLast": "Informe diario entregado",
+    "agentOps": "Agente de Operaciones",
+    "agentOpsRole": "Pedidos, inventario y flujo",
+    "agentOpsTaskRisk": "Analizando riesgo de inventario — {count} alertas abiertas",
+    "agentOpsTaskOk": "Inventario saludable. Monitoreando el flujo de pedidos.",
+    "agentOpsLast": "Revisión de inventario completada",
+    "agentMarketing": "Agente de Marketing",
+    "agentMarketingRole": "Campañas y crecimiento",
+    "agentMarketingTask": "{count} clientes de alto valor listos para una campaña de recuperación.",
+    "agentMarketingLast": "Borrador de campaña generado",
+    "agentCustomer": "Agente de Clientes",
+    "agentCustomerRole": "Relaciones y retención",
+    "agentCustomerTaskRisk": "{count} reseñas negativas pendientes — redactando respuestas.",
+    "agentCustomerTaskOk": "Sentimiento estable. Vigilando señales de abandono.",
+    "agentCustomerLast": "Sentimiento de reseñas analizado",
+    "aiActivity": "Actividad de IA",
+    "aiActivityEmpty": "Aún no hay actividad de IA hoy.",
+    "actionApprove": "Aprobar",
+    "actionReview": "Revisar",
+    "actionExecute": "Ejecutar",
+    "recChurnTitle": "La retención cayó — {count} clientes habituales en riesgo",
+    "recChurnDesc": "¿Lanzar una campaña de fidelización? Los correos personalizados están listos para generarse.",
+    "recReviewTitle": "{count} reseñas negativas requieren atención",
+    "recReviewDesc": "Responder en 24 h triplica la recuperación. Las respuestas de IA están listas para tu aprobación.",
+    "recGrowthTitle": "Impulso de ingresos de fin de semana detectado",
+    "recGrowthDesc": "Ingreso diario máximo de {revenue}. Amplifica los platos estrella con una campaña social.",
+    "agentAnalyzing": "Analizando datos del negocio…"
   },
   "agent": {
     "title": "Asistente AI COO",
@@ -92,7 +138,32 @@
     "ignore": "Ignorar",
     "sessions": "Sesiones",
     "dataContext": "Las respuestas se basan en tus datos reales",
-    "send": "Enviar"
+    "send": "Enviar",
+    "yourTeam": "Tu equipo de IA",
+    "team": {
+      "ceo": "Agente CEO",
+      "ceoRole": "Análisis y estrategia",
+      "ops": "Agente de Operaciones",
+      "opsRole": "Pedidos, inventario, procesos",
+      "mkt": "Agente de Marketing",
+      "mktRole": "Campañas y crecimiento",
+      "cust": "Agente de Clientes",
+      "custRole": "Reseñas, retención, CRM",
+      "dev": "Agente Desarrollador",
+      "devRole": "Análisis y corrección de código",
+      "devops": "Agente DevOps",
+      "devopsRole": "Despliegue, monitoreo, mantenimiento",
+      "statusActive": "Listo",
+      "openAgent": "Abrir agente",
+      "kickoff": {
+        "ceo": "Como mi Agente CEO, dame un informe completo del rendimiento de ayer y las 3 prioridades de hoy.",
+        "ops": "Como mi Agente de Operaciones, analiza pedidos e inventario actuales y señala lo que requiere atención hoy.",
+        "mkt": "Como mi Agente de Marketing, propón una campaña para aumentar los ingresos en los próximos 30 días según mis datos de clientes.",
+        "cust": "Como mi Agente de Clientes, revisa los comentarios recientes y los clientes en riesgo, y sugiere acciones de retención.",
+        "dev": "Como mi Agente Desarrollador, revisa el sistema actual en busca de errores u oportunidades de mejora.",
+        "devops": "Como mi Agente DevOps, verifica la salud del despliegue y sugiere mejoras de fiabilidad."
+      }
+    }
   },
   "knowledge": {
     "title": "Cerebro de conocimiento",
@@ -484,12 +555,14 @@
     "cap": {
       "agent": "Asistente AI COO",
       "content": "Generación de contenido",
-      "rag": "Q&A de conocimiento (RAG)"
+      "rag": "Q&A de conocimiento (RAG)",
+      "light": "Tareas ligeras"
     },
     "capNote": {
       "agent": "Preguntas y análisis del negocio",
       "content": "Copy de marketing, respuestas a reseñas, borradores",
-      "rag": "Respuestas basadas en documentos"
+      "rag": "Respuestas basadas en documentos",
+      "light": "Clasificación, resúmenes, informes y otras tareas ligeras"
     },
     "autoMode": "Automático (recomendado)",
     "autoModeNote": "En modo automático, las tareas ligeras usan el modelo ligero y los análisis complejos usan tu modelo insignia conectado.",
@@ -569,7 +642,9 @@
     "intFields": {
       "square": {
         "accessToken": "Access Token",
-        "locationId": "Location ID"
+        "locationId": "Location ID(s)",
+        "signatureKey": "Clave de firma del webhook",
+        "webhookUrl": "URL exacta de notificación del webhook"
       },
       "shopify": {
         "shopDomain": "Dominio de la tienda",
@@ -585,7 +660,7 @@
       }
     },
     "intTips": {
-      "square": "Obtén el Access Token en Square Developer Console > Credentials. La URL del webhook se genera al guardar.",
+      "square": "Obtén el token y la clave de firma en Square Developer Console. Guarda la URL pública exacta del webhook, incluidos tenant y business.",
       "shopify": "Crea una app personalizada en Shopify Admin > Apps > Develop apps para obtener el token.",
       "stripe": "Encuentra las claves en Stripe Dashboard > Developers > API keys. Añade el endpoint webhook tras guardar.",
       "paypal": "Crea una app en PayPal Developer Dashboard para obtener Client ID / Secret."
@@ -635,7 +710,7 @@
       "qqbot": "Canal QQ mediante la API oficial de bots de QQ - requiere bot."
     },
     "channelTip": {
-      "telegram": "Crea un bot con @BotFather para obtener el token, escríbele una vez y obtén tu chat_id en https://api.telegram.org/bot<TOKEN>/getUpdates.",
+      "telegram": "Crea un bot con @BotFather para obtener el token, escríbele una vez y obtén tu chat_id en https://api.telegram.org/bot[TOKEN]/getUpdates.",
       "whatsapp": "Crea una app de tipo Business en Meta for Developers, añade WhatsApp y copia el token y el ID del número. Usa el número en formato E.164, p. ej. +15551234567.",
       "slack": "En Slack, crea una app, habilita Incoming Webhooks y copia la URL del webhook de tu canal.",
       "discord": "En Discord, abre ajustes del canal > Integraciones > Webhooks para crear una URL de webhook.",
@@ -674,7 +749,26 @@
     "wipeButton": "Borrar datos",
     "wipeConfirmTitle": "Confirmar borrado total",
     "wipeConfirm": "Se eliminarán todos los productos, pedidos, clientes, reseñas, correos y documentos de ejemplo. Esta acción no se puede deshacer. ¿Continuar?",
-    "wipeConfirmButton": "Confirmar borrado"
+    "wipeConfirmButton": "Confirmar borrado",
+    "groupAppearance": "Apariencia",
+    "appearanceNote": "Temas de día y noche, rediseñados profesionalmente — no una simple inversión de colores.",
+    "themeLight": "Claro",
+    "themeLightDesc": "Tema de día. Limpio, brillante, premium.",
+    "themeDark": "Oscuro",
+    "themeDarkDesc": "Tema de noche. Enfoque profundo, profundidad espacial.",
+    "themeSystem": "Automático",
+    "themeSystemDesc": "Según hora local: 06:00-18:00 Claro, 18:00-06:00 Oscuro.",
+    "appearanceNow": "Actualmente activo",
+    "searchProvider": "Buscar proveedores / protocolos…",
+    "adapterPending": "Adaptador pendiente de verificación",
+    "testFailedBadge": "Prueba fallida",
+    "fallbackActive": "respaldo",
+    "displayNameLabel": "Nombre visible (opcional)",
+    "keyKeepExisting": "Clave guardada: déjelo vacío para conservar la clave existente",
+    "manualModelNote": "Este proveedor no admite descubrimiento de modelos; ingrese el ID del modelo manualmente",
+    "timeoutMs": "Tiempo de espera (ms)",
+    "maxRetries": "Reintentos máximos",
+    "optInLocal": "Permitir direcciones locales/privadas (http, loopback, opt-in explícito)"
   },
   "store": {
     "all": "Todo",
@@ -729,5 +823,140 @@
     "retry": "Reintentar",
     "goHome": "Ir al inicio",
     "cacheHint": "Las páginas vistas recientemente están en caché y funcionan sin conexión."
+  },
+  "approvals": {
+    "title": "Aprobaciones de cambios IA",
+    "subtitle": "Revisa, aprueba, aplica y revierte propuestas de código generadas por IA. Nada se aplica sin aprobación humana.",
+    "refresh": "Actualizar",
+    "loading": "Cargando…",
+    "empty": "Sin propuestas. Envía una tarea vía POST /api/coding-agent.",
+    "listTitle": "Propuestas ({count})",
+    "selectPrompt": "Selecciona una propuesta a la izquierda para revisar sus cambios.",
+    "approve": "Aprobar",
+    "reject": "Rechazar",
+    "apply": "Aplicar (escribir código + tests)",
+    "applying": "Aplicando…",
+    "rollback": "Revertir",
+    "rollingBack": "Revirtiendo…",
+    "changesTitle": "Cambios ({count})",
+    "applyLog": "Registro de aplicación",
+    "generatedAt": "Generado",
+    "decidedAt": "Decidido",
+    "status": {
+      "pending_review": "Pendiente",
+      "approved": "Aprobada",
+      "rejected": "Rechazada",
+      "applied": "Aplicada",
+      "apply_failed": "Error al aplicar",
+      "rolled_back": "Revertida",
+      "changes_requested": "Cambios solicitados"
+    },
+    "risk": {
+      "safe": "Seguro",
+      "moderate": "Moderado",
+      "review_required": "Requiere revisión"
+    },
+    "tabs": {
+      "code": "Cambios de código",
+      "business": "Acciones de negocio"
+    },
+    "biz": {
+      "listTitle": "Acciones de negocio pendientes ({count})",
+      "empty": "No hay acciones de negocio pendientes.",
+      "status": {
+        "pending": "Pendiente",
+        "approved": "Aprobada",
+        "executing": "En ejecución",
+        "executed": "Ejecutada",
+        "rejected": "Rechazada",
+        "expired": "Expirada",
+        "failed": "Fallida"
+      },
+      "type": {
+        "purchase.create_draft": "Borrador de compra",
+        "marketing.create_draft_campaign": "Campaña de marketing",
+        "reviews.reply": "Respuesta a reseña",
+        "roveagent.tool_call": "Llamada de herramienta RoveAgent",
+        "roveagent.task_step": "Tarea RoveAgent"
+      },
+      "approvedDone": "Aprobada y ejecutada",
+      "rejectedDone": "Rechazada"
+    }
+  },
+  "enterpriseApprovals": {
+    "title": "Revisión de cambios",
+    "subtitle": "Revisión empresarial de cambios de código generados por IA: diff unificado, comprobaciones previas y auditoría completa.",
+    "refresh": "Actualizar",
+    "loading": "Cargando...",
+    "empty": "Aún no hay propuestas. Envía una tarea vía POST /api/coding-agent.",
+    "listTitle": "Propuestas ({count})",
+    "selectPrompt": "Selecciona una propuesta a la izquierda para ver su diff y comprobaciones.",
+    "agent": "Agente",
+    "generatedAt": "Generada",
+    "decidedBy": "Revisada por",
+    "commit": "Commit",
+    "reviewNote": "Nota del revisor",
+    "status": {
+      "pending_review": "Pendiente",
+      "approved": "Aprobada",
+      "rejected": "Rechazada",
+      "changes_requested": "Cambios solicitados",
+      "applied": "Aplicada",
+      "apply_failed": "Error al aplicar",
+      "rolled_back": "Revertida"
+    },
+    "risk": {
+      "safe": "Segura",
+      "moderate": "Moderada",
+      "review_required": "Requiere revisión"
+    },
+    "operation": {
+      "create": "archivo nuevo",
+      "modify": "modificado",
+      "delete": "eliminado"
+    },
+    "checks": {
+      "title": "Comprobaciones previas",
+      "permission": "Permisos",
+      "security": "Seguridad",
+      "testGate": "Pruebas",
+      "rollback": "Reversión",
+      "pass": "Correcto",
+      "fail": "Falló",
+      "notRun": "Sin ejecutar",
+      "problems": "{count} violación(es) de ruta",
+      "findings": "{count} hallazgo(s)",
+      "gateSteps": "Se ejecuta al aplicar",
+      "rollbackReady": "Disponible",
+      "rollbackNo": "No disponible"
+    },
+    "decision": {
+      "title": "Decisión",
+      "notePlaceholder": "Añade una nota de revisión (obligatoria al solicitar cambios)...",
+      "noteRequired": "Se requiere una nota para solicitar cambios",
+      "approve": "Aprobar",
+      "requestChanges": "Solicitar cambios",
+      "reject": "Rechazar",
+      "apply": "Aplicar (escribir código + pruebas)",
+      "applying": "Aplicando...",
+      "rollback": "Revertir",
+      "rollingBack": "Revirtiendo...",
+      "gateNote": "Aplicar fusiona el cambio y ejecuta pruebas unitarias + verificación de tipos; se revierte automáticamente si falla."
+    },
+    "files": {
+      "title": "Archivos modificados ({count})",
+      "tooLarge": "Archivo demasiado grande para diff en línea.",
+      "rationale": "Justificación"
+    },
+    "activity": {
+      "title": "Actividad",
+      "empty": "Sin eventos de auditoría."
+    }
+  },
+  "theme": {
+    "label": "Apariencia",
+    "light": "Claro",
+    "dark": "Oscuro",
+    "system": "Automático"
   }
 }

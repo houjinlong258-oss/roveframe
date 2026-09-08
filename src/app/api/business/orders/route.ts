@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantContext } from '@/lib/tenant';
-import { tenantTable, updateWithTenant } from '@/lib/tenant-db';
+import { scopedTable, updateWithScope } from '@/lib/tenant-db';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 // 订单管理（P0-S2 完整版：tenant 过滤 + tenant_id 注入）
 export async function GET(request: NextRequest) {
-  const ctx = getTenantContext(request);
+  const ctx = await getTenantContext(request);
   const status = request.nextUrl.searchParams.get('status');
   const table = request.nextUrl.searchParams.get('table');
 
-  const ordersQ = tenantTable(
-    ctx.tenantId,
+  const ordersQ = scopedTable(
+    ctx,
     'orders',
     'id, order_no, customer_id, items, total, tip, tip_percent, channel, status, source, external_id, table_no, notes, created_at',
   ).order('created_at', { ascending: false }).limit(100);
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
   if (error) throw new Error(error.message);
 
   // 有桌号的订单涉及的桌位列表（供筛选器）
-  const tableRowsRes = await tenantTable(ctx.tenantId, 'orders', 'table_no').not('table_no', 'is', null);
+  const tableRowsRes = await scopedTable(ctx, 'orders', 'table_no').not('table_no', 'is', null);
   const tables = Array.from(
     new Set(((tableRowsRes.data ?? []) as { table_no: string | null }[]).map((r) => r.table_no as string)),
   ).sort();
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest) {
   );
   let nameMap: Record<string, string> = {};
   if (customerIds.length > 0) {
-    const custsRes = await tenantTable(ctx.tenantId, 'customers', 'id, name').in('id', customerIds);
+    const custsRes = await scopedTable(ctx, 'customers', 'id, name').in('id', customerIds);
     nameMap = Object.fromEntries(
       ((custsRes.data ?? []) as { id: string; name: string }[]).map((c) => [c.id, c.name]),
     );
@@ -61,7 +62,7 @@ export async function GET(request: NextRequest) {
   todayStart.setHours(0, 0, 0, 0);
   const weekStart = new Date(todayStart);
   weekStart.setDate(weekStart.getDate() - 6);
-  const tipRowsRes = await tenantTable(ctx.tenantId, 'orders', 'tip, table_no, created_at')
+  const tipRowsRes = await scopedTable(ctx, 'orders', 'tip, table_no, created_at')
     .gte('created_at', weekStart.toISOString())
     .neq('status', 'cancelled');
   const tipList = (tipRowsRes.data ?? []) as { tip: string | number; table_no: string | null; created_at: string }[];
@@ -84,15 +85,20 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ orders, tables, tipStats: { todayTip, weekTip, tipByTable } });
 }
 
-export async function PATCH(request: NextRequest) {
+async function updateOrder(request: NextRequest) {
   const body = await request.json();
   if (!body.id) return NextResponse.json({ error: 'id required' }, { status: 400 });
   const allowed = ['pending', 'preparing', 'done', 'cancelled'];
   if (!allowed.includes(body.status)) {
     return NextResponse.json({ error: 'invalid status' }, { status: 400 });
   }
-  const ctx = getTenantContext(request);
-  const { error } = await updateWithTenant(ctx.tenantId, 'orders', body.id, { status: body.status });
+  const ctx = await getTenantContext(request);
+  const { error } = await updateWithScope(ctx, 'orders', body.id, { status: body.status });
   if (error) throw new Error(error.message);
   return NextResponse.json({ ok: true });
 }
+
+export const PATCH = protectBusinessMutation(
+  { permission: 'orders:write', action: 'orders.update', entity: 'orders' },
+  updateOrder,
+);

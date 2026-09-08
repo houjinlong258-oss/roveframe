@@ -9,6 +9,7 @@ import {
   createAuthUserWithTenant,
   createBusinessRow,
   createPublicUserRow,
+  sessionCookieHeader,
   createTenantRow,
   signInAndGetToken,
 } from '@/lib/auth';
@@ -88,9 +89,8 @@ export async function POST(request: Request) {
     return jsonError(`sign in failed: ${s.error}`, 500);
   }
 
-  return json(
+  const response = json(
     {
-      access_token: s.data.accessToken,
       user_id: s.data.userId,
       tenant_id: t.data.tenantId,
       business_id: b.data.businessId,
@@ -98,4 +98,6 @@ export async function POST(request: Request) {
     },
     201,
   );
+  response.headers.set('Set-Cookie', sessionCookieHeader(s.data.accessToken));
+  return response;
 }

@@ -13,6 +13,8 @@ __pycache__/
 *.egg-info/
 /.env
 .env
+.env.*
+!.env.example
 .cozeproj/reduction
 
 # JS/TS bundlers & build outputs
@@ -22,6 +24,7 @@ __pycache__/
 .vercel
 .parcel-cache
 .cache
+.demo
 coverage
 storybook-static
 
@@ -164,3 +167,25 @@ Desktop.ini
 # Misc
 .coze-logs
 .codegraph/
+
+# Apply Engine worktrees
+.worktrees/
+
+# Local RoveAgent/runtime state and production-hardening work logs
+.roveagent/
+.pnpm-store/
+artifacts/
+task_plan.md
+findings.md
+progress.md
+
+# Historical/generated repository copies (never source deliverables)
+current_site/
+deploy_site/
+phase8-demo/
+reports/
+roveframe_site/
+roveframe_upgrade/
+tmp/
+two_worlds/
+verify_shots/

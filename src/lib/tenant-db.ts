@@ -1,4 +1,5 @@
 import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { requireBusinessContext, type TenantContext } from '@/lib/tenant';
 
 /**
  * 租户感知的数据访问层（P0-S2 完整版：Part E）
@@ -58,6 +59,52 @@ export const PLATFORM_TABLES: ReadonlySet<string> = new Set([
   'audit_logs',
 ]);
 
+/**
+ * Operational data whose ownership boundary is always tenant + business.
+ * Legacy tenant-only helpers reject these tables so a future route cannot
+ * accidentally reintroduce the tenant==business assumption.
+ */
+export const BUSINESS_SCOPED_TABLES: ReadonlySet<string> = new Set([
+  'products',
+  'orders',
+  'customers',
+  'reviews',
+  'staff',
+  'business_memories',
+  'reservations',
+  'inventory_items',
+  'store_qr_codes',
+  'chat_sessions',
+  'chat_messages',
+  'knowledge_docs',
+  'doc_chunks',
+  'marketing_contents',
+  'emails',
+  'email_accounts',
+  'email_send_tasks',
+  'alerts',
+  'integration_configs',
+  'model_configs',
+  'settings',
+  'payments',
+  'payment_events',
+  'integration_events',
+  'agent_actions',
+  'agent_approvals',
+  'agent_tasks',
+  'agent_task_runs',
+  'agent_events',
+  'notification_outbox',
+  'notifications',
+  'push_subscriptions',
+]);
+
+function rejectTenantOnlyBusinessAccess(table: string): void {
+  if (BUSINESS_SCOPED_TABLES.has(table)) {
+    throw new Error(`tenant-only data access is forbidden for business table: ${table}`);
+  }
+}
+
 /** 业务表名是否在白名单之外（粗略判定，正式判定请用 isPlatformTable） */
 export function isPlatformTable(table: string): boolean {
   return PLATFORM_TABLES.has(table);
@@ -70,6 +117,7 @@ export function isPlatformTable(table: string): boolean {
 /** 读：返回「已 select(cols) + 已 eq('tenant_id', tenantId)」的链式 filter builder
  *  调用方继续链式：.eq('status', 'active').order('name').limit(10) */
 export function tenantTable(tenantId: string, table: string, columns = '*'): FilterBuilder {
+  rejectTenantOnlyBusinessAccess(table);
   const client = getSupabaseClient();
   // Supabase 类型链：from → select → eq → FilterBuilder
   // 这里用 unknown 跳过内部泛型，外层用结构化 FilterBuilder 兜底
@@ -78,9 +126,31 @@ export function tenantTable(tenantId: string, table: string, columns = '*'): Fil
   return builder.eq('tenant_id', tenantId);
 }
 
+/** Read a business table with tenant isolation and optional business scope. */
+export function scopedTable(context: TenantContext, table: string, columns = '*'): FilterBuilder {
+  const scoped = requireBusinessContext(context);
+  const client = getSupabaseClient();
+  const builder = (client.from(table) as unknown as QueryBuilder)
+    .select(columns) as unknown as FilterBuilder;
+  return builder
+    .eq('tenant_id', scoped.tenantId)
+    .eq('business_id', scoped.businessId);
+}
+
 /** 写：insert 自动注入 tenant_id */
 export function insertWithTenant(tenantId: string, table: string, row: Record<string, unknown>) {
+  rejectTenantOnlyBusinessAccess(table);
   return getSupabaseClient().from(table).insert({ ...row, tenant_id: tenantId });
+}
+
+/** Insert a row while carrying the current business scope when available. */
+export function insertWithScope(context: TenantContext, table: string, row: Record<string, unknown>) {
+  const scoped = requireBusinessContext(context);
+  return getSupabaseClient().from(table).insert({
+    ...row,
+    business_id: scoped.businessId,
+    tenant_id: scoped.tenantId,
+  });
 }
 
 /** 写：按 id 更新单行（限定在当前租户内） */
@@ -90,6 +160,7 @@ export function updateWithTenant(
   id: string,
   patch: Record<string, unknown>,
 ) {
+  rejectTenantOnlyBusinessAccess(table);
   return getSupabaseClient()
     .from(table)
     .update(patch)
@@ -97,13 +168,41 @@ export function updateWithTenant(
     .eq('tenant_id', tenantId);
 }
 
+/** Update a row inside the tenant and, when present, the current business. */
+export function updateWithScope(
+  context: TenantContext,
+  table: string,
+  id: string,
+  patch: Record<string, unknown>,
+) {
+  const scoped = requireBusinessContext(context);
+  const query = getSupabaseClient()
+    .from(table)
+    .update(patch)
+    .eq('id', id)
+    .eq('tenant_id', scoped.tenantId);
+  return query.eq('business_id', scoped.businessId);
+}
+
 /** 写：按 id 删除单行（限定在当前租户内） */
 export function deleteWithTenant(tenantId: string, table: string, id: string) {
+  rejectTenantOnlyBusinessAccess(table);
   return getSupabaseClient()
     .from(table)
     .delete()
     .eq('id', id)
     .eq('tenant_id', tenantId);
+}
+
+/** Delete a row inside the tenant and, when present, the current business. */
+export function deleteWithScope(context: TenantContext, table: string, id: string) {
+  const scoped = requireBusinessContext(context);
+  const query = getSupabaseClient()
+    .from(table)
+    .delete()
+    .eq('id', id)
+    .eq('tenant_id', scoped.tenantId);
+  return query.eq('business_id', scoped.businessId);
 }
 
 /* ====================================================================== */

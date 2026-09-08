@@ -15,6 +15,7 @@ import {
   CheckCheck,
 } from 'lucide-react';
 import { fmtDateTime } from '@/lib/format';
+import { safeFetchJson } from '@/lib/utils';
 import { useRouter } from '@/i18n/navigation';
 
 interface Email {
@@ -70,12 +71,11 @@ export default function EmailsPage() {
   const genRef = useRef(false);
 
   const load = useCallback(async (category: string) => {
-    const res = await fetch(`/api/emails?category=${category}`);
-    const data = await res.json();
-    setEmails(data.emails ?? []);
-    setCounts(data.counts ?? {});
-    setAccounts(data.accounts ?? []);
-    const def = (data.accounts ?? []).find((a: Account) => a.is_default) ?? (data.accounts ?? [])[0];
+    const data = await safeFetchJson(`/api/emails?category=${category}`);
+    setEmails(data?.emails ?? []);
+    setCounts(data?.counts ?? {});
+    setAccounts(data?.accounts ?? []);
+    const def = (data?.accounts ?? []).find((a: Account) => a.is_default) ?? (data?.accounts ?? [])[0];
     if (def) setAccountId(def.id);
   }, []);
 
@@ -98,13 +98,12 @@ export default function EmailsPage() {
     if (!e.ai_summary) {
       setSummarizing(true);
       try {
-        const res = await fetch('/api/emails/classify', {
+        const data = await safeFetchJson('/api/emails/classify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ emailId: e.id, action: 'summarize', locale }),
         });
-        const data = await res.json();
-        if (data.summary) {
+        if (data?.summary) {
           setSelected((prev) => (prev && prev.id === e.id ? { ...prev, ai_summary: data.summary } : prev));
         }
       } finally {

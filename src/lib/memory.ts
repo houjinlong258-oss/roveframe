@@ -7,22 +7,37 @@ export interface BusinessMemory {
 }
 
 // 取最近的企业长期记忆（注入 AI 上下文）
-export async function getRecentMemories(limit = 5): Promise<BusinessMemory[]> {
+export async function getRecentMemories(
+  tenantId: string,
+  businessId: string,
+  limit = 5,
+): Promise<BusinessMemory[]> {
   const client = getSupabaseClient();
-  const { data } = await client
+  const query = client
     .from('business_memories')
     .select('id, content, created_at')
+    .eq('tenant_id', tenantId)
+    .eq('business_id', businessId);
+  const { data } = await query
     .order('created_at', { ascending: false })
     .limit(limit);
   return (data ?? []) as BusinessMemory[];
 }
 
 // 沉淀一条企业长期记忆
-export async function addMemory(content: string): Promise<void> {
+export async function addMemory(
+  tenantId: string,
+  businessId: string,
+  content: string,
+): Promise<void> {
   const text = content.trim();
   if (text.length < 4) return;
   const client = getSupabaseClient();
-  const { error } = await client.from('business_memories').insert({ content: text });
+  const { error } = await client.from('business_memories').insert({
+    tenant_id: tenantId,
+    business_id: businessId,
+    content: text,
+  });
   if (error) throw new Error(error.message);
 }
 

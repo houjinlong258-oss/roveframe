@@ -29,7 +29,7 @@ interface MenuData {
 function Storefront() {
   const t = useTranslations('store');
   const params = useSearchParams();
-  const table = params.get('table');
+  const token = params.get('token');
 
   const [menu, setMenu] = useState<MenuData | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -47,11 +47,11 @@ function Storefront() {
   const [thanking, setThanking] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/store/menu${table ? `?table=${encodeURIComponent(table)}` : ''}`)
+    fetch(`/api/store/menu${token ? `?token=${encodeURIComponent(token)}` : ''}`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then(setMenu)
       .catch(() => setLoadError(true));
-  }, [table]);
+  }, [token]);
 
   const byId = useMemo(() => new Map((menu?.products ?? []).map((p) => [p.id, p])), [menu]);
   const visible = useMemo(
@@ -85,20 +85,20 @@ function Storefront() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          table_no: table,
+          token,
           note: note || null,
           tip_amount: tipAmount,
           tip_percent: tipPercent,
           items: Object.entries(cart).map(([product_id, qty]) => ({ product_id, qty })),
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.order) throw new Error(data?.error ?? 'Order placement failed');
       setPlaced({ order_no: data.order.order_no, total: Number(data.order.total), id: data.order.id, tip: Number(data.order.tip ?? 0) });
       setCart({});
       setCartOpen(false);
       setThanked(null);
-      fetch('/api/store/staff')
+      fetch(`/api/store/staff?token=${encodeURIComponent(token ?? '')}`)
         .then((r) => (r.ok ? r.json() : Promise.reject()))
         .then((d) => setStaffList(d.staff ?? []))
         .catch(() => setStaffList([]));
@@ -116,7 +116,7 @@ function Storefront() {
       const res = await fetch('/api/store/orders', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order_id: placed.id, tip_staff_id: staffId }),
+        body: JSON.stringify({ token, order_id: placed.id, tip_staff_id: staffId }),
       });
       if (res.ok) setThanked(name);
     } finally {
@@ -152,10 +152,10 @@ function Storefront() {
             <span className="text-on-surface-variant">{t('orderNo')}</span>
             <span className="font-semibold text-on-surface">{placed.order_no}</span>
           </div>
-          {table && (
+          {menu.table && (
             <div className="flex justify-between text-sm py-1">
               <span className="text-on-surface-variant">{t('table')}</span>
-              <span className="font-semibold text-on-surface">{table}</span>
+              <span className="font-semibold text-on-surface">{menu.table}</span>
             </div>
           )}
           <div className="flex justify-between text-sm py-1">
@@ -211,9 +211,9 @@ function Storefront() {
               <h1 className="text-lg font-bold text-on-surface truncate">{menu.store.name}</h1>
               <p className="text-xs text-on-surface-variant truncate">{menu.store.hours}</p>
             </div>
-            {table && (
+            {menu.table && (
               <span className="shrink-0 ml-3 px-3 py-1.5 rounded-lg bg-primary text-on-primary text-sm font-bold shadow-float">
-                {t('table')} {table}
+                {t('table')} {menu.table}
               </span>
             )}
           </div>
@@ -372,7 +372,7 @@ function Storefront() {
               <h2 className="text-base font-bold text-on-surface flex items-center gap-2">
                 <ClipboardList className="w-5 h-5" />
                 {t('cart')}
-                {table && <span className="text-xs font-medium text-on-surface-variant">· {t('table')} {table}</span>}
+                {menu.table && <span className="text-xs font-medium text-on-surface-variant">· {t('table')} {menu.table}</span>}
               </h2>
               <button onClick={() => setCartOpen(false)} className="w-8 h-8 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant">
                 <X className="w-4 h-4" />

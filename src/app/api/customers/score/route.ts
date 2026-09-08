@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { streamChat } from '@/lib/ai/router';
 import { sseResponse } from '@/lib/api-helpers';
 import { getTenantContext } from '@/lib/tenant';
-import { tenantTable, updateWithTenant } from '@/lib/tenant-db';
+import { scopedTable, updateWithScope } from '@/lib/tenant-db';
 import { HeaderUtils } from 'coze-coding-dev-sdk';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 interface CustomerRow {
   id: string;
@@ -21,14 +22,14 @@ function daysSince(iso: string | null): number {
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
 }
 
-export async function POST(request: NextRequest) {
+async function scoreOrPlanRetention(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const mode = (body.mode as string) ?? 'retention';
-  const ctx = getTenantContext(request);
+  const ctx = await getTenantContext(request);
 
   if (mode === 'score') {
     // 批量 AI 评分：基于消费行为启发式 + AI 解释
-    const rowsRes = await tenantTable(ctx.tenantId, 'customers');
+    const rowsRes = await scopedTable(ctx, 'customers');
     if (rowsRes.error) throw new Error(rowsRes.error.message);
     const list = (rowsRes.data ?? []) as CustomerRow[];
 
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
     });
 
     for (const s of scored) {
-      const { error: upErr } = await updateWithTenant(ctx.tenantId, 'customers', s.id, {
+      const { error: upErr } = await updateWithScope(ctx, 'customers', s.id, {
         ai_score: s.ai_score,
         churn_risk: s.churn_risk,
       });
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest) {
   // 单个客户挽留方案（流式）
   const customerId = body.customerId as string;
   if (!customerId) return NextResponse.json({ error: 'customerId required' }, { status: 400 });
-  const cRes = await tenantTable(ctx.tenantId, 'customers').eq('id', customerId).maybeSingle();
+  const cRes = await scopedTable(ctx, 'customers').eq('id', customerId).maybeSingle();
   if (cRes.error) throw new Error(cRes.error.message);
   const c = cRes.data as CustomerRow | null;
   if (!c) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
@@ -78,6 +79,12 @@ export async function POST(request: NextRequest) {
         },
       ],
       forwardHeaders,
+      { tenantId: ctx.tenantId, businessId: ctx.businessId, userId: ctx.userId },
     ),
   );
 }
+
+export const POST = protectBusinessMutation(
+  { permission: 'customers:write', action: 'customers.score_or_retain', entity: 'customers' },
+  scoreOrPlanRetention,
+);

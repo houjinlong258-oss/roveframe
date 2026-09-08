@@ -47,6 +47,8 @@ const eslintConfig = defineConfig([
     'dist/**',
     // Script files (CommonJS):
     'scripts/**/*.js',
+    // Node test runner files (not Next.js app code):
+    'tests/**',
   ]),
 ]);
 

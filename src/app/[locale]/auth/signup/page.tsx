@@ -7,6 +7,7 @@ import { useSession } from '@/hooks/use-session';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Link } from '@/i18n/navigation';
 
 const INDUSTRIES = [
   { value: 'restaurant', label: 'Restaurant' },
@@ -102,9 +103,9 @@ export default function SignupPage() {
         </Button>
         <p className="text-sm text-muted-foreground text-center">
           {t('haveAccount')}{' '}
-          <a href="/auth/login" className="underline text-primary">
+          <Link href="/auth/login" className="underline text-primary">
             {t('loginLink')}
-          </a>
+          </Link>
         </p>
       </form>
     </div>

@@ -18,6 +18,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Markdown } from '@/components/markdown';
+import { safeFetchJson } from '@/lib/utils';
 import { timeAgo } from '@/lib/format';
 
 type ContentType = 'campaign' | 'social' | 'email';
@@ -78,9 +79,8 @@ export default function MarketingPage() {
   const [sendResult, setSendResult] = useState<string | null>(null);
 
   const loadAssets = useCallback(async () => {
-    const res = await fetch('/api/marketing/contents');
-    const data = await res.json();
-    setAssets(data.contents ?? []);
+    const data = await safeFetchJson('/api/marketing/contents');
+    setAssets(data?.contents ?? []);
   }, []);
 
   useEffect(() => {
@@ -90,13 +90,16 @@ export default function MarketingPage() {
   // 切换客群时刷新人数
   useEffect(() => {
     if (type !== 'email') return;
-    fetch('/api/marketing/send', {
+    safeFetchJson('/api/marketing/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'count', segment }),
     })
-      .then((r) => r.json())
       .then((d) => {
+        if (!d) {
+          setSegmentCount(null);
+          return;
+        }
         setSegmentCount(d.count ?? 0);
         setSender(d.sender ?? null);
       })
@@ -173,14 +176,13 @@ export default function MarketingPage() {
     setPreviews([]);
     setPreviewIdx(0);
     try {
-      const res = await fetch('/api/marketing/send', {
+      const data = await safeFetchJson('/api/marketing/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'preview', segment, brief, locale }),
       });
-      const data = await res.json();
-      setPreviews(data.previews ?? []);
-      if (data.sender) setSender(data.sender);
+      setPreviews(data?.previews ?? []);
+      if (data?.sender) setSender(data.sender);
     } finally {
       setPreviewLoading(false);
     }
@@ -190,13 +192,12 @@ export default function MarketingPage() {
     setSending(true);
     setSendResult(null);
     try {
-      const res = await fetch('/api/marketing/send', {
+      const data = await safeFetchJson('/api/marketing/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'send', segment, brief, locale }),
       });
-      const data = await res.json();
-      setSendResult(t('queuedResult', { count: data.queued ?? 0 }));
+      setSendResult(t('queuedResult', { count: data?.queued ?? 0 }));
     } finally {
       setSending(false);
     }

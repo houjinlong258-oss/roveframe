@@ -8,6 +8,9 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { RoveFrameLogo } from '@/components/layout/brand-logo';
+import { ThemeToggle } from '@/components/theme/theme-toggle';
+import { useTheme } from '@/components/theme/theme-provider';
 
 type Alert = {
   id: string;
@@ -33,6 +36,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   const router = useRouter();
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [alertOpen, setAlertOpen] = useState(false);
+  const { resolved } = useTheme();
 
   useEffect(() => {
     fetch('/api/alerts?unread=true')
@@ -54,7 +58,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
 
   return (
     <header className="bg-card sticky top-0 z-40 h-14 flex items-center justify-between px-5 border-b border-border/20">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         <button
           onClick={onMenuClick}
           className="md:hidden w-9 h-9 rounded-md hover:bg-muted flex items-center justify-center text-muted-foreground"
@@ -62,16 +66,20 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
           <Menu className="w-4.5 h-4.5" />
         </button>
         <Link href="/" className="flex items-center gap-2.5">
-          <span className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-            <Bot className="text-primary-foreground w-4.5 h-4.5" />
+          <span className="hidden sm:inline-flex">
+            <RoveFrameLogo variant="primary" size="md" darkMode={resolved === 'dark'} />
           </span>
-          <span className="flex items-baseline gap-2">
-            <span className="font-bold text-base tracking-tight">{t('nav.brand')}</span>
-            <span className="text-[11px] font-medium text-primary bg-accent px-1.5 py-0.5 rounded-sm">{t('nav.brandBadge')}</span>
+          <span className="sm:hidden">
+            <RoveFrameLogo variant="monogram" size="md" darkMode={resolved === 'dark'} />
+          </span>
+          <span className="text-[10px] font-extrabold tracking-wider text-[#0D0D0D] bg-[#A7FF00] px-1.5 py-0.5 rounded-sm uppercase">
+            AI OS
           </span>
         </Link>
       </div>
       <div className="flex items-center gap-3">
+        {/* 主题切换：Light / Dark / System（本地时间自动） */}
+        <ThemeToggle />
         {/* 语言切换 */}
         <DropdownMenu>
           <DropdownMenuTrigger className="w-9 h-9 rounded-md hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors">

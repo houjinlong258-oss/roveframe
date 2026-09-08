@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantContext } from '@/lib/tenant';
+import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
 import {
-  insertWithTenant,
-  tenantTable,
-  updateWithTenant,
+  insertWithScope,
+  scopedTable,
+  updateWithScope,
 } from '@/lib/tenant-db';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 function dayRange(dateStr: string): { start: string; end: string } {
   // 按服务器本地时区解释自然日
@@ -14,13 +15,13 @@ function dayRange(dateStr: string): { start: string; end: string } {
 }
 
 export async function GET(request: NextRequest) {
-  const ctx = getTenantContext(request);
+  const ctx = requireBusinessContext(await getTenantContext(request));
   const now = new Date();
   const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const date = request.nextUrl.searchParams.get('date') ?? localToday;
   const { start, end } = dayRange(date);
 
-  const listRes = await tenantTable(ctx.tenantId, 'reservations')
+  const listRes = await scopedTable(ctx, 'reservations')
     .gte('reserved_at', start)
     .lt('reserved_at', end)
     .order('reserved_at', { ascending: true });
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest) {
   // 本周取消率
   const weekStart = new Date(start);
   weekStart.setUTCDate(weekStart.getUTCDate() - weekStart.getUTCDay());
-  const weekRes = await tenantTable(ctx.tenantId, 'reservations', 'status')
+  const weekRes = await scopedTable(ctx, 'reservations', 'status')
     .gte('reserved_at', weekStart.toISOString());
   if (weekRes.error) throw new Error(weekRes.error.message);
   const week = (weekRes.data ?? []) as { status: string }[];
@@ -43,7 +44,7 @@ export async function GET(request: NextRequest) {
     const d = new Date(startMs + i * 86400000);
     const ds = d.toISOString().slice(0, 10);
     const { start: s2, end: e2 } = dayRange(ds);
-    const dayRes = await tenantTable(ctx.tenantId, 'reservations', 'id')
+    const dayRes = await scopedTable(ctx, 'reservations', 'id')
       .gte('reserved_at', s2)
       .lt('reserved_at', e2)
       .neq('status', 'cancelled');
@@ -62,10 +63,10 @@ export async function GET(request: NextRequest) {
   });
 }
 
-export async function POST(request: NextRequest) {
-  const ctx = getTenantContext(request);
+async function createReservation(request: NextRequest) {
+  const ctx = requireBusinessContext(await getTenantContext(request));
   const body = await request.json();
-  const { data, error } = await insertWithTenant(ctx.tenantId, 'reservations', {
+  const { data, error } = await insertWithScope(ctx, 'reservations', {
     customer_name: body.customer_name,
     phone: body.phone,
     party_size: body.party_size ?? 2,
@@ -81,14 +82,23 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ id: (data as { id: string }).id });
 }
 
-export async function PATCH(request: NextRequest) {
-  const ctx = getTenantContext(request);
+async function updateReservation(request: NextRequest) {
+  const ctx = requireBusinessContext(await getTenantContext(request));
   const body = await request.json();
   if (!body.id) return NextResponse.json({ error: 'id required' }, { status: 400 });
   const update: Record<string, unknown> = {};
   if (body.status) update.status = body.status;
   if (body.table_no !== undefined) update.table_no = body.table_no;
-  const { error } = await updateWithTenant(ctx.tenantId, 'reservations', body.id, update);
+  const { error } = await updateWithScope(ctx, 'reservations', body.id, update);
   if (error) throw new Error(error.message);
   return NextResponse.json({ ok: true });
 }
+
+export const POST = protectBusinessMutation(
+  { permission: 'reservations:write', action: 'reservations.create', entity: 'reservations' },
+  createReservation,
+);
+export const PATCH = protectBusinessMutation(
+  { permission: 'reservations:write', action: 'reservations.update', entity: 'reservations' },
+  updateReservation,
+);

@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getForwardHeaders } from '@/lib/api-helpers';
 import { invokeChat, type ChatContent } from '@/lib/ai/router';
+import { getTenantContext, requirePermission } from '@/lib/tenant';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 // AI 商品创建/优化：根据文本描述或商品图片生成名称/描述/分类/SEO 关键词/标签
-export async function POST(request: NextRequest) {
+async function generateProduct(request: NextRequest) {
+  const context = await getTenantContext(request);
+  requirePermission(context, 'products:write');
   const body = await request.json();
   const brief = String(body.brief ?? '').trim();
   const image = typeof body.image === 'string' ? body.image.trim() : '';
@@ -31,6 +35,7 @@ export async function POST(request: NextRequest) {
       { role: 'user', content: userContent },
     ],
     forwardHeaders,
+    { tenantId: context.tenantId, businessId: context.businessId, userId: context.userId },
   );
 
   try {
@@ -44,3 +49,8 @@ export async function POST(request: NextRequest) {
     });
   }
 }
+
+export const POST = protectBusinessMutation(
+  { permission: 'products:write', action: 'products.generate', entity: 'products' },
+  generateProduct,
+);

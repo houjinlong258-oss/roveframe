@@ -5,7 +5,14 @@ import crypto from "crypto";
  * 密钥来源：ENCRYPTION_SECRET，缺省时派生自 Supabase service_role_key（同一部署内自洽）。
  */
 function getKey(): Buffer {
-  const secret = process.env.ENCRYPTION_SECRET || process.env.COZE_SUPABASE_SERVICE_ROLE_KEY || "roveframe-dev-secret";
+  const configured = process.env.ENCRYPTION_SECRET || process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
+  // A predictable fallback would make every tenant credential recoverable from
+  // the source bundle. Fail closed in production; keep the local fallback only
+  // for explicitly non-production development and tests.
+  if (!configured && (process.env.COZE_PROJECT_ENV === 'PROD' || process.env.NODE_ENV === 'production')) {
+    throw new Error('ENCRYPTION_SECRET is required in production');
+  }
+  const secret = configured || 'roveframe-dev-secret';
   return crypto.createHash("sha256").update(secret).digest();
 }
 

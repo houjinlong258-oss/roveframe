@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState, Suspense } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
-import { Bot, Plus, Send, Square, Trash2 } from 'lucide-react';
+import { Bot, Plus, Send, Square, Trash2, Crown, Boxes, Megaphone, HeartHandshake, Code2, ServerCog } from 'lucide-react';
 import { useSSE } from '@/hooks/use-sse';
 import { Markdown } from '@/components/markdown';
-import { cn } from '@/lib/utils';
+import { AgentCard } from '@/components/rove/agent-card';
+import { cn, safeFetchJson } from '@/lib/utils';
 import { fmtDateTime } from '@/lib/format';
 
 type Session = { id: string; title: string; updated_at: string };
@@ -16,6 +17,8 @@ function AgentChat() {
   const t = useTranslations('agent');
   const locale = useLocale();
   const searchParams = useSearchParams();
+  const briefParam = searchParams.get('brief');
+
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -27,15 +30,26 @@ function AgentChat() {
 
   const quickQuestions = [t('quick1'), t('quick2'), t('quick3'), t('quick4'), t('quick5')];
 
+  // AI 员工团队：AI-native 入口 —— 界面强调 Agents 而非菜单
+  const team = [
+    { key: 'ceo', name: t('team.ceo'), role: t('team.ceoRole'), icon: Crown },
+    { key: 'ops', name: t('team.ops'), role: t('team.opsRole'), icon: Boxes },
+    { key: 'mkt', name: t('team.mkt'), role: t('team.mktRole'), icon: Megaphone },
+    { key: 'cust', name: t('team.cust'), role: t('team.custRole'), icon: HeartHandshake },
+    { key: 'dev', name: t('team.dev'), role: t('team.devRole'), icon: Code2 },
+    { key: 'devops', name: t('team.devops'), role: t('team.devopsRole'), icon: ServerCog },
+  ] as const;
+
   const loadSessions = async () => {
-    const d = await fetch('/api/agent/sessions').then((r) => r.json()).catch(() => ({ sessions: [] }));
-    setSessions(d.sessions ?? []);
-    return d.sessions ?? [];
+    const d = await safeFetchJson('/api/agent/sessions');
+    const list = d?.sessions ?? [];
+    setSessions(list);
+    return list;
   };
 
   const loadMessages = async (sessionId: string) => {
-    const d = await fetch(`/api/agent/messages?session_id=${sessionId}`).then((r) => r.json()).catch(() => ({ messages: [] }));
-    setMessages(d.messages ?? []);
+    const d = await safeFetchJson(`/api/agent/messages?session_id=${sessionId}`);
+    setMessages(d?.messages ?? []);
   };
 
   useEffect(() => {
@@ -148,12 +162,36 @@ function AgentChat() {
       <div className="flex-1 min-w-0 flex flex-col">
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
           {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full text-center">
-              <span className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mb-4">
+            <div className="flex flex-col items-center justify-center h-full text-center px-4">
+              <span className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mb-4 rove-rise">
                 <Bot className="w-7 h-7 text-primary-foreground" />
               </span>
-              <h1 className="text-xl font-bold">{t('title')}</h1>
-              <p className="text-sm text-muted-foreground mt-1.5 max-w-sm">{t('subtitle')}</p>
+              <h1 className="text-xl font-bold font-display tracking-tight rove-rise rove-rise-1">{t('title')}</h1>
+              <p className="text-sm text-muted-foreground mt-1.5 max-w-sm rove-rise rove-rise-2">{t('subtitle')}</p>
+
+              {/* Your AI Team：点选一名 AI 员工直接开场 */}
+              <p className="mt-8 mb-3 text-xs font-semibold tracking-widest uppercase text-muted-foreground rove-rise rove-rise-2">
+                {t('yourTeam')}
+              </p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 w-full max-w-3xl text-left">
+                {team.map((a, i) => (
+                  <AgentCard
+                    key={a.key}
+                    rise={((i % 4) + 1) as 1 | 2 | 3 | 4}
+                    name={a.name}
+                    role={a.role}
+                    icon={a.icon}
+                    status="active"
+                    statusLabel={t('team.statusActive')}
+                    action={
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                        {t('team.openAgent')} →
+                      </span>
+                    }
+                    onOpen={() => send(t(`team.kickoff.${a.key}` as 'team.kickoff.ceo'))}
+                  />
+                ))}
+              </div>
             </div>
           )}
           {messages.map((m, i) =>

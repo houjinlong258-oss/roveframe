@@ -8,7 +8,7 @@ import {
   Globe, MapPin, Loader2, Pencil,
 } from 'lucide-react';
 import { useSSE } from '@/hooks/use-sse';
-import { cn } from '@/lib/utils';
+import { cn, safeFetchJson } from '@/lib/utils';
 import { timeAgo } from '@/lib/format';
 
 type Review = {
@@ -32,6 +32,7 @@ const SENTIMENT_STYLE: Record<string, string> = {
 
 function ReviewsContent() {
   const t = useTranslations('reviews');
+  const tc = useTranslations('common');
   const locale = useLocale();
   const searchParams = useSearchParams();
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -46,9 +47,9 @@ function ReviewsContent() {
 
   const load = async () => {
     const params = new URLSearchParams({ platform, sentiment, pending: String(onlyPending) });
-    const d = await fetch(`/api/reviews?${params}`).then((r) => r.json()).catch(() => ({ reviews: [] }));
-    setReviews(d.reviews ?? []);
-    setStats(d.stats ?? null);
+    const d = await safeFetchJson(`/api/reviews?${params}`);
+    setReviews(d?.reviews ?? []);
+    setStats(d?.stats ?? null);
   };
 
   useEffect(() => { load(); }, [platform, sentiment, onlyPending]);

@@ -1,0 +1,23 @@
+{
+  "key": "healthcare",
+  "name": "Healthcare Pack",
+  "agents": ["ceo", "operations", "customer", "finance", "devops"],
+  "connectors": ["square", "stripe"],
+  "skills": [
+    "daily-briefing",
+    "appointment-optimizer",
+    "patient-followup",
+    "review-response",
+    "billing-watchdog"
+  ],
+  "templates": {
+    "daily_report": "Appointments / No-shows / Revenue / Patient Satisfaction",
+    "followup_message": "Post-visit follow-up for chronic care patients",
+    "review_reply": "HIPAA-conscious response draft (no PHI in replies)"
+  },
+  "knowledge_base": [
+    "services.md",
+    "policies.md",
+    "compliance.md"
+  ]
+}

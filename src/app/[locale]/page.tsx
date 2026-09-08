@@ -1,15 +1,21 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
-import { Link } from '@/i18n/navigation';
+import { Link, useRouter } from '@/i18n/navigation';
 import {
-  Banknote, Receipt, Footprints, Heart, TrendingUp, TrendingDown, Sparkles,
-  ChevronRight, MessageSquareWarning, CalendarCheck, UserX, Megaphone, Reply,
-  ArrowRight, Package, Star, UserCheck,
+  Banknote, Receipt, Footprints, Heart, Sparkles,
+  Crown, Boxes, Megaphone, HeartHandshake, Package,
+  MessageSquareWarning, Star, UserCheck,
 } from 'lucide-react';
 import { fmtCurrency, fmtDate, timeAgo } from '@/lib/format';
-import { cn } from '@/lib/utils';
+import { cn, safeFetchJson } from '@/lib/utils';
+import { CommandPanel } from '@/components/rove/command-panel';
+import { AgentCard, type AgentStatus } from '@/components/rove/agent-card';
+import { InsightCard } from '@/components/rove/insight-card';
+import { AIRecommendation } from '@/components/rove/ai-recommendation';
+import { ActivityTimeline, type ActivityItem } from '@/components/rove/activity-timeline';
+import { RoveCard, RoveCardHeader } from '@/components/rove/rove-card';
 
 type DashboardData = {
   kpi: {
@@ -29,42 +35,135 @@ type DashboardData = {
   alerts: { id: string; type: string; title: string; content: string; created_at: string }[];
 };
 
-const CHANNEL_COLORS = ['#2F6BFF', '#16A37B', '#E8930C', '#E5484D', '#637089'];
+const CHANNEL_COLORS = ['#A7FF00', '#16A37B', '#E8930C', '#E5484D', '#637089'];
 const CHANNEL_KEYS: Record<string, string> = {
   dine_in: 'dineIn', delivery: 'delivery', takeout: 'takeout',
   online_store: 'onlineStore', square_pos: 'dineIn', shopify: 'onlineStore',
 };
 
-const ALERT_STYLE: Record<string, { color: string; icon: typeof Star }> = {
-  review: { color: 'bg-destructive/15 text-destructive', icon: MessageSquareWarning },
-  customer: { color: 'bg-success/15 text-success', icon: UserCheck },
-  inventory: { color: 'bg-primary/10 text-primary', icon: Package },
-  order: { color: 'bg-warning/15 text-warning', icon: Receipt },
-  email: { color: 'bg-primary/10 text-primary', icon: Star },
+/** 告警类型 → 负责的 AI 员工（AI Activity 归属） */
+const ALERT_AGENT: Record<string, string> = {
+  review: 'Customer Agent',
+  customer: 'Customer Agent',
+  inventory: 'Operations Agent',
+  order: 'Operations Agent',
+  email: 'CEO Agent',
+};
+
+const ALERT_TONE: Record<string, ActivityItem['tone']> = {
+  review: 'risk',
+  customer: 'warning',
+  inventory: 'warning',
+  order: 'default',
+  email: 'default',
 };
 
 export default function DashboardPage() {
   const t = useTranslations('dashboard');
   const locale = useLocale();
+  const router = useRouter();
   const [range, setRange] = useState(7);
   const [data, setData] = useState<DashboardData | null>(null);
 
   useEffect(() => {
     setData(null);
     fetch(`/api/dashboard?range=${range}`)
-      .then((r) => r.json())
-      .then(setData)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && typeof d === 'object' && d.kpi && typeof d.kpi === 'object') {
+          setData(d as DashboardData);
+        }
+      })
       .catch(() => {});
   }, [range]);
 
-  const kpiCards = data ? [
-    { label: t('kpiRevenue'), value: fmtCurrency(data.kpi.todayRevenue), delta: data.kpi.revenueDelta, icon: Banknote, iconClass: 'bg-primary/10 text-primary' },
-    { label: t('kpiOrders'), value: String(data.kpi.todayOrders), delta: data.kpi.ordersDelta, icon: Receipt, iconClass: 'bg-success/15 text-success' },
-    { label: t('kpiCustomers'), value: String(data.kpi.todayCustomers), delta: data.kpi.customersDelta, icon: Footprints, iconClass: 'bg-warning/15 text-warning' },
-    { label: t('kpiRating'), value: `${data.kpi.positiveRate}%`, delta: data.kpi.ratingDelta, icon: Heart, iconClass: 'bg-primary/10 text-primary' },
-  ] : [];
+  const kpi = data?.kpi;
+  const alerts = data?.alerts ?? [];
+  const churnHigh = data?.totals.churnHigh ?? 0;
+  const reviewAlerts = alerts.filter((a) => a.type === 'review').length;
+  const inventoryAlerts = alerts.filter((a) => a.type === 'inventory').length;
 
-  // 营收趋势 SVG 路径
+  // —— AI 员工团队实时状态（全部来自真实经营数据） ——
+  const team = useMemo(() => {
+    const has = data !== null;
+    return [
+      {
+        key: 'ceo', name: t('agentCeo'), role: t('agentCeoRole'), icon: Crown,
+        status: (has ? 'active' : 'thinking') as AgentStatus,
+        task: has
+          ? t('agentCeoTask', {
+              revenue: fmtCurrency(kpi?.todayRevenue ?? 0),
+              delta: `${(kpi?.revenueDelta ?? 0) >= 0 ? '+' : ''}${kpi?.revenueDelta ?? 0}%`,
+            })
+          : t('agentAnalyzing'),
+        last: t('agentCeoLast'),
+      },
+      {
+        key: 'ops', name: t('agentOps'), role: t('agentOpsRole'), icon: Boxes,
+        status: (inventoryAlerts > 0 ? 'attention' : has ? 'active' : 'thinking') as AgentStatus,
+        task: inventoryAlerts > 0 ? t('agentOpsTaskRisk', { count: inventoryAlerts }) : t('agentOpsTaskOk'),
+        last: t('agentOpsLast'),
+      },
+      {
+        key: 'mkt', name: t('agentMarketing'), role: t('agentMarketingRole'), icon: Megaphone,
+        status: (has ? 'active' : 'thinking') as AgentStatus,
+        task: t('agentMarketingTask', { count: churnHigh }),
+        last: t('agentMarketingLast'),
+      },
+      {
+        key: 'cust', name: t('agentCustomer'), role: t('agentCustomerRole'), icon: HeartHandshake,
+        status: (reviewAlerts > 0 ? 'attention' : has ? 'active' : 'thinking') as AgentStatus,
+        task: reviewAlerts > 0 ? t('agentCustomerTaskRisk', { count: reviewAlerts }) : t('agentCustomerTaskOk'),
+        last: t('agentCustomerLast'),
+      },
+    ];
+  }, [data, inventoryAlerts, reviewAlerts, churnHigh, kpi, t]);
+
+  // —— AI Activity：真实告警流水按时间倒序 ——
+  const activity: ActivityItem[] = useMemo(
+    () =>
+      alerts.slice(0, 7).map((a) => ({
+        id: a.id,
+        time: timeAgo(a.created_at, locale),
+        agent: ALERT_AGENT[a.type] ?? 'CEO Agent',
+        text: `${a.title} — ${a.content}`,
+        tone: ALERT_TONE[a.type] ?? 'default',
+      })),
+    [alerts, locale]
+  );
+
+  // —— 首要 AI 建议（按数据严重度排序取第一条） ——
+  const recommendation = useMemo(() => {
+    if (churnHigh > 0) {
+      return {
+        tone: 'risk' as const,
+        agent: t('agentCustomer'),
+        title: t('recChurnTitle', { count: churnHigh }),
+        desc: t('recChurnDesc'),
+        href: '/marketing?brief=win-back',
+      };
+    }
+    if (reviewAlerts > 0) {
+      return {
+        tone: 'risk' as const,
+        agent: t('agentCustomer'),
+        title: t('recReviewTitle', { count: reviewAlerts }),
+        desc: t('recReviewDesc'),
+        href: '/reviews?filter=pending',
+      };
+    }
+    return {
+      tone: 'opportunity' as const,
+      agent: t('agentMarketing'),
+      title: t('recGrowthTitle'),
+      desc: t('recGrowthDesc', {
+        revenue: fmtCurrency(Math.max(...(data?.revenueTrend ?? [{ amount: 0 }]).map((p) => p.amount), 0)),
+      }),
+      href: '/marketing?brief=weekend-promo',
+    };
+  }, [churnHigh, reviewAlerts, data, t]);
+
+  // 营收趋势 SVG
   const trend = data?.revenueTrend ?? [];
   const maxAmount = Math.max(...trend.map((p) => p.amount), 1);
   const chartW = 560, chartH = 185, padX = 20;
@@ -85,185 +184,181 @@ export default function DashboardPage() {
     return `${CHANNEL_COLORS[i % CHANNEL_COLORS.length]} ${start}% ${cumPcts[i]}%`;
   }).join(', ');
 
-  const insights = [
-    {
-      tag: t('actionGenerate'), tagClass: 'bg-success/15 text-success',
-      title: locale === 'zh' ? '周末营收创新高' : 'Weekend revenue hit a new high',
-      desc: locale === 'zh'
-        ? `上周峰值日营收 ${fmtCurrency(Math.max(...trend.map((p) => p.amount), 0))}，建议周末增加热销菜备料并配合社媒宣传。`
-        : `Peak daily revenue reached ${fmtCurrency(Math.max(...trend.map((p) => p.amount), 0))}. Stock up on top sellers and amplify with social posts.`,
-      href: '/marketing?brief=weekend-promo', icon: Megaphone, action: t('actionGenerate'),
-    },
-    {
-      tag: locale === 'zh' ? '需关注' : 'Attention', tagClass: 'bg-destructive/15 text-destructive',
-      title: locale === 'zh' ? '待回复评论积压' : 'Pending reviews piling up',
-      desc: locale === 'zh'
-        ? '负面评论 24 小时内回复可将客户挽回率提升 3 倍，建议立即处理。'
-        : 'Replying to negative reviews within 24h triples win-back rate. Handle them now.',
-      href: '/reviews?filter=pending', icon: Reply, action: t('actionReply'),
-    },
-    {
-      tag: locale === 'zh' ? '建议' : 'Suggestion', tagClass: 'bg-primary/10 text-primary',
-      title: locale === 'zh' ? '老客户挽留机会' : 'Win-back opportunity',
-      desc: locale === 'zh'
-        ? `${data?.totals.churnHigh ?? 0} 位高价值客户超过 21 天未到店，一封个性化邮件即可激活。`
-        : `${data?.totals.churnHigh ?? 0} high-value customers haven't visited in 21+ days. A personalized email can reactivate them.`,
-      href: '/customers?filter=churn', icon: UserX, action: t('actionView'),
-    },
-  ];
-
   return (
     <div>
-      {/* 页面标题 + 时间范围 */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">{t('title')}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{t('subtitle')}</p>
-        </div>
-        <div className="flex bg-muted rounded-md p-0.5">
+      {/* ===== AI Business Command Center · Hero ===== */}
+      <CommandPanel
+        ownerName="Adam"
+        greetingMorning={t('greetingMorning')}
+        greetingAfternoon={t('greetingAfternoon')}
+        greetingEvening={t('greetingEvening')}
+        teamSummary={t('commandSummary')}
+        headline={
+          kpi
+            ? t('commandHeadline', {
+                delta: `${(kpi.revenueDelta ?? 0) >= 0 ? '+' : ''}${kpi.revenueDelta ?? 0}%`,
+                orders: kpi.todayOrders ?? 0,
+              })
+            : undefined
+        }
+      >
+        {/* 时间范围切换 */}
+        <div className="inline-flex bg-white/10 backdrop-blur-sm rounded-full p-1">
           {[7, 30].map((r) => (
             <button
               key={r}
               onClick={() => setRange(r)}
               className={cn(
-                'px-3 py-1.5 text-xs font-medium rounded-sm',
-                range === r ? 'bg-card text-foreground shadow-card' : 'text-muted-foreground hover:text-foreground'
+                'px-4 py-1.5 text-xs font-semibold rounded-full transition-all',
+                range === r ? 'bg-accent text-accent-foreground shadow' : 'text-white/70 hover:text-white'
               )}
             >
               {r === 7 ? t('range7') : t('range30')}
             </button>
           ))}
         </div>
+      </CommandPanel>
+
+      {/* ===== Your AI Team ===== */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-base font-bold tracking-tight">{t('yourTeam')}</h2>
+        <Link href="/agent" className="text-xs font-semibold text-primary hover:underline">
+          {t('openCommand')} →
+        </Link>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+        {team.map((a, i) => (
+          <AgentCard
+            key={a.key}
+            rise={(i + 1) as 1 | 2 | 3 | 4}
+            name={a.name}
+            role={a.role}
+            icon={a.icon}
+            status={a.status}
+            statusLabel={t(`status.${a.status}` as 'status.active')}
+            currentTask={a.task}
+            lastAction={a.last}
+            action={
+              <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                {t('openAgent')} →
+              </span>
+            }
+            onOpen={() => router.push(`/agent?team=${a.key}`)}
+          />
+        ))}
       </div>
 
-      {/* AI 今日简报 */}
-      <section className="mb-6 bg-gradient-to-r from-accent/70 via-card to-card rounded-lg shadow-card p-5 border border-primary/10">
-        <div className="flex items-start gap-4">
-          <span className="w-10 h-10 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shrink-0">
-            <Sparkles className="w-5 h-5" />
-          </span>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold">{t('briefing')}</h2>
-              <span className="text-xs text-muted-foreground">{t('briefingUpdated')}</span>
-            </div>
-            <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
-              {data && (locale === 'zh'
-                ? `今日营收 ${fmtCurrency(data.kpi.todayRevenue)}（较上周 ${data.kpi.revenueDelta >= 0 ? '+' : ''}${data.kpi.revenueDelta}%），订单 ${data.kpi.todayOrders} 单；热销菜品备货充足，晚间预约高峰注意排台。`
-                : `Today's revenue is ${fmtCurrency(data.kpi.todayRevenue)} (${data.kpi.revenueDelta >= 0 ? '+' : ''}${data.kpi.revenueDelta}% vs last week) across ${data.kpi.todayOrders} orders. Evening reservations are filling up — watch table assignments.`)}
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
-              <Link href="/reviews?filter=pending" className="flex items-center gap-3 bg-card rounded-md shadow-card px-4 py-3 hover:shadow-float transition-shadow">
-                <span className="w-8 h-8 rounded-md bg-destructive/10 text-destructive flex items-center justify-center shrink-0"><MessageSquareWarning className="w-4 h-4" /></span>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">{locale === 'zh' ? '差评待回复' : 'Reviews to reply'}</div>
-                  <div className="text-xs text-muted-foreground truncate">Google · Yelp</div>
-                </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground ml-auto shrink-0" />
-              </Link>
-              <Link href="/reservations" className="flex items-center gap-3 bg-card rounded-md shadow-card px-4 py-3 hover:shadow-float transition-shadow">
-                <span className="w-8 h-8 rounded-md bg-warning/15 text-warning flex items-center justify-center shrink-0"><CalendarCheck className="w-4 h-4" /></span>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">{locale === 'zh' ? '晚餐预约高峰' : 'Dinner peak bookings'}</div>
-                  <div className="text-xs text-muted-foreground truncate">18:30–19:30</div>
-                </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground ml-auto shrink-0" />
-              </Link>
-              <Link href="/customers?filter=churn" className="flex items-center gap-3 bg-card rounded-md shadow-card px-4 py-3 hover:shadow-float transition-shadow">
-                <span className="w-8 h-8 rounded-md bg-destructive/10 text-destructive flex items-center justify-center shrink-0"><UserX className="w-4 h-4" /></span>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">{locale === 'zh' ? `${data?.totals.churnHigh ?? 0} 位客户有流失风险` : `${data?.totals.churnHigh ?? 0} customers at churn risk`}</div>
-                  <div className="text-xs text-muted-foreground truncate">{locale === 'zh' ? '超过 21 天未到店' : '21+ days since last visit'}</div>
-                </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground ml-auto shrink-0" />
-              </Link>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* KPI 卡片 */}
+      {/* ===== 关键指标 InsightCards ===== */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-        {(data ? kpiCards : Array(4).fill(null)).map((card, i) => (
-          <div key={i} className="bg-card rounded-lg shadow-card p-5">
-            {card ? (
-              <>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-muted-foreground">{card.label}</span>
-                  <span className={cn('w-7 h-7 rounded-md flex items-center justify-center', card.iconClass)}>
-                    <card.icon className="w-3.5 h-3.5" />
-                  </span>
-                </div>
-                <div className="mt-2 text-2xl font-bold tracking-tight">{card.value}</div>
-                <div className="mt-1.5 flex items-center gap-1 text-xs">
-                  <span className={cn('inline-flex items-center gap-0.5 font-medium', card.delta >= 0 ? 'text-success' : 'text-destructive')}>
-                    {card.delta >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                    {card.delta >= 0 ? '+' : ''}{card.delta}%
-                  </span>
-                  <span className="text-muted-foreground">{t('vsLastWeek')}</span>
-                </div>
-              </>
-            ) : (
+        {(data
+          ? [
+              { label: t('kpiRevenue'), value: fmtCurrency(kpi?.todayRevenue ?? 0), delta: kpi?.revenueDelta ?? 0, icon: Banknote },
+              { label: t('kpiOrders'), value: String(kpi?.todayOrders ?? 0), delta: kpi?.ordersDelta ?? 0, icon: Receipt },
+              { label: t('kpiCustomers'), value: String(kpi?.todayCustomers ?? 0), delta: kpi?.customersDelta ?? 0, icon: Footprints },
+              { label: t('kpiRating'), value: `${kpi?.positiveRate ?? 0}%`, delta: kpi?.ratingDelta ?? 0, icon: Heart },
+            ]
+          : Array(4).fill(null)
+        ).map((card, i) =>
+          card ? (
+            <InsightCard
+              key={i}
+              rise={(i + 1) as 1 | 2 | 3 | 4}
+              label={card.label}
+              value={card.value}
+              delta={card.delta}
+              deltaLabel={t('vsLastWeek')}
+              icon={card.icon}
+            />
+          ) : (
+            <RoveCard key={i} className="p-5">
               <div className="animate-pulse space-y-3">
                 <div className="h-3 w-16 bg-muted rounded" />
                 <div className="h-7 w-24 bg-muted rounded" />
                 <div className="h-3 w-20 bg-muted rounded" />
               </div>
-            )}
-          </div>
-        ))}
+            </RoveCard>
+          )
+        )}
       </div>
 
-      {/* 图表区 */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
-        <div className="xl:col-span-2 bg-card rounded-lg shadow-card p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-base font-semibold">{t('revenueTrend')}</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">{range === 7 ? t('range7') : t('range30')}</p>
-            </div>
-            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              <span className="w-2.5 h-2.5 rounded-full bg-primary inline-block" />{t('kpiRevenue')}
-            </span>
-          </div>
-          {trend.length > 0 ? (
-            <svg viewBox={`0 0 ${chartW} 210`} className="w-full h-48">
-              <defs>
-                <linearGradient id="rev-fill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#2F6BFF" stopOpacity="0.18" />
-                  <stop offset="100%" stopColor="#2F6BFF" stopOpacity="0" />
-                </linearGradient>
-              </defs>
-              {[50, 100, 150].map((y) => (
-                <line key={y} x1={padX} y1={y} x2={chartW - 15} y2={y} stroke="#E6EAF2" strokeWidth="1" strokeDasharray="4 4" />
-              ))}
-              <polygon points={areaPath} fill="url(#rev-fill)" />
-              <polyline points={linePath} fill="none" stroke="#2F6BFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-              {points.filter((_, i) => range === 7 || i % 5 === 0 || i === points.length - 1).map((p, i) => (
-                <text key={i} x={p.x - 10} y={202} fontSize="11" fill="#637089">{fmtDate(p.date, locale)}</text>
-              ))}
-              {points.length > 0 && (
-                <text x={points[points.length - 1].x - 40} y={points[points.length - 1].y - 12} fontSize="11" fontWeight="600" fill="#152033">
-                  {fmtCurrency(points[points.length - 1].amount)}
-                </text>
-              )}
-            </svg>
-          ) : (
-            <div className="h-48 animate-pulse bg-muted rounded" />
-          )}
+      {/* ===== AI 建议 + AI Activity ===== */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        <div className="lg:col-span-2 flex flex-col gap-4">
+          <AIRecommendation
+            rise={1}
+            agentName={recommendation.agent}
+            title={recommendation.title}
+            description={recommendation.desc}
+            tone={recommendation.tone}
+            approveLabel={t('actionApprove')}
+            reviewLabel={t('actionReview')}
+            executeLabel={t('actionExecute')}
+            onApprove={() => router.push(recommendation.href as '/marketing')}
+            onReview={() => router.push(`/agent?insight=${encodeURIComponent(recommendation.title)}`)}
+            onExecute={() => router.push(recommendation.href as '/marketing')}
+          />
+
+          {/* 营收趋势 */}
+          <RoveCard rise={2} className="p-5 flex-1">
+            <RoveCardHeader
+              title={t('revenueTrend')}
+              subtitle={range === 7 ? t('range7') : t('range30')}
+              action={
+                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span className="w-2.5 h-2.5 rounded-full bg-accent inline-block" />
+                  {t('kpiRevenue')}
+                </span>
+              }
+            />
+            {trend.length > 0 ? (
+              <svg viewBox={`0 0 ${chartW} 210`} className="w-full h-48">
+                <defs>
+                  <linearGradient id="rev-fill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#A7FF00" stopOpacity="0.25" />
+                    <stop offset="100%" stopColor="#A7FF00" stopOpacity="0" />
+                  </linearGradient>
+                </defs>
+                {[50, 100, 150].map((y) => (
+                  <line key={y} x1={padX} y1={y} x2={chartW - 15} y2={y} stroke="var(--color-outline)" strokeWidth="1" strokeDasharray="4 4" />
+                ))}
+                <polygon points={areaPath} fill="url(#rev-fill)" />
+                <polyline points={linePath} fill="none" stroke="#A7FF00" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                {points.filter((_, i) => range === 7 || i % 5 === 0 || i === points.length - 1).map((p, i) => (
+                  <text key={i} x={p.x - 10} y={202} fontSize="11" fill="var(--color-muted-foreground)">{fmtDate(p.date, locale)}</text>
+                ))}
+                {points.length > 0 && (
+                  <text x={points[points.length - 1].x - 40} y={points[points.length - 1].y - 12} fontSize="11" fontWeight="600" fill="var(--color-foreground)">
+                    {fmtCurrency(points[points.length - 1].amount)}
+                  </text>
+                )}
+              </svg>
+            ) : (
+              <div className="h-48 animate-pulse bg-muted rounded-xl" />
+            )}
+          </RoveCard>
         </div>
 
+        <ActivityTimeline
+          rise={2}
+          title={t('aiActivity')}
+          items={activity}
+          emptyText={t('aiActivityEmpty')}
+          className="min-h-full"
+        />
+      </div>
+
+      {/* ===== 经营详情（保留真实数据视图，Rove 风格化） ===== */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* 渠道占比 */}
-        <div className="bg-card rounded-lg shadow-card p-5">
-          <h2 className="text-base font-semibold">{t('channelShare')}</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">{range === 7 ? t('range7') : t('range30')}</p>
+        <RoveCard rise={1} className="p-5">
+          <RoveCardHeader title={t('channelShare')} subtitle={range === 7 ? t('range7') : t('range30')} />
           {data ? (
             <>
-              <div className="flex items-center justify-center py-5">
+              <div className="flex items-center justify-center py-4">
                 <div className="relative w-36 h-36">
-                  <div className="w-full h-full rounded-full" style={{ background: `conic-gradient(${gradientStops || '#E6EAF2 0 100%'})` }} />
+                  <div className="w-full h-full rounded-full" style={{ background: `conic-gradient(${gradientStops || 'var(--color-outline) 0 100%'})` }} />
                   <div className="absolute inset-4 bg-card rounded-full flex flex-col items-center justify-center">
-                    <span className="text-xl font-bold">{totalChannelCount}</span>
+                    <span className="text-xl font-bold font-grotesk">{totalChannelCount}</span>
                     <span className="text-xs text-muted-foreground">{t('kpiOrders')}</span>
                   </div>
                 </div>
@@ -281,21 +376,15 @@ export default function DashboardPage() {
               </div>
             </>
           ) : (
-            <div className="h-48 animate-pulse bg-muted rounded mt-4" />
+            <div className="h-48 animate-pulse bg-muted rounded-xl" />
           )}
-        </div>
-      </div>
+        </RoveCard>
 
-      {/* 下排三栏 */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* 热销菜品 */}
-        <div className="bg-card rounded-lg shadow-card p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold">{t('topDishes')}</h2>
-            <span className="text-xs text-muted-foreground">{range === 7 ? t('range7') : t('range30')}</span>
-          </div>
+        <RoveCard rise={2} className="p-5">
+          <RoveCardHeader title={t('topDishes')} subtitle={range === 7 ? t('range7') : t('range30')} />
           <div className="space-y-4">
-            {data ? data.topDishes.map((dish, i) => {
+            {data ? data.topDishes.map((dish) => {
               const max = data.topDishes[0]?.quantity || 1;
               return (
                 <div key={dish.name}>
@@ -304,60 +393,39 @@ export default function DashboardPage() {
                     <span className="text-muted-foreground text-xs shrink-0 ml-2">{dish.quantity}</span>
                   </div>
                   <div className="h-2 bg-muted rounded-full overflow-hidden">
-                    <div className="h-full bg-primary rounded-full" style={{ width: `${Math.round((dish.quantity / max) * 100)}%` }} />
+                    <div className="h-full bg-accent rounded-full" style={{ width: `${Math.round((dish.quantity / max) * 100)}%` }} />
                   </div>
                 </div>
               );
-            }) : Array(5).fill(0).map((_, i) => <div key={i} className="h-8 animate-pulse bg-muted rounded" />)}
+            }) : Array(5).fill(0).map((_, i) => <div key={i} className="h-8 animate-pulse bg-muted rounded-lg" />)}
           </div>
-        </div>
-
-        {/* AI 洞察 */}
-        <div className="bg-card rounded-lg shadow-card p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold flex items-center gap-2">
-              <span className="w-6 h-6 rounded-md bg-primary/10 text-primary flex items-center justify-center"><Sparkles className="w-3.5 h-3.5" /></span>
-              {t('aiInsights')}
-            </h2>
-          </div>
-          <div className="space-y-3">
-            {insights.map((ins, i) => (
-              <div key={i} className="rounded-md bg-muted/60 p-3.5">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className={cn('inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium', ins.tagClass)}>{ins.tag}</span>
-                  <span className="text-sm font-semibold">{ins.title}</span>
-                </div>
-                <p className="text-xs text-muted-foreground leading-relaxed">{ins.desc}</p>
-                <div className="mt-3 flex items-center gap-3">
-                  <Link href={ins.href} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity">
-                    <ins.icon className="w-3 h-3" />{ins.action}
-                  </Link>
-                  <Link href={`/agent?insight=${encodeURIComponent(ins.title)}`} className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-                    {t('actionView') === t('actionView') && locale === 'zh' ? '问 AI' : 'Ask AI'}<ArrowRight className="w-3 h-3" />
-                  </Link>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        </RoveCard>
 
         {/* 实时告警 */}
-        <div className="bg-card rounded-lg shadow-card p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold">{t('liveAlerts')}</h2>
-            {data && data.alerts.length > 0 && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-destructive/15 text-destructive">
-                {data.alerts.length}
-              </span>
-            )}
-          </div>
+        <RoveCard rise={3} className="p-5">
+          <RoveCardHeader
+            title={t('liveAlerts')}
+            action={
+              data && data.alerts.length > 0 ? (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-destructive/15 text-destructive">
+                  {data.alerts.length}
+                </span>
+              ) : undefined
+            }
+          />
           <div className="space-y-3">
             {data ? data.alerts.map((alert) => {
-              const style = ALERT_STYLE[alert.type] ?? ALERT_STYLE.email;
+              const style = {
+                review: { color: 'bg-destructive/15 text-destructive', icon: MessageSquareWarning },
+                customer: { color: 'bg-success/15 text-success', icon: UserCheck },
+                inventory: { color: 'bg-primary/10 text-primary', icon: Package },
+                order: { color: 'bg-warning/15 text-warning', icon: Receipt },
+                email: { color: 'bg-primary/10 text-primary', icon: Star },
+              }[alert.type] ?? { color: 'bg-primary/10 text-primary', icon: Star };
               const Icon = style.icon;
               return (
-                <div key={alert.id} className="flex gap-3 rounded-md bg-muted/60 p-3.5">
-                  <span className={cn('mt-0.5 w-7 h-7 rounded-md flex items-center justify-center shrink-0', style.color)}>
+                <div key={alert.id} className="flex gap-3 rounded-xl bg-muted/60 p-3.5">
+                  <span className={cn('mt-0.5 w-7 h-7 rounded-lg flex items-center justify-center shrink-0', style.color)}>
                     <Icon className="w-3.5 h-3.5" />
                   </span>
                   <div className="min-w-0">
@@ -367,24 +435,30 @@ export default function DashboardPage() {
                   </div>
                 </div>
               );
-            }) : Array(3).fill(0).map((_, i) => <div key={i} className="h-16 animate-pulse bg-muted rounded" />)}
+            }) : Array(3).fill(0).map((_, i) => <div key={i} className="h-16 animate-pulse bg-muted rounded-xl" />)}
           </div>
-        </div>
+        </RoveCard>
       </div>
 
       {/* 智能经营洞察 */}
       {data?.orderIntel && (
-        <div className="bg-card rounded-lg shadow-card p-5 mt-6">
-          <h2 className="text-base font-semibold mb-4 flex items-center gap-2">
-            <span className="w-6 h-6 rounded-md bg-primary/10 text-primary flex items-center justify-center"><Sparkles className="w-3.5 h-3.5" /></span>
-            {t('orderIntel')}
-          </h2>
+        <RoveCard rise={1} className="p-5 mt-6">
+          <RoveCardHeader
+            title={
+              <span className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+                  <Sparkles className="w-3.5 h-3.5" />
+                </span>
+                {t('orderIntel')}
+              </span>
+            }
+          />
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             <div>
               <p className="text-xs text-muted-foreground mb-2">{t('hotHours')}</p>
               <div className="flex flex-wrap gap-2">
                 {data.orderIntel.hotHours.map((h) => (
-                  <span key={h.hour} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-primary/10 text-primary text-xs font-medium">
+                  <span key={h.hour} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary/10 text-primary text-xs font-medium">
                     {h.hour}:00 · {h.orders}
                   </span>
                 ))}
@@ -405,13 +479,13 @@ export default function DashboardPage() {
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-2">{t('repeatRate')}</p>
-              <p className="text-2xl font-bold text-primary">{data.orderIntel.repeat.rate}%</p>
+              <p className="text-2xl font-bold text-primary font-grotesk">{data.orderIntel.repeat.rate}%</p>
               <p className="text-xs text-muted-foreground mt-1">
                 {data.orderIntel.repeat.repeatCustomers} / {data.orderIntel.repeat.totalBuyers}
               </p>
             </div>
           </div>
-        </div>
+        </RoveCard>
       )}
     </div>
   );

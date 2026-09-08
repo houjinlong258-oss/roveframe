@@ -7,23 +7,54 @@ import {
   Store, Languages, KeyRound, Inbox, Blocks, SlidersHorizontal, Database, MessageCircle,
   X, Zap, Plus, Mail, Server, ShieldCheck, Factory, Square, ShoppingBag,
   CreditCard, Wallet, Plug, Check, Minus, RefreshCw, Trash2, TriangleAlert, CircleCheck, CircleX,
-  Send,
+  Send, Palette, Sun, Moon, Monitor,
 } from 'lucide-react';
 import { fmtDateTime } from '@/lib/format';
 import { CHANNEL_PRESETS, type ChannelKey } from '@/lib/channels-presets';
+import { useTheme, type ThemeMode } from '@/components/theme/theme-provider';
 
-type Group = 'business' | 'locale' | 'models' | 'mailbox' | 'integrations' | 'channels' | 'ai' | 'data';
+type Group = 'business' | 'locale' | 'appearance' | 'models' | 'mailbox' | 'integrations' | 'channels' | 'ai' | 'data';
 
-interface Provider {
-  id: string;
-  label: string;
-  models: string[];
-  baseUrl: string | null;
-  keyHint: string;
+interface ProviderConnection {
   maskedKey: string;
+  hasKey: boolean;
+  baseUrl: string | null;
   defaultModel: string | null;
   isEnabled: boolean;
   lastTestOk: boolean | null;
+  lastTestedAt: string | null;
+  lastTestError: string | null;
+  displayName: string | null;
+  timeoutMs: number | null;
+  maxRetries: number | null;
+  modelsCache: string[] | null;
+  modelsUpdatedAt: string | null;
+  optInLocal: boolean;
+}
+
+interface Provider {
+  id: string;
+  displayName: string;
+  category: string;
+  protocol: string;
+  authType: string;
+  runtime: 'native' | 'openai_compat' | 'declared';
+  modelDiscovery: 'models_endpoint' | 'manual';
+  keyHint: string;
+  defaultBaseUrl: string;
+  catalogModels: { id: string }[];
+  capabilities: { streaming: boolean; tools: boolean; vision: boolean; embeddings: boolean; reasoning: boolean };
+  connection: ProviderConnection | null;
+}
+
+interface AIRouteInfo {
+  requestId?: string;
+  kind?: string;
+  provider?: string;
+  model?: string;
+  usedFallback?: boolean;
+  fallbackReason?: string | null;
+  error?: string;
 }
 
 interface EmailAccount {
@@ -48,8 +79,8 @@ interface Integration {
 }
 
 const PROVIDER_INITIALS: Record<string, string> = {
-  claude: 'C', openai: 'O', gemini: 'G', deepseek: 'D', doubao: '豆',
-  kimi: 'K', qwen: '通', glm: '智', grok: 'X', custom: '',
+  claude: 'C', anthropic: 'C', openai: 'O', gemini: 'G', deepseek: 'D', doubao: '豆',
+  kimi: 'K', moonshot: 'K', moonshot_cn: 'K', qwen: '通', glm: '智', grok: 'X', xai: 'X', custom: '',
 };
 
 const CHANNEL_LABELS: Record<ChannelKey, string> = {
@@ -61,7 +92,9 @@ const CHANNEL_LABELS: Record<ChannelKey, string> = {
 const INT_FIELDS: Record<string, { key: string; secret?: boolean; placeholder?: string }[]> = {
   square: [
     { key: 'accessToken', secret: true, placeholder: 'EAAA...' },
-    { key: 'locationId', placeholder: 'L...' },
+    { key: 'locationId', placeholder: 'L... (comma-separated, max 10)' },
+    { key: 'signatureKey', secret: true, placeholder: 'Square webhook signature key' },
+    { key: 'webhookUrl', placeholder: 'https://app.example.com/api/webhooks/square?...' },
   ],
   shopify: [
     { key: 'shopDomain', placeholder: 'your-store.myshopify.com' },
@@ -120,17 +153,20 @@ export default function SettingsPage() {
   const pathname = usePathname();
 
   const [group, setGroup] = useState<Group>('models');
+  const { mode: themeMode, resolved: themeResolved, setMode: setThemeMode } = useTheme();
   const [savedTip, setSavedTip] = useState('');
 
   // 设置主数据
   const [settings, setSettings] = useState<{ business: Record<string, string>; locale: Record<string, string>; ai_prefs: Record<string, unknown>; model_assign: Record<string, string> } | null>(null);
   // 模型
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [providerSearch, setProviderSearch] = useState('');
+  const [routeInfo, setRouteInfo] = useState<Record<string, AIRouteInfo>>({});
   const [modelModal, setModelModal] = useState<Provider | null>(null);
-  const [modelForm, setModelForm] = useState({ apiKey: '', baseUrl: '', defaultModel: '' });
-  const [modelTest, setModelTest] = useState<{ state: 'idle' | 'testing' | 'ok' | 'fail'; error?: string }>({ state: 'idle' });
+  const [modelForm, setModelForm] = useState({ apiKey: '', baseUrl: '', defaultModel: '', displayName: '', timeoutMs: '', maxRetries: '', optInLocal: false });
+  const [modelTest, setModelTest] = useState<{ state: 'idle' | 'testing' | 'ok' | 'fail'; error?: string; models?: string[] | null }>({ state: 'idle' });
   const [modelSaving, setModelSaving] = useState(false);
-  const [assign, setAssign] = useState<Record<string, string>>({ agent: 'auto', content: 'auto', rag: 'auto' });
+  const [assign, setAssign] = useState<Record<string, string>>({ agent: 'auto', content: 'auto', rag: 'auto', light: 'auto' });
   // 邮箱
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
   const [mailModal, setMailModal] = useState(false);
@@ -162,54 +198,69 @@ export default function SettingsPage() {
     setTimeout(() => setSavedTip(''), 2000);
   };
 
-  const loadSettings = useCallback(async () => {
-    const res = await fetch('/api/settings');
-    const data = await res.json();
-    setSettings(data);
-    setAssign({ agent: 'auto', content: 'auto', rag: 'auto', ...(data.model_assign ?? {}) });
+  const safeFetchJson = useCallback(async (url: string) => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const text = await res.text();
+      if (!text || !text.trim()) return null;
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
   }, []);
+
+  const loadSettings = useCallback(async () => {
+    const data = await safeFetchJson('/api/settings');
+    if (!data) return;
+    setSettings(data);
+    setAssign({ agent: 'auto', content: 'auto', rag: 'auto', light: 'auto', ...(data.model_assign ?? {}) });
+  }, [safeFetchJson]);
 
   const loadProviders = useCallback(async () => {
-    const res = await fetch('/api/settings/models');
-    const data = await res.json();
-    setProviders(data.providers ?? []);
-  }, []);
+    const data = await safeFetchJson('/api/settings/models');
+    setProviders(data?.connections ?? []);
+  }, [safeFetchJson]);
+
+  const loadRouteInfo = useCallback(async () => {
+    const data = await safeFetchJson('/api/settings/models/route-info');
+    setRouteInfo(data?.routes ?? {});
+  }, [safeFetchJson]);
 
   const loadAccounts = useCallback(async () => {
-    const res = await fetch('/api/settings/email-accounts');
-    const data = await res.json();
-    setAccounts(data.accounts ?? []);
-  }, []);
+    const data = await safeFetchJson('/api/settings/email-accounts');
+    setAccounts(data?.accounts ?? []);
+  }, [safeFetchJson]);
 
   const loadIntegrations = useCallback(async () => {
-    const res = await fetch('/api/integrations');
-    const data = await res.json();
-    setIntegrations(data.integrations ?? []);
-  }, []);
+    const data = await safeFetchJson('/api/integrations');
+    setIntegrations(data?.integrations ?? []);
+  }, [safeFetchJson]);
 
   const loadChannels = useCallback(async () => {
-    const res = await fetch('/api/channels');
-    const data = await res.json();
-    setChannels(data.channels ?? []);
-  }, []);
+    const data = await safeFetchJson('/api/channels');
+    setChannels(data?.channels ?? []);
+  }, [safeFetchJson]);
 
   const loadCounts = useCallback(async () => {
-    const res = await fetch('/api/settings/overview');
-    const data = await res.json();
-    setCounts(data.counts ?? {});
-  }, []);
+    const data = await safeFetchJson('/api/settings/overview');
+    setCounts(data?.counts ?? {});
+  }, [safeFetchJson]);
 
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
 
   useEffect(() => {
-    if (group === 'models') loadProviders();
+    if (group === 'models') {
+      loadProviders();
+      loadRouteInfo();
+    }
     if (group === 'mailbox') loadAccounts();
     if (group === 'integrations') loadIntegrations();
     if (group === 'channels') loadChannels();
     if (group === 'data') loadCounts();
-  }, [group, loadProviders, loadAccounts, loadIntegrations, loadChannels, loadCounts]);
+  }, [group, loadProviders, loadRouteInfo, loadAccounts, loadIntegrations, loadChannels, loadCounts]);
 
   const saveSection = async (key: string, value: unknown) => {
     await fetch('/api/settings', {
@@ -223,25 +274,39 @@ export default function SettingsPage() {
   // 模型配置
   const openModelModal = (p: Provider) => {
     setModelModal(p);
-    setModelForm({ apiKey: '', baseUrl: p.baseUrl ?? '', defaultModel: p.defaultModel ?? p.models[0] ?? '' });
+    const conn = p.connection;
+    setModelForm({
+      apiKey: '',
+      baseUrl: conn?.baseUrl ?? p.defaultBaseUrl ?? '',
+      defaultModel: conn?.defaultModel ?? p.catalogModels[0]?.id ?? '',
+      displayName: conn?.displayName ?? '',
+      timeoutMs: conn?.timeoutMs != null ? String(conn.timeoutMs) : '',
+      maxRetries: conn?.maxRetries != null ? String(conn.maxRetries) : '',
+      optInLocal: conn?.optInLocal ?? p.category === 'local',
+    });
     setModelTest({ state: 'idle' });
   };
 
   const testModel = async () => {
     if (!modelModal) return;
     setModelTest({ state: 'testing' });
-    const res = await fetch('/api/settings/models/test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        provider: modelModal.id,
-        apiKey: modelForm.apiKey || undefined,
-        baseUrl: modelForm.baseUrl,
-        model: modelForm.defaultModel,
-      }),
-    });
-    const data = await res.json();
-    setModelTest(data.ok ? { state: 'ok' } : { state: 'fail', error: data.error });
+    try {
+      const res = await fetch('/api/settings/models/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: modelModal.id,
+          // apiKey 缺省时服务端使用已保存密钥重新测试，不重发旧密钥
+          apiKey: modelForm.apiKey || undefined,
+          baseUrl: modelForm.baseUrl,
+          model: modelForm.defaultModel,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      setModelTest(data?.ok ? { state: 'ok', models: data.models ?? null } : { state: 'fail', error: data?.error ?? 'Test request failed' });
+    } catch {
+      setModelTest({ state: 'fail', error: 'Network error' });
+    }
   };
 
   const saveModel = async () => {
@@ -256,11 +321,15 @@ export default function SettingsPage() {
           apiKey: modelForm.apiKey || undefined,
           baseUrl: modelForm.baseUrl,
           defaultModel: modelForm.defaultModel,
-          lastTestOk: modelTest.state === 'ok' ? true : null,
+          displayName: modelForm.displayName || undefined,
+          timeoutMs: modelForm.timeoutMs ? Number(modelForm.timeoutMs) : undefined,
+          maxRetries: modelForm.maxRetries ? Number(modelForm.maxRetries) : undefined,
+          optInLocal: modelForm.optInLocal,
         }),
       });
       setModelModal(null);
       await loadProviders();
+      await loadRouteInfo();
       flashSaved();
     } finally {
       setModelSaving(false);
@@ -271,6 +340,7 @@ export default function SettingsPage() {
     await fetch(`/api/settings/models?provider=${provider}`, { method: 'DELETE' });
     setModelModal(null);
     await loadProviders();
+    await loadRouteInfo();
   };
 
   // 邮箱
@@ -326,13 +396,17 @@ export default function SettingsPage() {
 
   const testIntegration = async (provider: string, config: Record<string, unknown>, setter: typeof setErpTest) => {
     setter({ state: 'testing' });
-    const res = await fetch('/api/integrations/test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, config }),
-    });
-    const data = await res.json();
-    setter(data.ok ? { state: 'ok' } : { state: 'fail', error: data.error });
+    try {
+      const res = await fetch('/api/integrations/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, config }),
+      });
+      const data = await res.json().catch(() => null);
+      setter(data?.ok ? { state: 'ok' } : { state: 'fail', error: data?.error ?? 'Test failed' });
+    } catch {
+      setter({ state: 'fail', error: 'Network error' });
+    }
   };
 
   // 社交通讯
@@ -354,13 +428,17 @@ export default function SettingsPage() {
 
   const testChannel = async (provider: string, config: Record<string, unknown>) => {
     setChTest({ state: 'testing' });
-    const res = await fetch('/api/channels/test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, config }),
-    });
-    const data = await res.json();
-    setChTest(data.ok ? { state: 'ok' } : { state: 'fail', error: data.error });
+    try {
+      const res = await fetch('/api/channels/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, config }),
+      });
+      const data = await res.json().catch(() => null);
+      setChTest(data?.ok ? { state: 'ok' } : { state: 'fail', error: data?.error ?? 'Test failed' });
+    } catch {
+      setChTest({ state: 'fail', error: 'Network error' });
+    }
   };
 
   const sendBriefing = async (provider?: string) => {
@@ -372,8 +450,8 @@ export default function SettingsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(provider ? { provider, text: t('testMessage') } : {}),
       });
-      const data = await res.json();
-      setChSendTip(data.ok ? t('briefingSent', { count: data.sent?.length ?? 0 }) : (data.error ?? t('sendFail')));
+      const data = await res.json().catch(() => null);
+      setChSendTip(data?.ok ? t('briefingSent', { count: data.sent?.length ?? 0 }) : (data?.error ?? t('sendFail')));
     } catch {
       setChSendTip(t('sendFail'));
     } finally {
@@ -398,6 +476,7 @@ export default function SettingsPage() {
   const groups: { key: Group; icon: typeof Store; label: string }[] = [
     { key: 'business', icon: Store, label: t('groupBusiness') },
     { key: 'locale', icon: Languages, label: t('groupLocale') },
+    { key: 'appearance', icon: Palette, label: t('groupAppearance') },
     { key: 'models', icon: KeyRound, label: t('groupModels') },
     { key: 'mailbox', icon: Inbox, label: t('groupMailbox') },
     { key: 'integrations', icon: Blocks, label: t('groupIntegrations') },
@@ -409,20 +488,26 @@ export default function SettingsPage() {
   const biz = settings?.business ?? {};
   const loc = settings?.locale ?? {};
   const aiPrefs = (settings?.ai_prefs ?? {}) as Record<string, unknown>;
-  const enabledProviders = providers.filter((p) => p.isEnabled);
+  const enabledProviders = providers.filter((p) => p.connection?.isEnabled);
 
   const assignOptions = (cap: string) => (
     <>
       <option value="auto">{t('autoMode')}</option>
       <option value="platform">{t('builtin')}</option>
       {enabledProviders.map((p) => (
-        <option key={p.id} value={`${p.id}:${p.defaultModel ?? ''}`}>
-          {p.label}{p.defaultModel ? ` · ${p.defaultModel}` : ''}
+        <option key={p.id} value={`${p.id}:${p.connection?.defaultModel ?? ''}`}>
+          {p.displayName}{p.connection?.defaultModel ? ` · ${p.connection.defaultModel}` : ''}
         </option>
       ))}
       {!enabledProviders.length && cap === 'agent' && <option disabled>—</option>}
     </>
   );
+
+  const filteredProviders = providers.filter((p) => {
+    const q = providerSearch.trim().toLowerCase();
+    if (!q) return true;
+    return p.displayName.toLowerCase().includes(q) || p.id.includes(q) || p.protocol.includes(q) || p.category.includes(q);
+  });
 
   return (
     <main className="flex-1 min-w-0 overflow-y-auto bg-background p-6">
@@ -572,66 +657,140 @@ export default function SettingsPage() {
             </div>
           )}
 
-          {/* AI 模型接入 */}
+          {/* 外观：Day / Night / System（本地时间自动切换，手动优先） */}
+          {group === 'appearance' && (
+            <div className="bg-surface rounded-lg shadow-card p-6">
+              <h2 className="text-base font-semibold mb-1">{t('groupAppearance')}</h2>
+              <p className="text-xs text-on-surface-variant mb-5">{t('appearanceNote')}</p>
+              <div className="grid grid-cols-3 gap-3">
+                {([
+                  { value: 'light', label: t('themeLight'), desc: t('themeLightDesc'), icon: Sun },
+                  { value: 'dark', label: t('themeDark'), desc: t('themeDarkDesc'), icon: Moon },
+                  { value: 'system', label: t('themeSystem'), desc: t('themeSystemDesc'), icon: Monitor },
+                ] as { value: ThemeMode; label: string; desc: string; icon: typeof Sun }[]).map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setThemeMode(opt.value)}
+                    aria-pressed={themeMode === opt.value}
+                    className={`rounded-xl p-4 text-left border transition-all ${
+                      themeMode === opt.value
+                        ? 'border-primary bg-primary/10 shadow-card'
+                        : 'border-outline bg-surface-container/60 hover:border-primary/40'
+                    }`}
+                  >
+                    <opt.icon className={`w-5 h-5 mb-2.5 ${themeMode === opt.value ? 'text-primary' : 'text-on-surface-variant'}`} />
+                    <div className="text-sm font-semibold">{opt.label}</div>
+                    <div className="text-xs text-on-surface-variant mt-1 leading-relaxed">{opt.desc}</div>
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-on-surface-variant/70 mt-4">
+                {t('appearanceNow')}: {themeResolved === 'dark' ? t('themeDark') : t('themeLight')}
+              </p>
+            </div>
+          )}
+
+          {/* AI 模型接入：Provider Connections + Model Routing 两区 */}
           {group === 'models' && (
             <>
               <div className="bg-surface rounded-lg shadow-card p-6">
-                <h2 className="text-base font-semibold mb-1">{t('groupModels')}</h2>
+                <div className="flex items-center justify-between mb-1">
+                  <h2 className="text-base font-semibold">{t('groupModels')} · Provider Connections</h2>
+                  <input
+                    type="search"
+                    value={providerSearch}
+                    onChange={(e) => setProviderSearch(e.target.value)}
+                    placeholder={t('searchProvider')}
+                    className="bg-surface-container border-none rounded-md px-3 py-1.5 text-xs text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 w-48"
+                  />
+                </div>
                 <p className="text-xs text-on-surface-variant mb-5">{t('modelsNote')}</p>
                 <div className="grid grid-cols-2 gap-3">
-                  {providers.map((p) => (
-                    <div key={p.id} className={`rounded-md bg-surface-container/60 p-4 ${p.id === 'custom' ? 'col-span-2' : ''}`}>
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2.5">
-                          <span className={`w-9 h-9 rounded-md flex items-center justify-center text-sm font-bold ${p.isEnabled ? 'bg-primary/10 text-primary' : 'bg-surface-container-high text-on-surface'}`}>
-                            {PROVIDER_INITIALS[p.id] || <Plug className="w-4 h-4" />}
-                          </span>
-                          <div>
-                            <p className="text-sm font-semibold">{p.label}</p>
-                            <p className="text-xs text-on-surface-variant">{p.models.slice(0, 2).join(' · ') || t('customModels')}</p>
+                  {filteredProviders.map((p) => {
+                    const conn = p.connection;
+                    const enabled = conn?.isEnabled ?? false;
+                    const models = conn?.modelsCache ?? p.catalogModels.map((m) => m.id);
+                    return (
+                      <div key={p.id} className={`rounded-md bg-surface-container/60 p-4 ${p.id === 'custom' ? 'col-span-2' : ''}`}>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2.5">
+                            <span className={`w-9 h-9 rounded-md flex items-center justify-center text-sm font-bold ${enabled ? 'bg-primary/10 text-primary' : 'bg-surface-container-high text-on-surface'}`}>
+                              {PROVIDER_INITIALS[p.id] || <Plug className="w-4 h-4" />}
+                            </span>
+                            <div>
+                              <p className="text-sm font-semibold">{conn?.displayName || p.displayName}</p>
+                              <p className="text-xs text-on-surface-variant">
+                                {models.slice(0, 2).join(' · ') || t('customModels')}
+                              </p>
+                            </div>
                           </div>
+                          <StatusBadge connected={enabled} connectedText={tc('connected')} disconnectedText={tc('notConfigured')} />
                         </div>
-                        <StatusBadge connected={p.isEnabled} connectedText={tc('connected')} disconnectedText={tc('notConfigured')} />
+                        <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-high text-on-surface-variant font-mono">{p.protocol}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-high text-on-surface-variant font-mono">{p.authType}</span>
+                          {p.runtime === 'declared' && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/15 text-warning font-medium">{t('adapterPending')}</span>
+                          )}
+                          {conn?.lastTestOk === true && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-success/15 text-success font-medium">{t('testOk')}</span>
+                          )}
+                          {conn?.lastTestOk === false && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-error/15 text-error font-medium" title={conn.lastTestError ?? ''}>
+                              {t('testFailedBadge')}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center justify-between mt-3">
+                          <span className={`text-xs font-mono ${enabled ? 'text-on-surface-variant' : 'text-on-surface-variant/60'}`}>
+                            {enabled ? conn?.maskedKey || '—' : t('noApiKey')}
+                          </span>
+                          <button onClick={() => openModelModal(p)} className="text-xs font-medium text-primary hover:underline">
+                            {enabled ? tc('manage') : tc('configure')}
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex items-center justify-between mt-3">
-                        <span className={`text-xs font-mono ${p.isEnabled ? 'text-on-surface-variant' : 'text-on-surface-variant/60'}`}>
-                          {p.isEnabled ? p.maskedKey : t('noApiKey')}
-                        </span>
-                        <button onClick={() => openModelModal(p)} className="text-xs font-medium text-primary hover:underline">
-                          {p.isEnabled ? tc('manage') : tc('configure')}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* 模型分配 */}
+              {/* 模型分配（Model Routing） */}
               <div className="bg-surface rounded-lg shadow-card p-6">
-                <h2 className="text-base font-semibold mb-1">{t('modelAssign')}</h2>
+                <h2 className="text-base font-semibold mb-1">{t('modelAssign')} · Model Routing</h2>
                 <p className="text-xs text-on-surface-variant mb-5">{t('modelAssignNote')}</p>
                 <div className="space-y-4">
-                  {(['agent', 'content', 'rag'] as const).map((cap) => (
-                    <div key={cap} className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium">{t(`cap.${cap}`)}</p>
-                        <p className="text-xs text-on-surface-variant mt-0.5">{t(`capNote.${cap}`)}</p>
+                  {(['agent', 'content', 'rag', 'light'] as const).map((cap) => {
+                    const route = routeInfo[cap];
+                    return (
+                      <div key={cap} className="flex items-center justify-between gap-4">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium">{t(`cap.${cap}`)}</p>
+                          <p className="text-xs text-on-surface-variant mt-0.5">{t(`capNote.${cap}`)}</p>
+                          {route && (
+                            <p className="text-[11px] font-mono mt-1 truncate text-on-surface-variant/80">
+                              {route.error
+                                ? `⚠ ${route.error}`
+                                : `→ ${route.provider ?? '?'} / ${route.model ?? '?'}${route.usedFallback ? ` (${t('fallbackActive')}: ${route.fallbackReason ?? ''})` : ''}`}
+                            </p>
+                          )}
+                        </div>
+                        <select
+                          value={assign[cap] ?? 'auto'}
+                          onChange={(e) => setAssign({ ...assign, [cap]: e.target.value })}
+                          className="bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors w-60 shrink-0"
+                        >
+                          {assignOptions(cap)}
+                        </select>
                       </div>
-                      <select
-                        value={assign[cap] ?? 'auto'}
-                        onChange={(e) => setAssign({ ...assign, [cap]: e.target.value })}
-                        className="bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors w-60"
-                      >
-                        {assignOptions(cap)}
-                      </select>
-                    </div>
-                  ))}
+                    );
+                  })}
                   <div className="rounded-md bg-primary-container/50 border border-primary/10 p-3.5 flex items-start gap-2.5">
                     <Zap className="w-4 h-4 text-primary mt-0.5 shrink-0" />
                     <p className="text-xs text-on-surface-variant leading-relaxed">{t('autoModeNote')}</p>
                   </div>
                   <div className="flex justify-end">
-                    <button onClick={() => saveSection('model_assign', assign)} className={primaryBtn}>{t('saveAssign')}</button>
+                    <button onClick={async () => { await saveSection('model_assign', assign); await loadRouteInfo(); }} className={primaryBtn}>{t('saveAssign')}</button>
                   </div>
                 </div>
               </div>
@@ -1111,24 +1270,42 @@ export default function SettingsPage() {
       {/* 模型配置弹窗 */}
       {modelModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setModelModal(null)}>
-          <div className="bg-surface rounded-xl shadow-dialog max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-surface rounded-xl shadow-dialog max-w-md w-full p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
-              <h3 className="text-base font-semibold">{t('configProvider', { provider: modelModal.label })}</h3>
+              <div>
+                <h3 className="text-base font-semibold">{t('configProvider', { provider: modelModal.displayName })}</h3>
+                <p className="text-[11px] text-on-surface-variant font-mono mt-0.5">
+                  {modelModal.protocol} · {modelModal.authType}
+                  {modelModal.runtime === 'declared' ? ` · ${t('adapterPending')}` : ''}
+                </p>
+              </div>
               <button onClick={() => setModelModal(null)} className="w-8 h-8 rounded-md hover:bg-surface-container flex items-center justify-center text-on-surface-variant transition-colors">
                 <X className="w-4 h-4" />
               </button>
             </div>
             <div className="space-y-4">
               <div>
+                <label className={labelCls}>{t('displayNameLabel')}</label>
+                <input
+                  type="text"
+                  value={modelForm.displayName}
+                  onChange={(e) => setModelForm({ ...modelForm, displayName: e.target.value })}
+                  placeholder={modelModal.displayName}
+                  className={inputCls}
+                />
+              </div>
+              <div>
                 <label className={labelCls}>{t('apiKey')}</label>
                 <input
                   type="password"
                   value={modelForm.apiKey}
                   onChange={(e) => setModelForm({ ...modelForm, apiKey: e.target.value })}
-                  placeholder={modelModal.maskedKey || modelModal.keyHint}
+                  placeholder={modelModal.connection?.maskedKey || modelModal.keyHint}
                   className={`${inputCls} font-mono`}
                 />
-                <p className="text-xs text-on-surface-variant/70 mt-1.5">{t('keyEncrypted')}</p>
+                <p className="text-xs text-on-surface-variant/70 mt-1.5">
+                  {modelModal.connection?.hasKey ? t('keyKeepExisting') : t('keyEncrypted')}
+                </p>
               </div>
               <div>
                 <label className={labelCls}>{t('baseUrl')}</label>
@@ -1136,20 +1313,57 @@ export default function SettingsPage() {
               </div>
               <div>
                 <label className={labelCls}>{t('defaultModel')}</label>
-                {modelModal.models.length > 0 ? (
-                  <select value={modelForm.defaultModel} onChange={(e) => setModelForm({ ...modelForm, defaultModel: e.target.value })} className={selectCls}>
-                    {modelModal.models.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input type="text" value={modelForm.defaultModel} onChange={(e) => setModelForm({ ...modelForm, defaultModel: e.target.value })} placeholder="model-name" className={`${inputCls} font-mono`} />
+                {(() => {
+                  const modelOptions = Array.from(new Set([
+                    ...(modelModal.connection?.modelsCache ?? []),
+                    ...modelModal.catalogModels.map((m) => m.id),
+                  ]));
+                  return modelOptions.length > 0 ? (
+                    <select value={modelForm.defaultModel} onChange={(e) => setModelForm({ ...modelForm, defaultModel: e.target.value })} className={selectCls}>
+                      {modelOptions.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input type="text" value={modelForm.defaultModel} onChange={(e) => setModelForm({ ...modelForm, defaultModel: e.target.value })} placeholder="model-name" className={`${inputCls} font-mono`} />
+                  );
+                })()}
+                {modelModal.modelDiscovery === 'manual' && (
+                  <p className="text-xs text-on-surface-variant/70 mt-1.5">{t('manualModelNote')}</p>
                 )}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={labelCls}>{t('timeoutMs')}</label>
+                  <input type="number" min={1000} max={300000} value={modelForm.timeoutMs} onChange={(e) => setModelForm({ ...modelForm, timeoutMs: e.target.value })} placeholder="60000" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{t('maxRetries')}</label>
+                  <input type="number" min={0} max={5} value={modelForm.maxRetries} onChange={(e) => setModelForm({ ...modelForm, maxRetries: e.target.value })} placeholder="2" className={inputCls} />
+                </div>
+              </div>
+              {(modelModal.category === 'local' || modelModal.id === 'custom') && (
+                <label className="flex items-center gap-2.5 text-xs text-on-surface-variant">
+                  <input
+                    type="checkbox"
+                    checked={modelForm.optInLocal}
+                    onChange={(e) => setModelForm({ ...modelForm, optInLocal: e.target.checked })}
+                    className="accent-primary"
+                  />
+                  {t('optInLocal')}
+                </label>
+              )}
+              <div className="flex flex-wrap gap-1.5">
+                {(Object.entries(modelModal.capabilities) as [string, boolean][]).filter(([, v]) => v).map(([k]) => (
+                  <span key={k} className="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-high text-on-surface-variant font-mono">{k}</span>
+                ))}
               </div>
               {modelTest.state === 'ok' && (
                 <div className="rounded-md bg-success/10 p-3 flex items-center gap-2">
                   <CircleCheck className="w-4 h-4 text-success shrink-0" />
-                  <span className="text-xs text-success font-medium">{t('testOk')}</span>
+                  <span className="text-xs text-success font-medium">
+                    {t('testOk')}{modelTest.models?.length ? ` · ${modelTest.models.length} models` : ''}
+                  </span>
                 </div>
               )}
               {modelTest.state === 'fail' && (
@@ -1160,18 +1374,18 @@ export default function SettingsPage() {
               )}
             </div>
             <div className="flex items-center justify-between mt-6">
-              <button onClick={testModel} disabled={modelTest.state === 'testing' || !modelForm.apiKey} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium bg-surface-container text-on-surface hover:bg-surface-container-high active:scale-[0.98] transition-all disabled:opacity-60">
+              <button onClick={testModel} disabled={modelTest.state === 'testing' || (!modelForm.apiKey && !modelModal.connection?.hasKey)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium bg-surface-container text-on-surface hover:bg-surface-container-high active:scale-[0.98] transition-all disabled:opacity-60">
                 <Zap className="w-3.5 h-3.5" />
                 {modelTest.state === 'testing' ? tc('loading') : tc('testConnection')}
               </button>
               <div className="flex gap-3">
-                {modelModal.isEnabled && (
+                {modelModal.connection?.isEnabled && (
                   <button onClick={() => removeModel(modelModal.id)} className="text-sm text-error font-medium hover:underline px-2">
                     {t('disconnect')}
                   </button>
                 )}
                 <button onClick={() => setModelModal(null)} className={ghostBtn}>{tc('cancel')}</button>
-                <button onClick={saveModel} disabled={modelSaving || !modelForm.apiKey} className={primaryBtn}>
+                <button onClick={saveModel} disabled={modelSaving || (!modelForm.apiKey && !modelModal.connection?.hasKey)} className={primaryBtn}>
                   {modelSaving ? tc('loading') : tc('save')}
                 </button>
               </div>

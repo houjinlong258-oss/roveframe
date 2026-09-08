@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { invokeChat } from '@/lib/ai/router';
-import { getTenantContext } from '@/lib/tenant';
-import { insertWithTenant, tenantTable } from '@/lib/tenant-db';
+import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
+import { insertWithScope, scopedTable } from '@/lib/tenant-db';
 import { HeaderUtils } from 'coze-coding-dev-sdk';
+import { protectBusinessMutation, type BusinessMutationContext } from '@/lib/mutation-guard';
 
 interface CustomerRow {
   id: string;
@@ -22,8 +23,8 @@ function daysSince(iso: string | null): number {
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
 }
 
-async function selectSegment(ctx: { tenantId: string }, segment: string): Promise<CustomerRow[]> {
-  const res = await tenantTable(ctx.tenantId, 'customers', '*')
+async function selectSegment(ctx: BusinessMutationContext, segment: string): Promise<CustomerRow[]> {
+  const res = await scopedTable(ctx, 'customers', '*')
     .not('email', 'is', null);
   if (res.error) throw new Error(res.error.message);
   const all = (res.data ?? []) as CustomerRow[];
@@ -34,8 +35,8 @@ async function selectSegment(ctx: { tenantId: string }, segment: string): Promis
 }
 
 // 个性化预览：为最多 3 位客户各生成一封差异化邮件
-export async function POST(request: NextRequest) {
-  const ctx = getTenantContext(request);
+async function prepareOrSendMarketing(request: NextRequest) {
+  const ctx = requireBusinessContext(await getTenantContext(request));
   const body = await request.json();
   const action = (body.action as string) ?? 'preview';
   const segment = (body.segment as string) ?? 'all';
@@ -45,7 +46,7 @@ export async function POST(request: NextRequest) {
   const customers = await selectSegment(ctx, segment);
   if (customers.length === 0) return NextResponse.json({ error: 'No customers with email in this segment' }, { status: 400 });
 
-  const accountRes = await tenantTable(ctx.tenantId, 'email_accounts', 'id, email, display_name, status')
+  const accountRes = await scopedTable(ctx, 'email_accounts', 'id, email, display_name, status')
     .eq('is_default', true)
     .maybeSingle();
   const account = accountRes.data as { id: string; email: string } | null;
@@ -76,6 +77,7 @@ Do not use placeholders like {name} — write the final text.`,
         },
       ],
       forwardHeaders,
+      { tenantId: ctx.tenantId, businessId: ctx.businessId, userId: ctx.userId },
     );
     return { customer: { id: c.id, name: c.name, email: c.email }, raw: text };
   };
@@ -96,7 +98,7 @@ Do not use placeholders like {name} — write the final text.`,
         const bodyMatch = raw.split('---');
         const subject = subjectMatch?.[1]?.trim() ?? 'A message from us';
         const emailBody = (bodyMatch[1] ?? raw).replace(/PROFILE:[\s\S]*$/, '').trim();
-        const { error } = await insertWithTenant(ctx.tenantId, 'email_send_tasks', {
+        const { error } = await insertWithScope(ctx, 'email_send_tasks', {
           account_id: account.id,
           to_addr: customer.email!,
           subject,
@@ -106,8 +108,11 @@ Do not use placeholders like {name} — write the final text.`,
         });
         if (error) throw new Error(error.message);
         queued += 1;
-      } catch {
-        // 单个客户失败不阻塞整批
+      } catch (error) {
+        console.error('[marketing/send] customer generation or queueing failed', {
+          customerId: c.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
     return NextResponse.json({ queued, total: customers.length });
@@ -115,3 +120,8 @@ Do not use placeholders like {name} — write the final text.`,
 
   return NextResponse.json({ error: 'unknown action' }, { status: 400 });
 }
+
+export const POST = protectBusinessMutation(
+  { permission: 'marketing:send', action: 'marketing.send', entity: 'marketing_campaign' },
+  prepareOrSendMarketing,
+);

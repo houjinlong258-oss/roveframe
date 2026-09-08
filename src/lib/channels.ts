@@ -6,11 +6,13 @@ import { CHANNEL_KEYS, type ChannelKey } from '@/lib/channels-presets';
 type ChannelConfig = Record<string, string>;
 
 /** 读取某渠道已保存并解密的配置（仅已启用） */
-export async function getChannelConfig(provider: ChannelKey): Promise<ChannelConfig | null> {
+export async function getChannelConfig(tenantId: string, businessId: string, provider: ChannelKey): Promise<ChannelConfig | null> {
   const client = getSupabaseClient();
   const { data } = await client
     .from('integration_configs')
     .select('config_encrypted, is_enabled')
+    .eq('tenant_id', tenantId)
+    .eq('business_id', businessId)
     .eq('provider', provider)
     .eq('is_enabled', true)
     .maybeSingle();
@@ -23,11 +25,13 @@ export async function getChannelConfig(provider: ChannelKey): Promise<ChannelCon
 }
 
 /** 列出所有已启用的社交通讯渠道 */
-export async function listConnectedChannels(): Promise<ChannelKey[]> {
+export async function listConnectedChannels(tenantId: string, businessId: string): Promise<ChannelKey[]> {
   const client = getSupabaseClient();
   const { data } = await client
     .from('integration_configs')
     .select('provider')
+    .eq('tenant_id', tenantId)
+    .eq('business_id', businessId)
     .eq('is_enabled', true)
     .in('provider', CHANNEL_KEYS);
   return ((data ?? []) as { provider: ChannelKey }[]).map((r) => r.provider);
@@ -187,7 +191,7 @@ function webhookPayload(provider: ChannelKey): { test: unknown } | null {
 }
 
 /** 聚合经营事实快照（营收/订单、库存告警、待回复差评、今日预约），供 AI 生成简报 */
-export async function buildStoreSnapshot(locale = 'en'): Promise<string> {
+export async function buildStoreSnapshot(tenantId: string, businessId: string, locale = 'en'): Promise<string> {
   const client = getSupabaseClient();
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
@@ -196,16 +200,11 @@ export async function buildStoreSnapshot(locale = 'en'): Promise<string> {
   weekStart.setDate(weekStart.getDate() - 6);
 
   const [todayOrders, weekOrders, inventory, pendingReviews, todayResv] = await Promise.all([
-    client.from('orders').select('total').gte('created_at', todayIso).neq('status', 'cancelled'),
-    client.from('orders').select('total').gte('created_at', weekStart.toISOString()).neq('status', 'cancelled'),
-    client.from('inventory_items').select('name, current_stock, safety_stock'),
-    client.from('reviews').select('id').eq('status', 'pending'),
-    client
-      .from('reservations')
-      .select('customer_name, party_size, table_no, reserved_at')
-      .gte('reserved_at', todayIso)
-      .order('reserved_at')
-      .limit(5),
+    client.from('orders').select('total').eq('tenant_id', tenantId).eq('business_id', businessId).gte('created_at', todayIso).neq('status', 'cancelled'),
+    client.from('orders').select('total').eq('tenant_id', tenantId).eq('business_id', businessId).gte('created_at', weekStart.toISOString()).neq('status', 'cancelled'),
+    client.from('inventory_items').select('name, current_stock, safety_stock').eq('tenant_id', tenantId).eq('business_id', businessId),
+    client.from('reviews').select('id').eq('tenant_id', tenantId).eq('business_id', businessId).eq('status', 'pending'),
+    client.from('reservations').select('customer_name, party_size, table_no, reserved_at').eq('tenant_id', tenantId).eq('business_id', businessId).gte('reserved_at', todayIso).order('reserved_at').limit(5),
   ]);
 
   const sum = (rows: { total?: string | number | null }[] | null) =>
@@ -245,10 +244,12 @@ export async function buildStoreSnapshot(locale = 'en'): Promise<string> {
 
 /** 生成 AI 经营的实时简报（AI 失败时回落到结构化快照） */
 export async function buildBriefing(
+  tenantId: string,
+  businessId: string,
   locale = 'en',
   forwardHeaders?: Record<string, string>,
 ): Promise<string> {
-  const snapshot = await buildStoreSnapshot(locale);
+  const snapshot = await buildStoreSnapshot(tenantId, businessId, locale);
   const lang = locale === 'zh' ? '中文' : locale === 'es' ? '西班牙语' : '英文';
   try {
     const ai = await invokeChat(
@@ -263,10 +264,12 @@ export async function buildBriefing(
         { role: 'user', content: snapshot },
       ],
       forwardHeaders,
+      { tenantId, businessId },
+      { agent: 'channels:brief' },
     );
     if (ai && ai.trim()) return ai.trim();
-  } catch {
-    // AI 不可用时回落到结构化快照
+  } catch (error) {
+    console.warn('[briefing] AI generation unavailable; using scoped snapshot:', error instanceof Error ? error.name : 'unknown_error');
   }
   return snapshot;
 }

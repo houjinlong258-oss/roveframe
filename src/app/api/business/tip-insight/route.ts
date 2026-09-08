@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getForwardHeaders } from '@/lib/api-helpers';
 import { invokeChat } from '@/lib/ai/router';
-import { getTenantContext } from '@/lib/tenant';
-import { tenantTable } from '@/lib/tenant-db';
+import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
+import { scopedTable } from '@/lib/tenant-db';
 
 // AI 小费洞察：基于近 7 天小费数据生成可执行建议（含员工表现排名、桌位、时段）
 // （P0-S2 完整版：tenant 过滤）
 export async function GET(request: NextRequest) {
-  const ctx = getTenantContext(request);
+  const ctx = requireBusinessContext(await getTenantContext(request));
   const locale = request.nextUrl.searchParams.get('locale') ?? 'en';
   const forwardHeaders = getForwardHeaders(request);
 
@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
   weekStart.setHours(0, 0, 0, 0);
   weekStart.setDate(weekStart.getDate() - 6);
 
-  const ordersRes = await tenantTable(ctx.tenantId, 'orders', 'tip, tip_percent, table_no, tip_staff_id, created_at')
+  const ordersRes = await scopedTable(ctx, 'orders', 'tip, tip_percent, table_no, tip_staff_id, created_at')
     .gte('created_at', weekStart.toISOString())
     .neq('status', 'cancelled');
   const orders = (ordersRes.data ?? []) as {
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
     created_at: string;
   }[];
 
-  const staffRes = await tenantTable(ctx.tenantId, 'staff', 'id, name');
+  const staffRes = await scopedTable(ctx, 'staff', 'id, name');
   const staffName = new Map<string, string>(
     ((staffRes.data ?? []) as { id: string; name: string }[]).map((s) => [s.id, s.name]),
   );
@@ -73,6 +73,7 @@ export async function GET(request: NextRequest) {
       { role: 'user', content: facts },
     ],
     forwardHeaders,
+    { tenantId: ctx.tenantId, businessId: ctx.businessId, userId: ctx.userId },
   );
 
   return NextResponse.json({ insight });

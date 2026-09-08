@@ -42,6 +42,7 @@ import { clearProposalStore } from '../src/lib/coding-agent/proposal-store';
 // ---------------------------------------------------------------------------
 
 const TENANT = 'tenant_phase8';
+const BUSINESS = 'business_phase8';
 const OWNER = 'user_owner_p8';
 const STAFF = 'user_staff_p8';
 const JWT_SECRET = 'phase8-test-secret';
@@ -52,7 +53,7 @@ function makeJwt(userId: string): string {
     JSON.stringify({
       sub: userId,
       email: `${userId}@test.dev`,
-      app_metadata: { tenant_id: TENANT },
+      app_metadata: { tenant_id: TENANT, business_id: BUSINESS },
       exp: Math.floor(Date.now() / 1000) + 600,
     })
   ).toString('base64url');
@@ -210,7 +211,7 @@ describe('review checks', () => {
           operation: 'create',
           proposedContent: [
             'const k = "-----BEGIN PRIVATE KEY-----"',
-            'const aws = "AKIAIOSFODNN7EXAMPLE"',
+            `const aws = "${['AKIA', 'IOSFODNN7EXAMPLE'].join('')}"`,
             'eval("alert(1)")',
             'import { execSync } from "child_process"',
           ].join('\n'),
@@ -415,7 +416,7 @@ describe('approval state transitions & audit', () => {
     const payload = Buffer.from(
       JSON.stringify({
         sub: OTHER,
-        app_metadata: { tenant_id: 'tenant_other' },
+        app_metadata: { tenant_id: 'tenant_other', business_id: 'business_other' },
         exp: Math.floor(Date.now() / 1000) + 600,
       })
     ).toString('base64url');

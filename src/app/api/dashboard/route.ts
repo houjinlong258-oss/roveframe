@@ -1,12 +1,12 @@
-import { json, jsonError, getErrorMessage } from '@/lib/api-helpers';
-import { getTenantContext } from '@/lib/tenant';
-import { tenantTable } from '@/lib/tenant-db';
+import { json, errorResponse } from '@/lib/api-helpers';
+import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
+import { scopedTable } from '@/lib/tenant-db';
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const range = Math.min(Number(searchParams.get('range') ?? 7) || 7, 30);
-    const ctx = getTenantContext(request);
+    const ctx = requireBusinessContext(await getTenantContext(request));
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -14,13 +14,13 @@ export async function GET(request: Request) {
     rangeStart.setDate(rangeStart.getDate() - (range - 1));
 
     const [ordersRes, reviewsRes, customersRes, alertsRes] = await Promise.all([
-      tenantTable(ctx.tenantId, 'orders', 'total, channel, created_at, status, items, customer_id')
+      scopedTable(ctx, 'orders', 'total, channel, created_at, status, items, customer_id')
         .gte('created_at', rangeStart.toISOString())
         .neq('status', 'cancelled')
         .order('created_at', { ascending: true }),
-      tenantTable(ctx.tenantId, 'reviews', 'rating'),
-      tenantTable(ctx.tenantId, 'customers', 'id, churn_risk'),
-      tenantTable(ctx.tenantId, 'alerts')
+      scopedTable(ctx, 'reviews', 'rating'),
+      scopedTable(ctx, 'customers', 'id, churn_risk'),
+      scopedTable(ctx, 'alerts')
         .order('created_at', { ascending: false })
         .limit(5),
     ]);
@@ -47,7 +47,7 @@ export async function GET(request: Request) {
     const lastWeekStart = new Date(todayStart);
     lastWeekStart.setDate(lastWeekStart.getDate() - 7);
     const lastWeekEnd = new Date(todayStart);
-    const lastWeekOrdersRes = await tenantTable(ctx.tenantId, 'orders', 'total')
+    const lastWeekOrdersRes = await scopedTable(ctx, 'orders', 'total')
       .gte('created_at', lastWeekStart.toISOString())
       .lt('created_at', lastWeekEnd.toISOString())
       .neq('status', 'cancelled');
@@ -163,6 +163,132 @@ export async function GET(request: Request) {
       alerts: alertsRes.data ?? [],
     });
   } catch (error) {
-    return jsonError(getErrorMessage(error));
+    // 演示模式（仅 RF_E2E_DEMO=1 且非生产）：无 Supabase 凭据时返回演示经营数据，
+    // 与 auth-guard 的演示播种一致，用于 E2E 走查与 UI 验收截图。
+    if (process.env.RF_E2E_DEMO === '1' && process.env.COZE_PROJECT_ENV !== 'PROD') {
+      const range = Math.min(Number(new URL(request.url).searchParams.get('range') ?? 7) || 7, 30);
+      return json(buildDemoDashboard(range));
+    }
+    return errorResponse(error);
   }
+}
+
+/** 演示数据集：四川人家餐厅近 N 日经营快照（确定性伪随机，保证截图稳定） */
+function buildDemoDashboard(range: number) {
+  const dishes = [
+    { name: 'Mapo Tofu 麻婆豆腐', price: 12.8 },
+    { name: 'Kung Pao Chicken 宫保鸡丁', price: 14.5 },
+    { name: 'Dan Dan Noodles 担担面', price: 10.2 },
+    { name: 'Boiled Fish 水煮鱼', price: 22.0 },
+    { name: 'Hot Pot Combo 火锅双人餐', price: 48.0 },
+  ];
+  const channelList = ['dine_in', 'delivery', 'takeout', 'online_store'];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const revenueTrend: { date: string; amount: number }[] = [];
+  const channelMap = new Map<string, number>();
+  const hourMap = new Map<number, { orders: number; revenue: number }>();
+  const dishQty = new Map<string, { name: string; quantity: number; revenue: number }>();
+  let todayRevenue = 0;
+  let todayOrders = 0;
+  let totalOrders = 0;
+
+  for (let i = range - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    // 确定性波动：周末高、周中低
+    const dow = d.getDay();
+    const weekendBoost = dow === 0 || dow === 6 ? 1.45 : 1;
+    const wave = 1 + 0.18 * Math.sin(i * 1.7);
+    const dayOrders = Math.round((18 + i * 0.6) * weekendBoost * wave);
+    const dayRevenue = Math.round(dayOrders * 24.6 * 100) / 100;
+    revenueTrend.push({ date: d.toISOString().slice(0, 10), amount: dayRevenue });
+    totalOrders += dayOrders;
+    if (i === 0) {
+      todayRevenue = dayRevenue;
+      todayOrders = dayOrders;
+    }
+    channelList.forEach((ch, ci) => {
+      channelMap.set(ch, (channelMap.get(ch) ?? 0) + Math.round(dayOrders * [0.46, 0.27, 0.17, 0.1][ci]));
+    });
+    for (const h of [11, 12, 13, 18, 19, 20]) {
+      const cur = hourMap.get(h) ?? { orders: 0, revenue: 0 };
+      cur.orders += Math.max(1, Math.round(dayOrders / 6));
+      cur.revenue += Math.round((dayRevenue / 6) * 100) / 100;
+      hourMap.set(h, cur);
+    }
+    dishes.forEach((dish, di) => {
+      const q = Math.max(1, Math.round(dayOrders * (0.5 - di * 0.07)));
+      const cur = dishQty.get(dish.name) ?? { name: dish.name, quantity: 0, revenue: 0 };
+      cur.quantity += q;
+      cur.revenue += Math.round(q * dish.price * 100) / 100;
+      dishQty.set(dish.name, cur);
+    });
+  }
+
+  const channels = [...channelMap.entries()].map(([channel, count]) => ({
+    channel,
+    count,
+    pct: Math.round((count / (totalOrders || 1)) * 1000) / 10,
+  }));
+  const topDishes = [...dishQty.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 5);
+  const hotHours = [...hourMap.entries()]
+    .map(([hour, v]) => ({ hour, orders: v.orders, revenue: Math.round(v.revenue * 100) / 100 }))
+    .sort((a, b) => b.orders - a.orders)
+    .slice(0, 6);
+  const now = Date.now();
+
+  return {
+    kpi: {
+      todayRevenue,
+      todayOrders,
+      todayCustomers: Math.round(todayOrders * 1.8),
+      positiveRate: 92.4,
+      avgRating: 4.6,
+      revenueDelta: 12.3,
+      ordersDelta: 8.4,
+      customersDelta: 5.2,
+      ratingDelta: 1.2,
+    },
+    revenueTrend,
+    channels,
+    topDishes,
+    orderIntel: {
+      hotHours,
+      combos: [
+        { combo: 'Mapo Tofu 麻婆豆腐 + Dan Dan Noodles 担担面', count: 34 },
+        { combo: 'Kung Pao Chicken 宫保鸡丁 + Mapo Tofu 麻婆豆腐', count: 28 },
+        { combo: 'Hot Pot Combo 火锅双人餐 + Dan Dan Noodles 担担面', count: 19 },
+      ],
+      repeat: { repeatCustomers: 41, totalBuyers: 96, rate: 42.7 },
+    },
+    totals: { customers: 96, churnHigh: 6 },
+    alerts: [
+      {
+        id: 'demo-a1', type: 'review', is_read: false,
+        title: 'New 2-star review on Yelp',
+        content: 'Customer complained about slow service during Friday dinner peak. AI draft reply is ready.',
+        created_at: new Date(now - 52 * 60000).toISOString(),
+      },
+      {
+        id: 'demo-a2', type: 'inventory', is_read: false,
+        title: 'Inventory risk: 郫县豆瓣 low stock',
+        content: 'Key ingredient covers only 2 days of demand at current sales velocity.',
+        created_at: new Date(now - 2 * 3600000).toISOString(),
+      },
+      {
+        id: 'demo-a3', type: 'customer', is_read: false,
+        title: '6 high-value customers at churn risk',
+        content: 'No visit in 21+ days. A personalized win-back email can reactivate them.',
+        created_at: new Date(now - 5 * 3600000).toISOString(),
+      },
+      {
+        id: 'demo-a4', type: 'order', is_read: true,
+        title: 'Dinner peak reservations filling up',
+        content: '18:30–19:30 slots at 85% capacity. Consider table turnover optimization.',
+        created_at: new Date(now - 7 * 3600000).toISOString(),
+      },
+    ],
+  };
 }

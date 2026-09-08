@@ -11,7 +11,9 @@
     "business": "Business Data",
     "settings": "Settings",
     "brand": "RoveFrame",
-    "brandBadge": "AI COO"
+    "brandBadge": "AI COO",
+    "approvals": "Approvals",
+    "enterpriseApprovals": "Change Review"
   },
   "common": {
     "save": "Save",
@@ -73,7 +75,51 @@
     "priorityItems": "Priority items",
     "actionGenerate": "Generate campaign",
     "actionReply": "Reply now",
-    "actionView": "View customers"
+    "actionView": "View customers",
+    "greetingMorning": "Good morning",
+    "greetingAfternoon": "Good afternoon",
+    "greetingEvening": "Good evening",
+    "commandSummary": "Your AI team has analyzed your business. Here is what matters right now.",
+    "commandHeadline": "Revenue {delta} today · {orders} orders so far",
+    "yourTeam": "Your AI Team",
+    "openCommand": "Open Command Center",
+    "openAgent": "Open Agent",
+    "status": {
+      "active": "Active",
+      "thinking": "Analyzing",
+      "idle": "Idle",
+      "attention": "Needs attention"
+    },
+    "agentCeo": "CEO Agent",
+    "agentCeoRole": "Strategy & daily briefing",
+    "agentCeoTask": "Today's revenue {revenue} ({delta} vs last week). Daily analysis complete.",
+    "agentCeoLast": "Daily briefing delivered",
+    "agentOps": "Operations Agent",
+    "agentOpsRole": "Orders, inventory & flow",
+    "agentOpsTaskRisk": "Analyzing inventory risk — {count} alerts open",
+    "agentOpsTaskOk": "Inventory healthy. Monitoring order flow.",
+    "agentOpsLast": "Inventory scan finished",
+    "agentMarketing": "Marketing Agent",
+    "agentMarketingRole": "Campaigns & growth",
+    "agentMarketingTask": "{count} high-value customers ready for a win-back campaign.",
+    "agentMarketingLast": "Campaign draft generated",
+    "agentCustomer": "Customer Agent",
+    "agentCustomerRole": "Relationships & retention",
+    "agentCustomerTaskRisk": "{count} negative reviews awaiting reply — drafting responses.",
+    "agentCustomerTaskOk": "Sentiment stable. Watching for churn signals.",
+    "agentCustomerLast": "Review sentiment analyzed",
+    "aiActivity": "AI Activity",
+    "aiActivityEmpty": "No AI activity yet today.",
+    "actionApprove": "Approve",
+    "actionReview": "Review",
+    "actionExecute": "Execute",
+    "recChurnTitle": "Customer retention dropped — {count} regulars at risk",
+    "recChurnDesc": "Launch a loyalty win-back campaign? Personalized emails are ready to generate for each at-risk customer.",
+    "recReviewTitle": "{count} negative reviews need attention",
+    "recReviewDesc": "Replying within 24h triples win-back rate. AI-drafted replies are ready for your approval.",
+    "recGrowthTitle": "Weekend revenue momentum detected",
+    "recGrowthDesc": "Peak daily revenue reached {revenue}. Amplify top sellers with a weekend social campaign.",
+    "agentAnalyzing": "Analyzing business data..."
   },
   "agent": {
     "title": "AI COO Assistant",
@@ -92,7 +138,32 @@
     "ignore": "Ignore",
     "sessions": "Sessions",
     "dataContext": "Answers are grounded in your real business data",
-    "send": "Send"
+    "send": "Send",
+    "yourTeam": "Your AI Team",
+    "team": {
+      "ceo": "CEO Agent",
+      "ceoRole": "Business analysis & strategy",
+      "ops": "Operations Agent",
+      "opsRole": "Orders, inventory, process",
+      "mkt": "Marketing Agent",
+      "mktRole": "Campaigns & customer growth",
+      "cust": "Customer Agent",
+      "custRole": "Reviews, retention, CRM",
+      "dev": "Developer Agent",
+      "devRole": "Code analysis & fixes",
+      "devops": "DevOps Agent",
+      "devopsRole": "Deploy, monitor, maintain",
+      "statusActive": "Ready",
+      "openAgent": "Open Agent",
+      "kickoff": {
+        "ceo": "As my CEO Agent, give me a full briefing on yesterday's business performance and today's top 3 priorities.",
+        "ops": "As my Operations Agent, analyze current orders and inventory, and flag anything that needs attention today.",
+        "mkt": "As my Marketing Agent, propose a campaign to grow revenue over the next 30 days based on my customer data.",
+        "cust": "As my Customer Agent, review recent feedback and churn-risk customers, and suggest retention actions.",
+        "dev": "As my Developer Agent, review the current system for bugs or improvement opportunities.",
+        "devops": "As my DevOps Agent, check deployment health and suggest reliability improvements."
+      }
+    }
   },
   "knowledge": {
     "title": "Knowledge Brain",
@@ -484,12 +555,14 @@
     "cap": {
       "agent": "AI COO assistant",
       "content": "Content generation",
-      "rag": "Knowledge Q&A (RAG)"
+      "rag": "Knowledge Q&A (RAG)",
+      "light": "Light tasks"
     },
     "capNote": {
       "agent": "Business Q&A and analysis",
       "content": "Marketing copy, review replies, email drafts",
-      "rag": "Answers grounded in knowledge docs"
+      "rag": "Answers grounded in knowledge docs",
+      "light": "Classification, summaries, briefs and other light tasks"
     },
     "autoMode": "Auto (recommended)",
     "autoModeNote": "In auto mode, light tasks (review replies, email classification) use the lightweight model while complex analysis uses your connected flagship model.",
@@ -569,7 +642,9 @@
     "intFields": {
       "square": {
         "accessToken": "Access Token",
-        "locationId": "Location ID"
+        "locationId": "Location ID(s)",
+        "signatureKey": "Webhook signature key",
+        "webhookUrl": "Exact webhook notification URL"
       },
       "shopify": {
         "shopDomain": "Shop domain",
@@ -585,7 +660,7 @@
       }
     },
     "intTips": {
-      "square": "Get the Access Token in Square Developer Console > Credentials. The webhook URL is generated after saving.",
+      "square": "Get the token and signature key in Square Developer Console. Save the exact public webhook URL, including tenant and business query parameters.",
       "shopify": "Create a custom app in Shopify Admin > Apps > Develop apps to get the Admin API token.",
       "stripe": "Find keys in Stripe Dashboard > Developers > API keys. Add the webhook endpoint after saving.",
       "paypal": "Create an app in PayPal Developer Dashboard to get Client ID / Secret."
@@ -635,7 +710,7 @@
       "qqbot": "QQ channel via the official QQ bot API - bot required."
     },
     "channelTip": {
-      "telegram": "Create a bot with @BotFather to get the token, chat your bot once, then get your chat_id from https://api.telegram.org/bot<TOKEN>/getUpdates.",
+      "telegram": "Create a bot with @BotFather to get the token, chat your bot once, then get your chat_id from https://api.telegram.org/bot[TOKEN]/getUpdates.",
       "whatsapp": "Create a Business app in Meta for Developers, add WhatsApp, then copy the access token and phone number ID. Use the recipient number in E.164 format, e.g. +15551234567.",
       "slack": "In Slack, create an app, enable Incoming Webhooks, and copy the webhook URL for your channel.",
       "discord": "In Discord, open channel settings > Integrations > Webhooks to create a webhook URL.",
@@ -674,7 +749,26 @@
     "wipeButton": "Wipe data",
     "wipeConfirmTitle": "Confirm wiping all data",
     "wipeConfirm": "All sample products, orders, customers, reviews, emails and knowledge docs will be deleted. This action cannot be undone. Continue?",
-    "wipeConfirmButton": "Confirm wipe"
+    "wipeConfirmButton": "Confirm wipe",
+    "groupAppearance": "Appearance",
+    "appearanceNote": "Day and Night themes, professionally redesigned — not a simple color inversion.",
+    "themeLight": "Light",
+    "themeLightDesc": "Day theme. Clean, bright, premium.",
+    "themeDark": "Dark",
+    "themeDarkDesc": "Night theme. Deep focus, spatial depth.",
+    "themeSystem": "System",
+    "themeSystemDesc": "Auto by local time: 06:00-18:00 Light, 18:00-06:00 Dark.",
+    "appearanceNow": "Currently active",
+    "searchProvider": "Search providers / protocols…",
+    "adapterPending": "Adapter pending verification",
+    "testFailedBadge": "Test failed",
+    "fallbackActive": "fallback",
+    "displayNameLabel": "Display name (optional)",
+    "keyKeepExisting": "Key saved: leave empty to keep the existing key and only change other settings",
+    "manualModelNote": "This provider does not support model discovery; enter the model ID manually",
+    "timeoutMs": "Timeout (ms)",
+    "maxRetries": "Max retries",
+    "optInLocal": "Allow local/private addresses (http, loopback, explicit opt-in)"
   },
   "store": {
     "all": "All",
@@ -729,5 +823,140 @@
     "retry": "Try again",
     "goHome": "Go to home",
     "cacheHint": "Recently viewed pages are cached and still work offline."
+  },
+  "approvals": {
+    "title": "AI Change Approvals",
+    "subtitle": "Review, approve, apply and roll back AI-generated code proposals. Nothing is applied without human approval.",
+    "refresh": "Refresh",
+    "loading": "Loading...",
+    "empty": "No proposals yet. Submit a task via POST /api/coding-agent.",
+    "listTitle": "Proposals ({count})",
+    "selectPrompt": "Select a proposal on the left to review its changes.",
+    "approve": "Approve",
+    "reject": "Reject",
+    "apply": "Apply (write code + run tests)",
+    "applying": "Applying...",
+    "rollback": "Rollback",
+    "rollingBack": "Rolling back...",
+    "changesTitle": "Changes ({count})",
+    "applyLog": "Apply Log",
+    "generatedAt": "Generated",
+    "decidedAt": "Decided",
+    "status": {
+      "pending_review": "Pending",
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "applied": "Applied",
+      "apply_failed": "Apply failed",
+      "rolled_back": "Rolled back",
+      "changes_requested": "Changes requested"
+    },
+    "risk": {
+      "safe": "Safe",
+      "moderate": "Moderate",
+      "review_required": "Review required"
+    },
+    "tabs": {
+      "code": "Code Changes",
+      "business": "Business Actions"
+    },
+    "biz": {
+      "listTitle": "Pending business actions ({count})",
+      "empty": "No business actions pending approval.",
+      "status": {
+        "pending": "Pending",
+        "approved": "Approved",
+        "executing": "Executing",
+        "executed": "Executed",
+        "rejected": "Rejected",
+        "expired": "Expired",
+        "failed": "Failed"
+      },
+      "type": {
+        "purchase.create_draft": "Purchase draft",
+        "marketing.create_draft_campaign": "Marketing campaign",
+        "reviews.reply": "Review reply",
+        "roveagent.tool_call": "RoveAgent tool call",
+        "roveagent.task_step": "RoveAgent task"
+      },
+      "approvedDone": "Approved and executed",
+      "rejectedDone": "Rejected"
+    }
+  },
+  "enterpriseApprovals": {
+    "title": "Change Review",
+    "subtitle": "Enterprise-grade review for AI-generated code changes. Unified diff, pre-merge checks, full audit trail.",
+    "refresh": "Refresh",
+    "loading": "Loading...",
+    "empty": "No proposals yet. Submit a task via POST /api/coding-agent.",
+    "listTitle": "Proposals ({count})",
+    "selectPrompt": "Select a proposal on the left to review its diff and checks.",
+    "agent": "Agent",
+    "generatedAt": "Generated",
+    "decidedBy": "Reviewed by",
+    "commit": "Commit",
+    "reviewNote": "Reviewer note",
+    "status": {
+      "pending_review": "Pending",
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "changes_requested": "Changes requested",
+      "applied": "Applied",
+      "apply_failed": "Apply failed",
+      "rolled_back": "Rolled back"
+    },
+    "risk": {
+      "safe": "Safe",
+      "moderate": "Moderate",
+      "review_required": "Review required"
+    },
+    "operation": {
+      "create": "new file",
+      "modify": "modified",
+      "delete": "deleted"
+    },
+    "checks": {
+      "title": "Pre-merge checks",
+      "permission": "Permission check",
+      "security": "Security scan",
+      "testGate": "Test gate",
+      "rollback": "Rollback",
+      "pass": "Pass",
+      "fail": "Fail",
+      "notRun": "Not run",
+      "problems": "{count} path violation(s)",
+      "findings": "{count} finding(s)",
+      "gateSteps": "Runs on apply",
+      "rollbackReady": "Available",
+      "rollbackNo": "Not available"
+    },
+    "decision": {
+      "title": "Decision",
+      "notePlaceholder": "Add a review note (required when requesting changes)...",
+      "noteRequired": "A note is required to request changes",
+      "approve": "Approve",
+      "requestChanges": "Request changes",
+      "reject": "Reject",
+      "apply": "Apply (write code + run tests)",
+      "applying": "Applying...",
+      "rollback": "Rollback",
+      "rollingBack": "Rolling back...",
+      "gateNote": "Applying merges the change and runs unit tests + type check; the merge is auto-reverted on failure."
+    },
+    "files": {
+      "title": "Files changed ({count})",
+      "tooLarge": "File too large for inline diff.",
+      "rationale": "Rationale"
+    },
+    "activity": {
+      "title": "Activity",
+      "empty": "No audit events yet."
+    }
+  },
+  "theme": {
+    "label": "Appearance",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System"
   }
 }

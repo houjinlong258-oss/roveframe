@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { useSSE } from '@/hooks/use-sse';
 import { Markdown } from '@/components/markdown';
-import { cn } from '@/lib/utils';
+import { cn, safeFetchJson } from '@/lib/utils';
 import { fmtDate } from '@/lib/format';
 
 type Doc = {
@@ -42,8 +42,8 @@ export default function KnowledgePage() {
   const { streaming, start } = useSSE();
 
   const loadDocs = async () => {
-    const d = await fetch(`/api/knowledge/docs?category=${category}`).then((r) => r.json()).catch(() => ({ docs: [] }));
-    setDocs(d.docs ?? []);
+    const d = await safeFetchJson(`/api/knowledge/docs?category=${category}`);
+    setDocs(d?.docs ?? []);
   };
 
   useEffect(() => { loadDocs(); }, [category]);

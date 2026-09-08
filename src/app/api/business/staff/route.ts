@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantContext } from '@/lib/tenant';
-import { deleteWithTenant, insertWithTenant, tenantTable, updateWithTenant } from '@/lib/tenant-db';
+import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
+import { deleteWithScope, insertWithScope, scopedTable, updateWithScope } from '@/lib/tenant-db';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 // 员工管理：列表（含单人小费聚合）/ 新增或更新 / 删除
 // （P0-S2 完整版：tenant 过滤 + tenant_id 注入）
 export async function GET(request: NextRequest) {
-  const ctx = getTenantContext(request);
-  const { data, error } = await tenantTable(ctx.tenantId, 'staff', 'id, name, role, photo_url, is_active, created_at')
+  const ctx = requireBusinessContext(await getTenantContext(request));
+  const { data, error } = await scopedTable(ctx, 'staff', 'id, name, role, photo_url, is_active, created_at')
     .order('created_at');
   if (error) throw new Error(error.message);
 
-  const tipRowsRes = await tenantTable(ctx.tenantId, 'orders', 'tip_staff_id, tip')
+  const tipRowsRes = await scopedTable(ctx, 'orders', 'tip_staff_id, tip')
     .not('tip_staff_id', 'is', null);
   const tipByStaff = new Map<string, number>();
   for (const r of (tipRowsRes.data ?? []) as { tip_staff_id: string; tip: string | number }[]) {
@@ -24,9 +25,9 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ staff: staffList });
 }
 
-export async function POST(request: NextRequest) {
+async function upsertStaff(request: NextRequest) {
   const body = await request.json();
-  const ctx = getTenantContext(request);
+  const ctx = requireBusinessContext(await getTenantContext(request));
   const record: Record<string, unknown> = {
     name: String(body.name ?? '').trim(),
     role: body.role ? String(body.role).trim() : null,
@@ -36,20 +37,29 @@ export async function POST(request: NextRequest) {
   if (!record.name) return NextResponse.json({ error: 'name required' }, { status: 400 });
 
   if (body.id) {
-    const { error } = await updateWithTenant(ctx.tenantId, 'staff', body.id, record);
+    const { error } = await updateWithScope(ctx, 'staff', body.id, record);
     if (error) throw new Error(error.message);
   } else {
-    const { error } = await insertWithTenant(ctx.tenantId, 'staff', record);
+    const { error } = await insertWithScope(ctx, 'staff', record);
     if (error) throw new Error(error.message);
   }
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(request: NextRequest) {
+async function deleteStaff(request: NextRequest) {
   const id = request.nextUrl.searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
-  const ctx = getTenantContext(request);
-  const { error } = await deleteWithTenant(ctx.tenantId, 'staff', id);
+  const ctx = requireBusinessContext(await getTenantContext(request));
+  const { error } = await deleteWithScope(ctx, 'staff', id);
   if (error) throw new Error(error.message);
   return NextResponse.json({ ok: true });
 }
+
+export const POST = protectBusinessMutation(
+  { permission: 'staff:write', action: 'staff.upsert', entity: 'staff' },
+  upsertStaff,
+);
+export const DELETE = protectBusinessMutation(
+  { permission: 'staff:delete', action: 'staff.delete', entity: 'staff' },
+  deleteStaff,
+);

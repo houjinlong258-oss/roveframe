@@ -132,7 +132,10 @@ export async function generateCodingProposal(
         { role: 'system', content: buildSystemPrompt(context) },
         { role: 'user', content: buildUserPrompt(task) },
       ],
-      forwardHeaders
+      // 平台级自愈任务：无租户业务 scope（允许的例外），用 agent 标记审计来源
+      forwardHeaders,
+      undefined,
+      { agent: 'coding-agent:code-generator' }
     );
   } catch (err) {
     return makeFallbackProposal(task, err instanceof Error ? err.message : 'Unknown AI error');

@@ -6,7 +6,19 @@ export interface BootCheckResult {
   message: string;
 }
 
-const REQUIRED_TABLES = ['cron_state', 'staff', 'business_memories'];
+const REQUIRED_TABLES = [
+  'cron_state',
+  'staff',
+  'business_memories',
+  'agent_actions',
+  'agent_approvals',
+  'payments',
+  'payment_events',
+  'ai_usage_ledger',
+  'platform_admins',
+  'tenant_subscriptions',
+  'platform_admin_audit_logs',
+];
 
 /** 启动自检：探测新增的表/列是否已建，缺了返回清晰的提示（供 server 启动时打印） */
 export async function runBootChecks(): Promise<BootCheckResult[]> {

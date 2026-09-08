@@ -1,4 +1,4 @@
-// 行业能力模板（对应 Hermes 的 Skill 思想）：按行业注入领域能力到 AI COO 系统提示词
+// 行业能力模板：按行业注入领域能力到 AI COO 系统提示词。
 
 export const INDUSTRY_SKILLS: Record<string, string> = {
   restaurant: '你额外擅长餐厅经营：排班分析、菜单毛利优化、菜品组合与定价、差评回复、时段客流分析与复购策略。',

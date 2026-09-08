@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getTenantContext } from '@/lib/tenant';
-import { tenantTable, plainTable } from '@/lib/tenant-db';
+import { scopedTable, plainTable } from '@/lib/tenant-db';
 
 // 库存（ERPNext 同步数据，未接入时回落平台数据）
 // （P0-S2 完整版：inventory_items 按 tenant 过滤；integration_configs 是平台配置，plainTable 不过滤）
 export async function GET(request: Request) {
-  const ctx = getTenantContext(request);
+  const ctx = await getTenantContext(request);
 
-  const itemsRes = await tenantTable(ctx.tenantId, 'inventory_items').order('name');
+  const itemsRes = await scopedTable(ctx, 'inventory_items').order('name');
   if (itemsRes.error) throw new Error(itemsRes.error.message);
 
   // integration_configs 是平台级配置（不是业务数据），用 plainTable

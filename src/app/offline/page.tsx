@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { getTranslations } from 'next-intl/server';
 
 /**
@@ -31,12 +32,12 @@ export default async function OfflinePage() {
               {t('retry')}
             </button>
           </form>
-          <a
+          <Link
             href="/"
             className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             {t('goHome')}
-          </a>
+          </Link>
         </div>
         <p className="text-xs text-muted-foreground/60 pt-4">{t('cacheHint')}</p>
       </div>

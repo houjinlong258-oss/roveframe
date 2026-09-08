@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import { Plus, CalendarCheck, Clock, UserCheck, CalendarX, X, Sparkles, WandSparkles } from 'lucide-react';
+import { safeFetchJson } from '@/lib/utils';
 
 interface Reservation {
   id: string;
@@ -74,11 +75,10 @@ export default function ReservationsPage() {
   });
 
   const load = useCallback(async (date: string) => {
-    const res = await fetch(`/api/reservations?date=${date}`);
-    const data = await res.json();
-    setReservations(data.reservations ?? []);
-    setStats(data.stats ?? null);
-    setOccupancy(data.occupancy ?? []);
+    const data = await safeFetchJson(`/api/reservations?date=${date}`);
+    setReservations(data?.reservations ?? []);
+    setStats(data?.stats ?? null);
+    setOccupancy(data?.occupancy ?? []);
   }, []);
 
   useEffect(() => {

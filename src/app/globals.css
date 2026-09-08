@@ -1,40 +1,51 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Syne:wght@500;600;700;800&family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
 @custom-variant dark (&:is(.dark *));
 
-@theme {
-  /* === 品牌色（原型 @theme 迁移，shadcn 命名映射） === */
-  --color-primary: #2F6BFF;
-  --color-primary-foreground: #ffffff;
-  --color-primary-container: #E4EDFF;
+/*
+ * RoveFrame OS Design System — "Two Worlds. One Intelligence."
+ * Day theme  : Apple daylight — clean, bright, premium (#FFFFFF / #F7F7F5 / #111111)
+ * Night theme: OpenAI dark × Vision Pro spatial depth (#080808 / #111111 / #151515)
+ * Brand      : Acid Green #A7FF00 · Near Black #0D0D0D · Warm Off-White #F7F5F0
+ */
 
-  /* === 背景 / 表面 === */
-  --color-background: #F6F8FB;
-  --color-card: #FFFFFF;
-  --color-card-foreground: #152033;
-  --color-popover: #FFFFFF;
-  --color-popover-foreground: #152033;
-  --color-surface-container-lowest: #FFFFFF;
-  --color-surface: #FFFFFF;
-  --color-muted: #EDF1F8;
-  --color-muted-foreground: #637089;
-  --color-surface-container: #EDF1F8;
-  --color-surface-container-high: #E3E9F3;
-  --color-surface-container-highest: #D8E0EE;
-  --color-secondary: #EDF1F8;
-  --color-secondary-foreground: #152033;
-  --color-accent: #E4EDFF;
-  --color-accent-foreground: #2F6BFF;
+@theme {
+  /* === RoveFrame Brand Palette (Official Logo Specs) === */
+  --color-near-black: #0D0D0D;
+  --color-warm-off-white: #F7F5F0;
+  --color-acid-green: #A7FF00;
+  --color-acid-green-soft: #D4FF66;
+
+  /* === 品牌主色 === */
+  --color-primary: #0D0D0D;
+  --color-primary-foreground: #A7FF00;
+  --color-primary-container: #1A1A1A;
+
+  /* === Day Theme：背景 / 表面 === */
+  --color-background: #FFF;
+  --color-card: #FFF;
+  --color-card-foreground: #111;
+  --color-popover: #FFF;
+  --color-popover-foreground: #111;
+  --color-surface-container-lowest: #FFF;
+  --color-surface: #FFF;
+  --color-muted: #F7F7F5;
+  --color-muted-foreground: #5C5C5C;
+  --color-surface-container: #F7F7F5;
+  --color-surface-container-high: #EFEFEC;
+  --color-surface-container-highest: #E7E7E2;
+  --color-secondary: #F7F7F5;
+  --color-secondary-foreground: #111;
+  --color-accent: #A7FF00;
+  --color-accent-foreground: #0D0D0D;
 
   /* === 文字 === */
-  --color-foreground: #152033;
-  --color-sidebar-foreground: #152033;
-  /* 原型命名别名（页面按原型 class 使用） */
-  --color-on-primary: #ffffff;
-  --color-on-surface: #152033;
-  --color-on-surface-variant: #637089;
+  --color-foreground: #111;
+  --color-on-primary: #A7FF00;
+  --color-on-surface: #111;
+  --color-on-surface-variant: #5C5C5C;
 
   /* === 功能色 === */
   --color-success: #16A37B;
@@ -43,46 +54,103 @@
   --color-warning: #E8930C;
 
   /* === 边框 / 输入 === */
-  --color-border: #CBD5E4;
-  --color-outline: #CBD5E4;
-  --color-outline-variant: #E6EAF2;
-  --color-input: #E6EAF2;
-  --color-ring: #2F6BFF;
+  --color-border: #E8E8E4;
+  --color-outline: #E8E8E4;
+  --color-outline-variant: #F0F0EC;
+  --color-input: #EBEBE6;
+  --color-ring: #0D0D0D;
 
-  /* === 侧边栏 === */
-  --color-sidebar: #FFFFFF;
-  --color-sidebar-primary: #2F6BFF;
-  --color-sidebar-primary-foreground: #ffffff;
-  --color-sidebar-accent: #E4EDFF;
-  --color-sidebar-accent-foreground: #2F6BFF;
-  --color-sidebar-border: #E6EAF2;
-  --color-sidebar-ring: #2F6BFF;
+  /* === 侧边栏（双主题恒为品牌深黑，空间锚点） === */
+  --color-sidebar: #0D0D0D;
+  --color-sidebar-foreground: #F7F5F0;
+  --color-sidebar-primary: #A7FF00;
+  --color-sidebar-primary-foreground: #0D0D0D;
+  --color-sidebar-accent: #1F1F1F;
+  --color-sidebar-accent-foreground: #A7FF00;
+  --color-sidebar-border: #262626;
+  --color-sidebar-ring: #A7FF00;
 
   /* === 图表 === */
-  --color-chart-1: #2F6BFF;
-  --color-chart-2: #16A37B;
-  --color-chart-3: #E8930C;
-  --color-chart-4: #E5484D;
-  --color-chart-5: #637089;
+  --color-chart-1: #0D0D0D;
+  --color-chart-2: #84CC00;
+  --color-chart-3: #16A37B;
+  --color-chart-4: #E8930C;
+  --color-chart-5: #5C5C5C;
 
-  /* === 圆角 === */
-  --radius-sm: 0.25rem;
-  --radius-md: 0.375rem;
-  --radius-lg: 0.5rem;
-  --radius-xl: 0.75rem;
-  --radius-2xl: 1rem;
+  /* === 圆角（RoveFrame OS：16–24px 空间圆角） === */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
   --radius-3xl: 1.5rem;
   --radius-4xl: 2rem;
   --radius-full: 9999px;
 
-  /* === 阴影 === */
-  --shadow-card: 0 1px 3px rgba(21,32,51,0.06), 0 6px 16px rgba(21,32,51,0.05);
-  --shadow-float: 0 8px 24px rgba(21,32,51,0.10);
-  --shadow-dialog: 0 24px 48px rgba(21,32,51,0.16);
+  /* === 阴影（Day：柔和浮层） === */
+  --shadow-card: 0 1px 2px rgb(17 17 17 / 4%), 0 4px 16px rgb(17 17 17 / 6%);
+  --shadow-float: 0 8px 30px rgb(17 17 17 / 10%), 0 2px 6px rgb(17 17 17 / 5%);
+  --shadow-dialog: 0 24px 60px rgb(17 17 17 / 18%), 0 4px 12px rgb(17 17 17 / 8%);
+  --shadow-glow: 0 0 0 1px rgb(167 255 0 / 25%), 0 8px 32px rgb(167 255 0 / 18%);
 
-  /* === 字体 === */
-  --font-sans: "Inter", "Noto Sans SC", system-ui, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  /* === 字体（官网同源） === */
+  --font-sans: "Plus Jakarta Sans", "Noto Sans SC", system-ui, sans-serif;
+  --font-display: "Syne", "Plus Jakarta Sans", "Noto Sans SC", system-ui, sans-serif;
+  --font-grotesk: "Space Grotesk", "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* === Night Theme：OpenAI dark × Vision Pro —— 专业重设计，非简单反色 === */
+.dark {
+  --color-primary: #A7FF00;
+  --color-primary-foreground: #0D0D0D;
+  --color-primary-container: #1F2A10;
+  --color-background: #080808;
+  --color-card: #151515;
+  --color-card-foreground: #F7F5F0;
+  --color-popover: #151515;
+  --color-popover-foreground: #F7F5F0;
+  --color-surface-container-lowest: #0F0F0F;
+  --color-surface: #111;
+  --color-muted: #1A1A1A;
+  --color-muted-foreground: #9C9C95;
+  --color-surface-container: #111;
+  --color-surface-container-high: #1A1A1A;
+  --color-surface-container-highest: #222;
+  --color-secondary: #1A1A1A;
+  --color-secondary-foreground: #F7F5F0;
+  --color-accent: #A7FF00;
+  --color-accent-foreground: #0D0D0D;
+  --color-foreground: #F7F5F0;
+  --color-on-primary: #0D0D0D;
+  --color-on-surface: #F7F5F0;
+  --color-on-surface-variant: #9C9C95;
+  --color-success: #34D399;
+  --color-destructive: #F66;
+  --color-error: #F66;
+  --color-warning: #F5A623;
+  --color-border: #262626;
+  --color-outline: #2A2A2A;
+  --color-outline-variant: #1F1F1F;
+  --color-input: #262626;
+  --color-ring: #A7FF00;
+  --color-chart-1: #A7FF00;
+  --color-chart-2: #84CC00;
+  --color-chart-3: #34D399;
+  --color-chart-4: #F5A623;
+  --color-chart-5: #9C9C95;
+
+  /* Night：深邃环境阴影 + 酸绿辉光 */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 50%), 0 6px 20px rgb(0 0 0 / 35%);
+  --shadow-float: 0 12px 40px rgb(0 0 0 / 55%), 0 2px 8px rgb(0 0 0 / 40%);
+  --shadow-dialog: 0 32px 80px rgb(0 0 0 / 70%), 0 4px 16px rgb(0 0 0 / 50%);
+  --shadow-glow: 0 0 0 1px rgb(167 255 0 / 35%), 0 8px 40px rgb(167 255 0 / 22%);
+
+  color-scheme: dark;
+}
+
+:root {
+  color-scheme: light;
 }
 
 body {
@@ -90,10 +158,104 @@ body {
   color: var(--color-foreground);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 * {
   border-color: var(--color-outline-variant);
+}
+
+/* === 主题切换过渡（300–500ms 背景/面板/文字平滑渐变） === */
+html.theme-anim,
+html.theme-anim *,
+html.theme-anim *::before,
+html.theme-anim *::after {
+  transition:
+    background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+    fill 0.4s ease,
+    stroke 0.4s ease !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.theme-anim,
+  html.theme-anim *,
+  html.theme-anim *::before,
+  html.theme-anim *::after {
+    transition: none !important;
+  }
+}
+
+/* === RoveFrame OS 空间层工具 === */
+.glass-panel {
+  background: color-mix(in srgb, var(--color-card) 78%, transparent);
+  backdrop-filter: blur(20px) saturate(1.4);
+}
+
+.rove-card {
+  background-color: var(--color-card);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-outline-variant);
+}
+
+.dark .rove-card {
+  border-color: rgb(255 255 255 / 6%);
+}
+
+.rove-card-float {
+  box-shadow: var(--shadow-float);
+}
+
+/* AI 思考态呼吸点 */
+@keyframes rove-pulse-dot {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.45;
+    transform: scale(0.8);
+  }
+}
+.rove-thinking-dot {
+  animation: rove-pulse-dot 1.4s ease-in-out infinite;
+}
+
+/* 酸绿状态呼吸光环 */
+@keyframes rove-glow-ring {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(167 255 0 / 45%); }
+  50% { box-shadow: 0 0 0 5px rgb(167 255 0 / 0%); }
+}
+.rove-live-dot {
+  animation: rove-glow-ring 2.2s ease-out infinite;
+}
+
+/* 页面进入柔和上浮 */
+@keyframes rove-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rove-rise {
+  animation: rove-rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.rove-rise-1 { animation-delay: 0.05s; }
+.rove-rise-2 { animation-delay: 0.1s; }
+.rove-rise-3 { animation-delay: 0.15s; }
+.rove-rise-4 { animation-delay: 0.2s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rove-rise, .rove-thinking-dot, .rove-live-dot { animation: none; }
 }
 
 /* 细滚动条 */

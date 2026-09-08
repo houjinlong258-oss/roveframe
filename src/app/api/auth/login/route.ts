@@ -5,7 +5,7 @@
  * 返回: { access_token, user_id, tenant_id, business_id, role }
  */
 import { json, jsonError } from '@/lib/api-helpers';
-import { resolveUserByToken, signInAndGetToken } from '@/lib/auth';
+import { resolveUserByToken, sessionCookieHeader, signInAndGetToken } from '@/lib/auth';
 
 interface LoginBody {
   email: string;
@@ -35,8 +35,7 @@ export async function POST(request: Request) {
     return jsonError(`resolve user failed: ${u.error}`, 500);
   }
 
-  return json({
-    access_token: s.data.accessToken,
+  const response = json({
     user_id: u.data.userId,
     tenant_id: u.data.tenantId,
     business_id: u.data.businessId,
@@ -44,4 +43,6 @@ export async function POST(request: Request) {
     email: u.data.email,
     name: u.data.name,
   });
+  response.headers.set('Set-Cookie', sessionCookieHeader(s.data.accessToken));
+  return response;
 }

@@ -1,13 +1,14 @@
-import { getForwardHeaders, jsonError, getErrorMessage, sseResponse } from '@/lib/api-helpers';
+import { getForwardHeaders, jsonError, errorResponse, sseResponse } from '@/lib/api-helpers';
 import { streamChat, type ChatMessage } from '@/lib/ai/router';
 import { embedText } from '@/lib/embedding';
-import { getTenantContext } from '@/lib/tenant';
-import { tenantTable } from '@/lib/tenant-db';
+import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
+import { scopedTable } from '@/lib/tenant-db';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
-export async function POST(request: Request) {
+async function askKnowledge(request: Request) {
   try {
-    const ctx = getTenantContext(request);
+    const ctx = requireBusinessContext(await getTenantContext(request));
     const body = (await request.json()) as { question: string; locale?: string };
     if (!body.question?.trim()) return jsonError('empty question', 400);
     const locale = body.locale ?? 'en';
@@ -22,6 +23,7 @@ export async function POST(request: Request) {
       query_embedding: JSON.stringify(queryEmbedding),
       match_count: 5,
       filter_tenant_id: ctx.tenantId,
+      filter_business_id: ctx.businessId,
     });
 
     let sources: { title: string }[] = [];
@@ -29,18 +31,18 @@ export async function POST(request: Request) {
     if (!error && chunks && chunks.length > 0) {
       contextText = (chunks as { content: string }[]).map((c, i) => `[${i + 1}] ${c.content}`).join('\n\n');
       const docIds = Array.from(new Set((chunks as { doc_id: string }[]).map((c) => c.doc_id)));
-      const docsRes = await tenantTable(ctx.tenantId, 'knowledge_docs', 'id, title').in('id', docIds);
+      const docsRes = await scopedTable(ctx, 'knowledge_docs', 'id, title').in('id', docIds);
       sources = ((docsRes.data ?? []) as { title: string }[]).map((d) => ({ title: d.title }));
     } else {
       // RPC 不存在时退回简单全量匹配（取当前租户最近文档的前几个分块）
-      const fallbackRes = await tenantTable(ctx.tenantId, 'doc_chunks', 'doc_id, content')
+      const fallbackRes = await scopedTable(ctx, 'doc_chunks', 'doc_id, content')
         .order('chunk_index', { ascending: true })
         .limit(5);
       const fallback = (fallbackRes.data ?? []) as { doc_id: string; content: string }[];
       contextText = fallback.map((c, i) => `[${i + 1}] ${c.content}`).join('\n\n');
       const docIds = Array.from(new Set(fallback.map((c) => c.doc_id)));
       if (docIds.length > 0) {
-        const docsRes = await tenantTable(ctx.tenantId, 'knowledge_docs', 'id, title').in('id', docIds);
+        const docsRes = await scopedTable(ctx, 'knowledge_docs', 'id, title').in('id', docIds);
         sources = ((docsRes.data ?? []) as { title: string }[]).map((d) => ({ title: d.title }));
       }
     }
@@ -68,10 +70,15 @@ ${contextText || '(knowledge base is empty)'}`;
       { role: 'user', content: body.question },
     ];
 
-    const response = sseResponse(streamChat('rag', messages, forwardHeaders));
+    const response = sseResponse(streamChat('rag', messages, forwardHeaders, { tenantId: ctx.tenantId, businessId: ctx.businessId, userId: ctx.userId }));
     response.headers.set('X-Sources', encodeURIComponent(JSON.stringify(sources)));
     return response;
   } catch (error) {
-    return jsonError(getErrorMessage(error));
+    return errorResponse(error);
   }
 }
+
+export const POST = protectBusinessMutation(
+  { permission: 'knowledge:read', action: 'knowledge.ask', entity: 'knowledge_docs' },
+  askKnowledge,
+);

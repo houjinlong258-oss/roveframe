@@ -1,16 +1,17 @@
-import { getForwardHeaders, jsonError, getErrorMessage, sseResponse } from '@/lib/api-helpers';
+import { getForwardHeaders, jsonError, errorResponse, sseResponse } from '@/lib/api-helpers';
 import { streamChat, type ChatMessage } from '@/lib/ai/router';
 import { getTenantContext } from '@/lib/tenant';
-import { tenantTable, updateWithTenant } from '@/lib/tenant-db';
+import { scopedTable, updateWithScope } from '@/lib/tenant-db';
+import { protectBusinessMutation } from '@/lib/mutation-guard';
 
-export async function POST(request: Request) {
+async function draftReviewReply(request: Request) {
   try {
-    const ctx = getTenantContext(request);
+    const ctx = await getTenantContext(request);
     const body = (await request.json()) as { review_id: string; locale?: string };
     if (!body.review_id) return jsonError('missing review_id', 400);
     const locale = body.locale ?? 'en';
 
-    const reviewRes = await tenantTable(ctx.tenantId, 'reviews', 'author_name, platform, rating, content, sentiment')
+    const reviewRes = await scopedTable(ctx, 'reviews', 'author_name, platform, rating, content, sentiment')
       .eq('id', body.review_id)
       .maybeSingle();
     if (reviewRes.error) throw new Error(reviewRes.error.message);
@@ -38,15 +39,15 @@ export async function POST(request: Request) {
     ];
 
     // 流式生成 + 结束后落库草稿（tenant 化）
-    const tenantId = ctx.tenantId;
+    const scopedContext = ctx;
     const reviewId = body.review_id;
     async function* wrapped(): AsyncGenerator<string> {
       let full = '';
-      for await (const chunk of streamChat('agent', messages, getForwardHeaders(request))) {
+      for await (const chunk of streamChat('agent', messages, getForwardHeaders(request), { tenantId: ctx.tenantId, businessId: ctx.businessId, userId: ctx.userId })) {
         full += chunk;
         yield chunk;
       }
-      const { error: upErr } = await updateWithTenant(tenantId, 'reviews', reviewId, {
+      const { error: upErr } = await updateWithScope(scopedContext, 'reviews', reviewId, {
         reply_content: full,
         reply_status: 'draft',
       });
@@ -55,6 +56,11 @@ export async function POST(request: Request) {
 
     return sseResponse(wrapped());
   } catch (error) {
-    return jsonError(getErrorMessage(error));
+    return errorResponse(error);
   }
 }
+
+export const POST = protectBusinessMutation(
+  { permission: 'reviews:write', action: 'reviews.draft_reply', entity: 'reviews' },
+  draftReviewReply,
+);

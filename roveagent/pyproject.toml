@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roveagent-core"
+version = "1.0.0"
+description = "RoveAgent Core — the native AI runtime kernel of RoveFrame AI Business OS"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+authors = [{ name = "RoveFrame" }]
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+# Runtime dependencies are exact-pinned for reproducible supply-chain review.
+dependencies = [
+  "openai==2.24.0",
+  "certifi==2026.5.20",
+  "python-dotenv==1.2.2",
+  "fire==0.7.1",
+  "rich==14.3.3",
+  "tenacity==9.1.4",
+  "pyyaml==6.0.3",
+  "ruamel.yaml==0.18.17",
+  "requests==2.33.0",
+  "jinja2==3.1.6",
+  "firecrawl-anydoc==0.2.4",
+  "pydantic==2.13.4",
+  "prompt_toolkit==3.0.52",
+  "croniter==6.0.0",
+  "snowballstemmer==3.1.1",
+  "packaging==26.0",
+  "Markdown==3.10.2",
+  "cryptography==50.0.0",
+  "tzdata==2025.3; sys_platform == 'win32'",
+  "psutil==7.2.2",
+  "websockets==15.0.1",
+  "pathspec==1.1.1",
+  "Pillow==12.3.0",
+  "httpx[socks]==0.28.1",
+  "concurrent-log-handler==0.9.29; sys_platform == 'win32'",
+]
+
+[project.scripts]
+roveagent = "roveagent.clisupport.main:main"
+
+[project.optional-dependencies]
+# 渠道网关 HTTP 服务（TS 侧集成接口）
+web = ["fastapi==0.133.1", "uvicorn[standard]==0.41.0", "starlette==1.3.1", "python-multipart==0.0.32"]
+# 平台渠道按需启用（对应 plugins/platforms/*）
+weixin = ["aiohttp>=3.9", "qrcode>=7.4", "cryptography>=41.0"]
+telegram = ["python-telegram-bot>=21.0"]
+discord = ["discord.py>=2.4"]
+slack = ["slack-bolt>=1.20", "slack-sdk>=3.33"]
+all = []
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["roveagent*"]
+
+[tool.setuptools.package-data]
+"roveagent.skills_library" = ["**/*.md", "**/*.json", "**/*.yaml"]
+"roveagent.plugins" = ["**/plugin.yaml", "**/*.md"]

@@ -163,6 +163,11 @@ def enterprise_gate_middleware(**kwargs: Any) -> Any:
     return next_call(args)
 
 
+# P0-11：安全中间件标记 —— 执行链中本中间件异常时 fail-closed 终止链，
+# 绝不跳过门控直执真实工具（见 clisupport.middleware._run_execution_chain）。
+enterprise_gate_middleware.fail_closed = True
+
+
 def install_enterprise_gate(
     *,
     policies: Optional[list[ToolPolicy]] = None,

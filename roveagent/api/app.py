@@ -143,6 +143,7 @@ def get_context() -> ServiceContext:
 from pydantic import BaseModel, Field, field_validator  # noqa: E402  (pydantic 是核心依赖)
 
 from .security import require_safe_id, sanitize_skill_name  # P0-10 输入白名单
+from .permissions import derive_permissions  # P0-11 权限服务端推导
 
 
 class _TenantScopedRequest(BaseModel):
@@ -312,12 +313,15 @@ def create_app():
             req.tenant_id, req.business_id, req.user_id, session_id,
         )
         try:
+            # P0-11(c)：权限由服务端推导 —— 客户端权限按角色允许集裁剪，
+            # 员工档案固有能力（analytics:read 等）由服务端并入。
             with bind_tool_context(ToolContext(
                 tenant_id=req.tenant_id,
                 business_id=req.business_id,
                 user_id=req.user_id,
                 role=req.role,
-                permissions=frozenset(req.permissions),
+                permissions=derive_permissions(req.role, req.permissions,
+                                              emp.permissions),
                 request_id=req.request_id,
                 task_id=req.task_id,
                 agent_id=emp.key,
@@ -518,7 +522,8 @@ def create_app():
             business_id=req.business_id,
             user_id=req.user_id,
             role=req.role,
-            permissions=frozenset(req.permissions),
+            # P0-11(c)：权限由服务端推导，客户端 JSON 只能裁剪不能放大
+            permissions=derive_permissions(req.role, req.permissions),
             request_id=req.request_id,
             task_id=req.task_id,
             agent_id=req.agent_id,

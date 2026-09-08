@@ -105,13 +105,13 @@ DEFAULT_POLICIES: list[ToolPolicy] = [
     # 对外通信：经理审批
     ToolPolicy("send_*", "comms:send", RiskLevel.HIGH, ApprovalPolicy.MANAGER),
     ToolPolicy("*message*", "comms:send", RiskLevel.MEDIUM, ApprovalPolicy.MANAGER),
-    # 写操作：可逆，记录即可
-    ToolPolicy("write_file", "files:write", RiskLevel.MEDIUM, ApprovalPolicy.NONE),
-    ToolPolicy("patch", "files:write", RiskLevel.MEDIUM, ApprovalPolicy.NONE),
+    # 写文件：至少经理审批（P0-11：不得免审批直执）
+    ToolPolicy("write_file", "files:write", RiskLevel.MEDIUM, ApprovalPolicy.MANAGER),
+    ToolPolicy("patch", "files:write", RiskLevel.MEDIUM, ApprovalPolicy.MANAGER),
     # 只读分析类
     ToolPolicy("read_*", "analytics:read", RiskLevel.LOW, ApprovalPolicy.NONE),
     ToolPolicy("*_sales", "analytics:read", RiskLevel.LOW, ApprovalPolicy.NONE),
-    # 兜底
+    # 兜底（P0-11：兜底仅放行「已注册」工具；未登记工具在 authorize 中一律拒绝）
     ToolPolicy("*", "", RiskLevel.LOW, ApprovalPolicy.NONE),
 ]
 
@@ -151,6 +151,18 @@ class EnterpriseToolGate:
             if fnmatch.fnmatchcase(tool_name, p.pattern):
                 return p
         return DEFAULT_POLICIES[-1]
+
+    @staticmethod
+    def _is_fallback(policy: ToolPolicy) -> bool:
+        """是否命中「兜底策略」（未在策略表中显式登记）。"""
+        return policy.pattern == "*" and not policy.permission
+
+    @staticmethod
+    def _tool_is_registered(tool_name: str) -> bool:
+        """延迟导入避免 framework ↔ registry 的模块级循环依赖。"""
+        from ..tools.registry import registry
+
+        return registry.get_entry(tool_name) is not None
 
     def metadata_for(self, tool_name: str) -> dict[str, Any]:
         """Return the complete governance metadata exposed for every tool."""
@@ -204,6 +216,29 @@ class EnterpriseToolGate:
         args = args or {}
         policy = self.policy_for(tool_name)
         event_id = uuid.uuid4().hex
+
+        # P0-11：未登记工具（仅命中兜底策略）一律拒绝，绝不免审批直执。
+        if self._is_fallback(policy) and not self._tool_is_registered(tool_name):
+            decision = GateDecision(
+                False, False,
+                reason=f"unknown tool: {tool_name!r} is not registered",
+                risk=RiskLevel.HIGH, audit_event_id=event_id,
+            )
+            if policy.audit and self._audit_sink:
+                self._audit_sink({
+                    "event_id": event_id, "ts": time.time(),
+                    "tenant_id": ctx.tenant_id, "business_id": ctx.business_id,
+                    "user_id": ctx.user_id, "agent_id": ctx.agent_id,
+                    "role": ctx.role, "request_id": ctx.request_id,
+                    "task_id": ctx.task_id, "tool": tool_name,
+                    "risk": RiskLevel.HIGH.name,
+                    "required_permissions": [],
+                    "approval_policy": ApprovalPolicy.ADMIN,
+                    "audit_category": policy.audit_category,
+                    "allowed": False, "requires_approval": False,
+                    "reason": decision.reason,
+                })
+            return decision
 
         schema_error = self.validate_schema(policy, args)
         required_context = {

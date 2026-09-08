@@ -7,6 +7,7 @@ contract helpers here so agent-loop call sites and plugins share one vocabulary.
 
 from __future__ import annotations
 
+import json
 import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -311,6 +312,17 @@ def _run_execution_chain(
                 return next_result
             if next_called:
                 raise
+            # P0-11：安全中间件（fail_closed 标记，如企业工具门控）异常时
+            # 终止执行链并返回 enterprise_gate_unavailable —— 绝不跳过门控
+            # 直执真实工具。
+            if getattr(callback, "fail_closed", False):
+                return json.dumps({
+                    "error": "enterprise_gate_unavailable",
+                    "tool": kwargs.get("tool_name", ""),
+                    "allowed": False,
+                    "requires_approval": False,
+                    "reason": "security middleware failed closed",
+                }, ensure_ascii=False)
             return call_at(index + 1, payload)
 
     return call_at(0, kwargs[payload_key])

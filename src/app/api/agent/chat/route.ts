@@ -4,6 +4,11 @@ import { errorResponse, getForwardHeaders, json, sseResponse } from '@/lib/api-h
 import { invokeChat, type ChatMessage } from '@/lib/ai/router';
 import { runAgentTurn, withAgentAudit } from '@/lib/agent';
 import { roveAgentChat, roveAgentConfigured, RoveAgentUnavailable } from '@/lib/roveagent/client';
+import { PERSONAS, type PersonaKey } from '@/lib/agent/personas';
+
+const PERSONA_EMPLOYEE: Record<PersonaKey, string> = Object.fromEntries(
+  PERSONAS.map((p) => [p.key, p.employeeKey]),
+) as Record<PersonaKey, string>;
 import { getBusinessContext, contextToPrompt } from '@/lib/business-context';
 import { getRecentMemories, memoriesToPrompt, addMemory } from '@/lib/memory';
 import { skillForIndustry } from '@/lib/skills';
@@ -18,6 +23,7 @@ const requestSchema = z.object({
   session_id: z.string().uuid().optional(),
   message: z.string().trim().min(1).max(8_000),
   locale: z.enum(['en', 'zh', 'es']).default('en'),
+  persona: z.string().trim().min(1).max(32).optional(),
 });
 
 const RECENT_HISTORY_MESSAGES = 20;
@@ -175,12 +181,15 @@ async function runChat(request: Request) {
     if (roveAgentConfigured()) {
       // RoveAgent Gateway 优先（蓝图 Phase 2：所有 AI 请求经 RoveAgent Core）
       try {
+        const { resolvePersonaKey } = await import('@/lib/agent/personas');
+        const personaKey = resolvePersonaKey(body.persona);
+        const employeeKey = PERSONA_EMPLOYEE[personaKey];
         const result = await roveAgentChat({
           tenantId: ctx.tenantId,
           businessId: ctx.businessId,
           userId: ctx.userId,
           message: body.message,
-          agent: 'ceo',
+          agent: employeeKey,
           role: ctx.role,
           permissions: ROLE_PERMISSIONS[ctx.role],
           requestId,

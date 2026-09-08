@@ -144,4 +144,11 @@ def find_employee(key: str) -> Optional[AIEmployee]:
     for emp in build_workforce():
         if emp.key == key:
             return emp
+    # Executive persona aliases（ceo-insight/coo/cmo/cto → 统一 runtime 员工）
+    from .personas import PERSONA_ALIASES
+    mapped = PERSONA_ALIASES.get(key)
+    if mapped:
+        for emp in build_workforce():
+            if emp.key == mapped:
+                return emp
     return None

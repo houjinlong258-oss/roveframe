@@ -269,9 +269,15 @@ def create_app():
         )
         memory_block = "\n".join(f"- [{m.kind}] {m.content}" for m in memories) or "(no memory)"
 
+        # Executive persona（CEO Insight/COO/CMO/CTO）：统一 runtime，仅 persona 文案区分
+        from ..workforce.personas import persona_for
+        persona = persona_for(req.agent)
+        display_name = str(persona["name"]) if persona else emp.name
+        mission = str(persona["mission"]) if persona else emp.mission
+
         system = (
-            f"你是 {emp.name}（{emp.role}），RoveFrame AI Business OS 的 AI 员工。\n"
-            f"使命：{emp.mission}\n"
+            f"你是 {display_name}（{emp.role}），RoveFrame AI Business OS 的 AI 员工。\n"
+            f"使命：{mission}\n"
             f"职责：{'、'.join(emp.responsibilities)}\n"
             f"禁止事项：{'、'.join(emp.forbidden) or '无'}\n"
             f"行业：{industry}\n"

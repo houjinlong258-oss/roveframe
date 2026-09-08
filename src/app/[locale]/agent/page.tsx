@@ -9,6 +9,7 @@ import { Markdown } from '@/components/markdown';
 import { AgentCard } from '@/components/rove/agent-card';
 import { cn, safeFetchJson } from '@/lib/utils';
 import { fmtDateTime } from '@/lib/format';
+import { PERSONAS, type PersonaKey } from '@/lib/agent/personas';
 
 type Session = { id: string; title: string; updated_at: string };
 type Message = { id?: string; role: 'user' | 'assistant'; content: string };
@@ -24,6 +25,7 @@ function AgentChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
+  const [persona, setPersona] = useState<PersonaKey>('ceo-insight');
   const { streaming, start, stop } = useSSE();
   const scrollRef = useRef<HTMLDivElement>(null);
   const insightSentRef = useRef(false);
@@ -105,7 +107,7 @@ function AgentChat() {
 
     await start({
       url: '/api/agent/chat',
-      body: { session_id: activeId ?? undefined, message: trimmed, locale },
+      body: { session_id: activeId ?? undefined, message: trimmed, locale, persona },
       onChunk: (chunk) => {
         setMessages((prev) => {
           const next = [...prev];
@@ -238,6 +240,25 @@ function AgentChat() {
 
         {/* 快捷问题 + 输入区 */}
         <div className="border-t border-border/20 bg-card px-6 py-4">
+          {/* Executive personas：统一 Runtime，以 persona 区分角色 */}
+          <div className="flex gap-2 mb-3 overflow-x-auto pb-1">
+            {PERSONAS.map((p) => (
+              <button
+                key={p.key}
+                onClick={() => setPersona(p.key)}
+                disabled={streaming}
+                className={cn(
+                  'shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors disabled:opacity-50 border',
+                  persona === p.key
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground border-transparent',
+                )}
+              >
+                {p.label}
+                <span className="ml-1 opacity-60">{p.description}</span>
+              </button>
+            ))}
+          </div>
           <div className="flex gap-2 mb-3 overflow-x-auto pb-1">
             {quickQuestions.map((q) => (
               <button

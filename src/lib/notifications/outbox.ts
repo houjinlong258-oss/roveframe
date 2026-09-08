@@ -100,6 +100,66 @@ export async function claimNotificationOutbox(
   return (data ?? []) as NotificationOutboxItem[];
 }
 
+/** P0-15：outbox 租约超时（与 email_send_tasks 同口径 15 分钟）。 */
+export const OUTBOX_LEASE_TIMEOUT_MS = 15 * 60_000;
+
+/**
+ * P0-15：回收崩溃残留的 sending 行（租约过期 → queued 重发 / failed）。
+ * 与 email_send_tasks 同构：claimed_at 超时后按 attempts/backoff 重试。
+ */
+export async function recoverStaleOutboxItems(): Promise<{ requeued: number; failed: number }> {
+  const client = getSupabaseClient();
+  const cutoffIso = new Date(Date.now() - OUTBOX_LEASE_TIMEOUT_MS).toISOString();
+  const { data, error } = await client.from('notification_outbox')
+    .select('id, tenant_id, business_id, status, claimed_at, attempts, max_attempts')
+    .eq('status', 'sending')
+    .lte('claimed_at', cutoffIso)
+    .limit(100);
+  if (error) {
+    console.error('[notifications/outbox] stale lease lookup failed:', error.message);
+    return { requeued: 0, failed: 0 };
+  }
+  let requeued = 0;
+  let failed = 0;
+  const nowMs = Date.now();
+  for (const raw of data ?? []) {
+    const row = raw as typeof raw & { claimed_at: string | null; attempts: number | null; max_attempts: number | null };
+    if (!row.claimed_at) continue;
+    const claimedAt = new Date(row.claimed_at).getTime();
+    if (Number.isNaN(claimedAt) || nowMs - claimedAt < OUTBOX_LEASE_TIMEOUT_MS) continue;
+    const nextAttempts = Number(row.attempts ?? 0) + 1;
+    const maxAttempts = Number(row.max_attempts ?? 3);
+    const toFailed = nextAttempts >= maxAttempts;
+    const patch = toFailed
+      ? {
+          status: 'failed',
+          attempts: nextAttempts,
+          last_error: 'outbox lease expired; recovered as failed',
+          claimed_by: null,
+          claimed_at: null,
+        }
+      : {
+          status: 'queued',
+          attempts: nextAttempts,
+          available_at: new Date(nowMs).toISOString(),
+          last_error: 'outbox lease expired; requeued',
+          claimed_by: null,
+          claimed_at: null,
+        };
+    const { error: updateError } = await client.from('notification_outbox')
+      .update(patch)
+      .eq('id', row.id)
+      .eq('tenant_id', row.tenant_id)
+      .eq('business_id', row.business_id)
+      .eq('status', 'sending')
+      .eq('claimed_at', row.claimed_at);
+    if (updateError) continue;
+    if (toFailed) failed += 1;
+    else requeued += 1;
+  }
+  return { requeued, failed };
+}
+
 interface OwnerRow { id: string; email: string }
 
 /** Email 通道：把通知真实发送给该 business 的 owner 邮箱。 */
@@ -133,6 +193,8 @@ export async function dispatchNotificationOutbox(
   limit = 20,
 ): Promise<{ processed: number; sent: number; failed: number }> {
   const client = getSupabaseClient();
+  // P0-15：先回收崩溃残留的 sending 行，避免通知永久卡死。
+  await recoverStaleOutboxItems();
   const items = await claimNotificationOutbox(workerId, limit);
   let sent = 0;
   let failed = 0;

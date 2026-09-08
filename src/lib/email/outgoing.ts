@@ -84,6 +84,83 @@ function backoff(attempts: number): number {
   return Math.min(60, 2 ** Math.max(0, attempts - 1));
 }
 
+/** P0-15：sending 租约超时（默认 15 分钟）——崩溃残留行必须被回收，否则任务/活动永久卡死。 */
+export const EMAIL_SEND_LEASE_TIMEOUT_MS = 15 * 60_000;
+
+export interface LeaseRecoveryDecision {
+  action: 'requeue' | 'fail' | 'none';
+  nextAttempts: number;
+}
+
+/** 纯决策：sending 行超过租约后 requeue（attempts+1）；超过 max_attempts 转 failed。 */
+export function emailLeaseDecision(
+  row: { status: string; claimed_at: string | null; attempts: number | null; max_attempts: number | null },
+  nowMs: number,
+  leaseMs = EMAIL_SEND_LEASE_TIMEOUT_MS,
+): LeaseRecoveryDecision {
+  if (row.status !== 'sending' || !row.claimed_at) return { action: 'none', nextAttempts: Number(row.attempts ?? 0) };
+  const claimedAt = new Date(row.claimed_at).getTime();
+  if (Number.isNaN(claimedAt) || nowMs - claimedAt < leaseMs) return { action: 'none', nextAttempts: Number(row.attempts ?? 0) };
+  const nextAttempts = Number(row.attempts ?? 0) + 1;
+  const maxAttempts = Number(row.max_attempts ?? 3);
+  return nextAttempts >= maxAttempts
+    ? { action: 'fail', nextAttempts }
+    : { action: 'requeue', nextAttempts };
+}
+
+/**
+ * P0-15：回收崩溃残留的 sending 行（租约过期 → queued 重发 / failed）。
+ * 每次出件主循环前调用；返回回收统计。
+ */
+export async function recoverStaleEmailSends(): Promise<{ requeued: number; failed: number }> {
+  const supabase = getSupabaseClient();
+  const cutoffIso = new Date(Date.now() - EMAIL_SEND_LEASE_TIMEOUT_MS).toISOString();
+  const { data, error } = await supabase.from('email_send_tasks')
+    .select('id, tenant_id, business_id, status, claimed_at, attempts, max_attempts')
+    .eq('status', 'sending')
+    .lte('claimed_at', cutoffIso)
+    .limit(100);
+  if (error) {
+    console.error('[email/outgoing] stale send recovery lookup failed:', error.message);
+    return { requeued: 0, failed: 0 };
+  }
+  let requeued = 0;
+  let failed = 0;
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  for (const raw of data ?? []) {
+    const row = raw as typeof raw & { status: string; claimed_at: string | null; attempts: number | null; max_attempts: number | null };
+    const decision = emailLeaseDecision(row, nowMs);
+    if (decision.action === 'none') continue;
+    const patch = decision.action === 'fail'
+      ? {
+          status: 'failed',
+          attempts: decision.nextAttempts,
+          failed_at: nowIso,
+          last_error: 'email send lease expired; recovered as failed',
+          claimed_at: null,
+        }
+      : {
+          status: 'queued',
+          attempts: decision.nextAttempts,
+          scheduled_at: nowIso,
+          last_error: 'email send lease expired; requeued',
+          claimed_at: null,
+        };
+    const { error: updateError } = await supabase.from('email_send_tasks')
+      .update(patch)
+      .eq('id', row.id)
+      .eq('tenant_id', row.tenant_id)
+      .eq('business_id', row.business_id)
+      .eq('status', 'sending')
+      .eq('claimed_at', row.claimed_at as string);
+    if (updateError) continue;
+    if (decision.action === 'fail') failed += 1;
+    else requeued += 1;
+  }
+  return { requeued, failed };
+}
+
 /**
  * 用 business 默认发件账号真实发送一封邮件（供通知/营销等复用）。
  * 返回 provider message id。
@@ -107,6 +184,10 @@ export async function sendEmailWithDefaultAccount(
 export async function processEmailSendQueue(limit = 20): Promise<{ processed: number; sent: number; failed: number; requeued: number }> {
   const supabase = getSupabaseClient();
   const nowIso = new Date().toISOString();
+
+  // P0-15：先回收崩溃残留的 sending 行，避免任务永久卡死 / 活动永不 sent。
+  await recoverStaleEmailSends();
+
   const { data, error } = await supabase.from('email_send_tasks')
     .select('*')
     .eq('status', 'queued')
@@ -139,11 +220,16 @@ export async function processEmailSendQueue(limit = 20): Promise<{ processed: nu
       const account = await loadDefaultAccount(task.tenant_id, task.business_id, task.account_id);
       if (!account) throw new Error('No active SMTP email account configured for this business');
       const messageId = await sendViaSmtp(account, task.to_addr, task.subject, task.content);
-      await supabase.from('email_send_tasks')
+      const { error: sentUpdateError } = await supabase.from('email_send_tasks')
         .update({ status: 'sent', sent_at: nowIso, provider_message_id: messageId || null, attempts: attempts + 1, error: null })
         .eq('id', task.id)
         .eq('tenant_id', task.tenant_id)
         .eq('business_id', task.business_id);
+      if (sentUpdateError) {
+        // SMTP 已送达但状态回写失败：租约恢复兜底（15min 后 requeue 可能重发，
+        // 属 at-least-once 语义；错误必须留痕）。
+        console.error('[email/outgoing] sent status write-back failed:', sentUpdateError.message);
+      }
       sent += 1;
     } catch (sendError) {
       const message = sendError instanceof Error ? sendError.message : String(sendError);

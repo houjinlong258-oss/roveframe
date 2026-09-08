@@ -576,6 +576,7 @@
     "testOk": "Connection successful, model available",
     "testFail": "Connection failed: {error}",
     "disconnect": "Disconnect",
+    "connectWithSquare": "Connect with Square",
     "mailboxNote": "Bind business or personal mailboxes so AI can send and receive real emails. Credentials are encrypted.",
     "addMailbox": "Add mailbox",
     "defaultAccount": "Default sender",

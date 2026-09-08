@@ -576,6 +576,7 @@
     "testOk": "Conexión exitosa, modelo disponible",
     "testFail": "Conexión fallida: {error}",
     "disconnect": "Desconectar",
+    "connectWithSquare": "Conectar con Square",
     "mailboxNote": "Vincula buzones empresariales o personales para que la IA envíe y reciba correos reales. Las credenciales se cifran.",
     "addMailbox": "Añadir buzón",
     "defaultAccount": "Remitente predeterminado",

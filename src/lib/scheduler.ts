@@ -8,6 +8,7 @@ import { pollAndExecuteTasks } from '@/lib/agent/tasks/worker';
 import { dispatchNotificationOutbox } from '@/lib/notifications/outbox';
 import { syncImapAccount } from '@/lib/email/imap-sync';
 import { processEmailSendQueue } from '@/lib/email/outgoing';
+import { syncSquareBusiness } from '@/lib/connectors/square-sync';
 
 const DEFAULT_BRIEFING_TIME = '08:00';
 const TICK_SKIPPED_MSG =
@@ -217,6 +218,20 @@ async function pollTelegram(tenantId: string, businessId: string, cfg: Schedulin
   await setCronState(`telegram_offset.${tenantId}.${businessId}`, { offset: lastId + 1 });
 }
 
+// ---------- Square 定时同步（15 分钟节流；游标/水位由 square-sync 持久化） ----------
+async function maybeSyncSquare(tenantId: string, businessId: string): Promise<void> {
+  const stateKey = `square_sync_throttle.${tenantId}.${businessId}`;
+  const state = await getCronState(stateKey);
+  const lastSync = typeof state?.last_sync_at === 'string' ? new Date(state.last_sync_at).getTime() : 0;
+  if (Number.isFinite(lastSync) && Date.now() - lastSync < 15 * 60_000) return;
+  try {
+    await syncSquareBusiness(tenantId, businessId);
+  } catch (syncError) {
+    console.warn('[scheduler] square sync failed for scoped business:', syncError instanceof Error ? syncError.message : String(syncError));
+  }
+  await setCronState(stateKey, { last_sync_at: new Date().toISOString() });
+}
+
 // ---------- IMAP inbound sync（5 分钟水位；邮件自身以 mailbox + Message-ID/UID 去重） ----------
 async function maybeSyncInboundEmail(tenantId: string, businessId: string): Promise<void> {
   const stateKey = `imap_sync.${tenantId}.${businessId}`;
@@ -286,6 +301,7 @@ export async function runScheduledJobs(): Promise<void> {
         await maybePushAlerts(tenant.id, business.id, cfg);
         await pollTelegram(tenant.id, business.id, cfg);
         await maybeSyncInboundEmail(tenant.id, business.id);
+        await maybeSyncSquare(tenant.id, business.id);
       }
     }
   } catch (err) {

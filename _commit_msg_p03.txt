@@ -1,0 +1,18 @@
+P0-3: real Square integration flow - OAuth, scheduled sync, cursor persistence
+
+- connectors/square.ts: OAuth authorize/token exchange/token refresh,
+  locations, catalog (products), customers, inventory batch counts
+- new OAuth routes: start (HMAC-signed state, browser session) and
+  callback (state verification, code exchange, location binding,
+  encrypted persistence with refresh token + merchant id)
+- shared sync orchestrator src/lib/connectors/square-sync.ts: orders
+  (72h watermark) + products + customers (cursor continuation) +
+  inventory; token auto-refresh; all writes tenant+business scoped;
+  watermarks persisted to cron_state
+- sync route reuses the orchestrator; sandbox demo branch stays
+  explicitly opt-in (RF_E2E_DEMO=1 && !PROD)
+- scheduler: scheduled square sync every tick with 15min throttle
+- server.ts: hard fail-closed if RF_E2E_DEMO=1 in production
+- settings page: Connect with Square button + i18n (en/zh/es)
+- tests: square-integration.test.ts (OAuth state, callback contract,
+  scoped orchestrator, scheduler wiring, demo guard)

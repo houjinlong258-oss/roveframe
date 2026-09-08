@@ -1,20 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { decrypt } from '@/lib/crypto';
 import { getTenantContext, requireBusinessContext, requirePermission } from '@/lib/tenant';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { scopedTable, updateWithScope } from '@/lib/tenant-db';
-import {
-  fetchSquareOrders, mapSquareOrder, sandboxSquareOrders, type SquareOrder,
-} from '@/lib/connectors/square';
+import { scopedTable } from '@/lib/tenant-db';
+import { mapSquareOrder, sandboxSquareOrders } from '@/lib/connectors/square';
+import { syncSquareBusiness } from '@/lib/connectors/square-sync';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 const DEMO = process.env.RF_E2E_DEMO === '1' && process.env.COZE_PROJECT_ENV !== 'PROD';
 
 /**
- * POS 同步路由（缺口 A1/A2 最小闭环）。
- * POST /api/integrations/[provider]/sync
- * 当前支持 square；shopify/toast/clover 依次扩展同一形态。
- * 幂等：order_no = SQ-<外部ID>，重复同步不产生重复订单。
+ * POS 同步路由：POST /api/integrations/[provider]/sync
+ * square 走共享编排器（orders + products + customers + inventory，游标/水位持久化）；
+ * 无凭据时仅当显式 RF_E2E_DEMO=1 且非生产才写沙箱样本（生产 fail-closed 409）。
  */
 async function syncIntegration(
   request: NextRequest,
@@ -28,65 +25,37 @@ async function syncIntegration(
     return NextResponse.json({ error: `sync not implemented for ${provider}` }, { status: 400 });
   }
 
-  // 读取已保存的 Square 配置（AES-256-GCM 解密）
-  const cfgRes = await scopedTable(ctx, 'integration_configs', 'id, config_encrypted, last_sync_at')
+  const cfgRes = await scopedTable(ctx, 'integration_configs', 'id, config_encrypted')
     .eq('provider', 'square').eq('is_enabled', true).maybeSingle();
   if (cfgRes.error) return NextResponse.json({ error: cfgRes.error.message }, { status: 500 });
-  const row = cfgRes.data as { id: string; config_encrypted: string | null; last_sync_at: string | null } | null;
+  const row = cfgRes.data as { id: string; config_encrypted: string | null } | null;
 
-  let accessToken = '';
-  let locationIds: string[] = [];
   if (row?.config_encrypted) {
-    try {
-      const cfg = JSON.parse(decrypt(row.config_encrypted)) as { accessToken?: string; locationId?: string; locationIds?: string[] };
-      accessToken = cfg.accessToken ?? '';
-      locationIds = Array.isArray(cfg.locationIds) ? cfg.locationIds : typeof cfg.locationId === 'string' ? cfg.locationId.split(',') : [];
-    } catch {
-      return NextResponse.json({ error: 'failed to decrypt square config' }, { status: 500 });
+    const summary = await syncSquareBusiness(ctx.tenantId, ctx.businessId);
+    return NextResponse.json({ provider, ...summary });
+  }
+
+  if (DEMO) {
+    // 演示模式（显式开启且非生产）：沙箱订单写真实库，验证订单闭环。
+    const supabase = getSupabaseClient();
+    let synced = 0;
+    const errors: string[] = [];
+    for (const o of sandboxSquareOrders()) {
+      const mapped = mapSquareOrder(o);
+      const write = await supabase.from('orders').upsert({
+        tenant_id: ctx.tenantId,
+        business_id: ctx.businessId,
+        ...mapped,
+        channel: 'dine_in',
+        source: 'square',
+      }, { onConflict: 'tenant_id,business_id,source,external_id' });
+      if (write.error) { errors.push(write.error.message); continue; }
+      synced += 1;
     }
+    return NextResponse.json({ ok: errors.length === 0, provider, synced, total: 2, errors });
   }
 
-  let orders: SquareOrder[];
-  if (accessToken) {
-    if (locationIds.length === 0) return NextResponse.json({ error: 'square location ID is required' }, { status: 409 });
-    // Square can upload offline POS orders days later. Always overlap the watermark by 72 hours.
-    const watermark = row?.last_sync_at ? new Date(row.last_sync_at).getTime() - 72 * 86400000 : Date.now() - 30 * 86400000;
-    orders = await fetchSquareOrders(accessToken, new Date(watermark).toISOString(), locationIds);
-  } else if (DEMO) {
-    // 演示模式：无凭据时使用沙箱样本，验证「同步路由 → orders 表 → 经营数据页」闭环
-    orders = sandboxSquareOrders();
-  } else {
-    return NextResponse.json({ error: 'square not connected' }, { status: 409 });
-  }
-
-  const supabase = getSupabaseClient();
-  let synced = 0;
-  const errors: string[] = [];
-  for (const o of orders) {
-    const mapped = mapSquareOrder(o);
-    const record: Record<string, unknown> = {
-      tenant_id: ctx.tenantId,
-      business_id: ctx.businessId,
-      ...mapped,
-      channel: 'dine_in',
-      source: 'square',
-    };
-    const write = await supabase.from('orders').upsert(record, {
-      onConflict: 'tenant_id,business_id,source,external_id',
-    });
-    if (write.error) { errors.push(write.error.message); continue; }
-    synced += 1;
-  }
-
-  if (row) {
-    const { error } = await updateWithScope(ctx, 'integration_configs', row.id, {
-      last_sync_at: new Date().toISOString(),
-      status: errors.length && !synced ? 'error' : 'connected',
-    });
-    if (error) console.warn('[integrations/sync] last_sync_at update failed:', error.message);
-  }
-
-  return NextResponse.json({ ok: errors.length === 0, provider, synced, total: orders.length, errors });
+  return NextResponse.json({ error: 'square not connected' }, { status: 409 });
 }
 
 export const POST = protectBusinessMutation(

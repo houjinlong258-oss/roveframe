@@ -576,6 +576,7 @@
     "testOk": "连接成功，模型可用",
     "testFail": "连接失败：{error}",
     "disconnect": "断开连接",
+    "connectWithSquare": "连接 Square",
     "mailboxNote": "绑定企业或个人邮箱后，AI 可通过你的邮箱真实收发邮件；授权信息加密存储",
     "addMailbox": "添加邮箱",
     "defaultAccount": "默认发件",

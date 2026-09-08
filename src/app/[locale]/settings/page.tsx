@@ -1014,9 +1014,19 @@ export default function SettingsPage() {
                             <p className="text-xs text-on-surface-variant mt-0.5">{t(`${pid}Note`)}</p>
                           </div>
                         </div>
-                        <button onClick={() => { setIntModal(pid); setIntForm({}); setIntTest({ state: 'idle' }); }} className="text-sm text-primary font-medium hover:underline">
-                          {conn ? tc('manage') : tc('configure')}
-                        </button>
+                        <div className="flex items-center gap-3">
+                          {pid === 'square' && (
+                            <button
+                              onClick={() => { window.location.href = '/api/integrations/square/oauth/start'; }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-on-surface text-white text-xs font-medium hover:opacity-90"
+                            >
+                              <Square className="w-3 h-3" /> {t('connectWithSquare')}
+                            </button>
+                          )}
+                          <button onClick={() => { setIntModal(pid); setIntForm({}); setIntTest({ state: 'idle' }); }} className="text-sm text-primary font-medium hover:underline">
+                            {conn ? tc('manage') : tc('configure')}
+                          </button>
+                        </div>
                       </div>
                       {conn ? (
                         <div className="flex flex-wrap gap-2">

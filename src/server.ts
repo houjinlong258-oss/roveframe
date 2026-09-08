@@ -9,6 +9,11 @@ const dev = process.env.COZE_PROJECT_ENV !== 'PROD';
 const hostname = process.env.HOSTNAME || 'localhost';
 const port = parseInt(process.env.PORT || '5000', 10);
 
+// 生产硬门禁：demo 数据绝不进入生产路径（fail-closed）。
+if (!dev && process.env.RF_E2E_DEMO === '1') {
+  throw new Error('RF_E2E_DEMO=1 is forbidden in production (COZE_PROJECT_ENV=PROD). Refusing to start.');
+}
+
 // Create Next.js app
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();

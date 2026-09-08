@@ -76,7 +76,7 @@ describe('P0-5 business isolation contracts', () => {
 
     // The exceptions are deliberate: platform admin/schema discovery, or a
     // pre-scoped row/query variable whose scope is asserted here.
-    assert.match(read('src/app/api/integrations/[provider]/sync/route.ts'), /record:[\s\S]{0,180}business_id: ctx\.businessId/);
+    assert.match(read('src/app/api/integrations/[provider]/sync/route.ts'), /upsert\(\{[\s\S]{0,200}business_id: ctx\.businessId/);
     assert.match(read('src/app/api/settings/models/route.ts'), /record\.business_id = context\.businessId/);
     assert.match(read('src/lib/enterprise/memory.ts'), /q = q\.eq\('tenant_id', tenantId\)\.eq\('business_id', businessId\)/);
     assert.match(read('src/lib/notifications/outbox.ts'), /const row = \{[\s\S]{0,160}business_id: input\.businessId/);

@@ -752,6 +752,7 @@
     "wipeConfirmTitle": "Confirmar borrado total",
     "wipeConfirm": "Se eliminarán todos los productos, pedidos, clientes, reseñas, correos y documentos de ejemplo. Esta acción no se puede deshacer. ¿Continuar?",
     "wipeConfirmButton": "Confirmar borrado",
+    "wipeFail": "El borrado falló — inténtalo de nuevo",
     "groupAppearance": "Apariencia",
     "appearanceNote": "Temas de día y noche, rediseñados profesionalmente — no una simple inversión de colores.",
     "themeLight": "Claro",

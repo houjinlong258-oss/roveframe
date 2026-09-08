@@ -192,6 +192,7 @@ export default function SettingsPage() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [wipeModal, setWipeModal] = useState(false);
   const [wiping, setWiping] = useState(false);
+  const [wipeError, setWipeError] = useState('');
 
   const flashSaved = () => {
     setSavedTip(t('saved'));
@@ -462,9 +463,33 @@ export default function SettingsPage() {
   const wipeData = async () => {
     setWiping(true);
     try {
-      await fetch('/api/settings/wipe', { method: 'DELETE' });
+      // P0-6：两步清空 —— 先取服务端一次性确认令牌，再带令牌执行 DELETE；
+      // 失败不误报成功。
+      const tokenRes = await fetch('/api/settings/wipe');
+      if (!tokenRes.ok) {
+        setWipeError(t('wipeFail'));
+        return;
+      }
+      const tokenData = await tokenRes.json().catch(() => null);
+      const token = tokenData?.token;
+      if (typeof token !== 'string' || !token) {
+        setWipeError(t('wipeFail'));
+        return;
+      }
+      const res = await fetch('/api/settings/wipe', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setWipeError(data?.error ?? t('wipeFail'));
+        return;
+      }
       setWipeModal(false);
       await loadCounts();
+    } catch {
+      setWipeError(t('wipeFail'));
     } finally {
       setWiping(false);
     }
@@ -1682,6 +1707,9 @@ export default function SettingsPage() {
               <h3 className="text-base font-semibold">{t('wipeConfirmTitle')}</h3>
             </div>
             <p className="text-sm text-on-surface-variant leading-relaxed">{t('wipeConfirm')}</p>
+            {wipeError && (
+              <p className="text-sm text-error mt-3">{wipeError}</p>
+            )}
             <div className="flex justify-end gap-3 mt-6">
               <button onClick={() => setWipeModal(false)} className={ghostBtn}>{tc('cancel')}</button>
               <button onClick={wipeData} disabled={wiping} className="bg-error text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-60">

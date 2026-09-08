@@ -83,9 +83,19 @@ async function createCheckout(request: NextRequest) {
       return NextResponse.json({ error: 'checkout must reference exactly one reservation or order' }, { status: 400 });
     }
     if (reservationId) {
-      const check = await scopedTable(context, 'reservations', 'id').eq('id', reservationId).maybeSingle();
+      // P0-6：reservation 分支金额不得信任客户端 —— 以预约行的权威应缴金额比对，
+      // 无权威价（due_amount 为空）则拒绝该支付模式（fail-closed）。
+      const check = await scopedTable(context, 'reservations', 'id, due_amount').eq('id', reservationId).maybeSingle();
       if (check.error) return NextResponse.json({ error: check.error.message }, { status: 500 });
       if (!check.data) return NextResponse.json({ error: 'reservation not found' }, { status: 404 });
+      const dueAmount = (check.data as { due_amount?: string | number | null }).due_amount;
+      if (dueAmount === null || dueAmount === undefined || Number(dueAmount) < 0) {
+        return NextResponse.json({ error: 'reservation has no authoritative due amount; checkout rejected' }, { status: 409 });
+      }
+      const dueMinor = toMinorUnits(Number(dueAmount), currency);
+      if (dueMinor !== amountMinor) {
+        return NextResponse.json({ error: 'checkout amount does not match the scoped reservation due amount' }, { status: 409 });
+      }
     }
     if (orderId) {
       const check = await scopedTable(context, 'orders', 'id, total').eq('id', orderId).maybeSingle();

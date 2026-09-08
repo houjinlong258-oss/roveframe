@@ -304,6 +304,7 @@ create table if not exists public.reservations (
   status varchar(20) not null default 'pending',
   source varchar(20) not null default 'phone',
   notes text,
+  due_amount numeric(10,2),
   created_at timestamptz not null default now()
 );
 create index if not exists reservations_reserved_at_idx on public.reservations (reserved_at);

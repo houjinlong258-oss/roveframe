@@ -2,14 +2,47 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { isValidIdempotencyKey, resolvePublicStore } from '@/lib/storefront';
 import { checkFixedWindow, rateLimitResponse } from '@/lib/rate-limit';
+import {
+  MAX_ORDER_TOTAL,
+  storeOrderSchema,
+} from '@/lib/store-order';
 
-interface CartItem { product_id: string; qty: number }
-type StoreOrderBody = { token?: unknown; note?: unknown; items?: unknown; tip_amount?: unknown; tip_percent?: unknown };
+/** 销售计数 RPC 有界重试（3 次，指数间隔）；彻底失败仅告警不阻断下单主链路。 */
+async function bumpSalesCounterWithRetry(
+  tenantId: string,
+  productId: string,
+  incrementBy: number,
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  let delayMs = 300;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const { error } = await supabase.rpc('increment_product_sales', {
+      target_tenant_id: tenantId,
+      target_product_id: productId,
+      increment_by: incrementBy,
+    });
+    if (!error) return;
+    if (attempt === 3) {
+      console.warn(`[store/orders] sale counter failed after ${attempt} attempts:`, error.message);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    delayMs *= 2;
+  }
+}
 
 /** Creates a QR order with server-side prices and strict tenant scope. */
 export async function POST(request: NextRequest) {
-  let body: StoreOrderBody;
-  try { body = await request.json() as StoreOrderBody; } catch { return NextResponse.json({ error: 'Invalid request body' }, { status: 400 }); }
+  let rawBody: unknown;
+  try { rawBody = await request.json(); } catch { return NextResponse.json({ error: 'Invalid request body' }, { status: 400 }); }
+  const parsed = storeOrderSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: 'invalid_order', details: parsed.error.flatten().fieldErrors },
+      { status: 400 },
+    );
+  }
+  const body = parsed.data;
   const store = await resolvePublicStore(typeof body.token === 'string' ? body.token : null);
   if (!store) return NextResponse.json({ error: 'Invalid or inactive store link' }, { status: 404 });
 
@@ -24,13 +57,12 @@ export async function POST(request: NextRequest) {
   if (idempotencyKey && !isValidIdempotencyKey(idempotencyKey)) {
     return NextResponse.json({ error: 'Invalid Idempotency-Key' }, { status: 400 });
   }
-  const items = (Array.isArray(body.items) ? body.items : [])
-    .filter((item): item is CartItem => typeof item?.product_id === 'string' && Number(item?.qty) > 0)
-    .map((item) => ({ product_id: item.product_id, qty: Math.min(Math.floor(Number(item.qty)), 99) }));
-  if (items.length === 0) return NextResponse.json({ error: 'Cart is empty' }, { status: 400 });
-  const tipAmount = typeof body.tip_amount === 'number' && Number.isFinite(body.tip_amount) && body.tip_amount >= 0 ? Math.round(body.tip_amount * 100) / 100 : 0;
-  const tipPercent = typeof body.tip_percent === 'number' && Number.isFinite(body.tip_percent) ? Math.round(body.tip_percent * 100) / 100 : null;
-  const note = typeof body.note === 'string' ? body.note.slice(0, 500) : null;
+  const items = body.items.map((item) => ({ product_id: item.product_id, qty: item.qty }));
+  const tipAmount = Math.round(body.tip_amount * 100) / 100;
+  const tipPercent = body.tip_percent === null || body.tip_percent === undefined
+    ? null
+    : Math.round(body.tip_percent * 100) / 100;
+  const note = body.note ? body.note.slice(0, 500) : null;
   const supabase = getSupabaseClient();
   if (idempotencyKey) {
     const { data: existing, error: lookupError } = await supabase
@@ -58,6 +90,9 @@ export async function POST(request: NextRequest) {
     orderItems.push({ name: product.name, qty: item.qty, price });
   }
   const total = Math.round((subtotal + tipAmount) * 100) / 100;
+  if (total > MAX_ORDER_TOTAL) {
+    return NextResponse.json({ error: `order total exceeds the ${MAX_ORDER_TOTAL} cap` }, { status: 400 });
+  }
   const orderNo = `RF-${crypto.randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase()}`;
   const { data: order, error: insertError } = await supabase.from('orders').insert({
     tenant_id: store.tenantId,
@@ -74,10 +109,24 @@ export async function POST(request: NextRequest) {
     table_no: store.tableNo,
     notes: note,
   }).select('id, order_no, total, tip, tip_percent, table_no, created_at').single();
-  if (insertError) return NextResponse.json({ error: insertError.message }, { status: 500 });
+  if (insertError) {
+    // P0-6：并发同 key 双插竞态兜底 —— 部分唯一索引 orders_qr_idempotency_idx
+    // 冲突(23505)时返回既有订单，保证同 key 幂等只落一行。
+    if (idempotencyKey && insertError.code === '23505') {
+      const { data: raced, error: raceError } = await supabase
+        .from('orders')
+        .select('id, order_no, total, tip, tip_percent, table_no, created_at')
+        .eq('tenant_id', store.tenantId)
+        .eq('business_id', store.businessId)
+        .eq('source', 'qr')
+        .eq('external_id', idempotencyKey)
+        .maybeSingle();
+      if (!raceError && raced) return NextResponse.json({ order: raced, idempotent: true });
+    }
+    return NextResponse.json({ error: insertError.message }, { status: 500 });
+  }
   for (const item of items) {
-    const { error: salesError } = await supabase.rpc('increment_product_sales', { target_tenant_id: store.tenantId, target_product_id: item.product_id, increment_by: item.qty });
-    if (salesError) console.warn('[store/orders] sale counter update failed:', salesError.message);
+    await bumpSalesCounterWithRetry(store.tenantId, item.product_id, item.qty);
   }
   return NextResponse.json({ order });
 }

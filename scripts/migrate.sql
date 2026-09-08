@@ -249,6 +249,10 @@ begin
     create unique index if not exists orders_adapter_external_idx
       on public.orders (tenant_id, business_id, source, external_id);
   end if;
+  if to_regclass('public.reservations') is not null then
+    -- P0-6：预约权威应缴金额（checkout 服务端比对用；为空则拒绝预约支付模式）
+    alter table public.reservations add column if not exists due_amount numeric(10,2);
+  end if;
   if to_regclass('public.products') is not null then
     create index if not exists products_tenant_business_idx on public.products (tenant_id, business_id);
     create unique index if not exists products_adapter_external_idx

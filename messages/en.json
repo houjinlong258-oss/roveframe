@@ -752,6 +752,7 @@
     "wipeConfirmTitle": "Confirm wiping all data",
     "wipeConfirm": "All sample products, orders, customers, reviews, emails and knowledge docs will be deleted. This action cannot be undone. Continue?",
     "wipeConfirmButton": "Confirm wipe",
+    "wipeFail": "Wipe failed — please try again",
     "groupAppearance": "Appearance",
     "appearanceNote": "Day and Night themes, professionally redesigned — not a simple color inversion.",
     "themeLight": "Light",

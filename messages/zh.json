@@ -752,6 +752,7 @@
     "wipeConfirmTitle": "确认清空全部数据",
     "wipeConfirm": "将删除全部示例产品、订单、客户、评论、邮件与知识文档。此操作不可恢复，确定继续吗？",
     "wipeConfirmButton": "确认清空",
+    "wipeFail": "清空失败，请重试",
     "groupAppearance": "外观",
     "appearanceNote": "昼 / 夜双主题均为专业重设计，而非简单反色。",
     "themeLight": "浅色",

@@ -1,16 +1,20 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { getTenantContext, requirePermission } from '@/lib/tenant';
+import { getTenantContext, requireBusinessContext, requirePermission } from '@/lib/tenant';
 
-// 数据管理：各类业务数据量概览
+// 数据管理：各类业务数据量概览（P0-6：按 tenant+business 双 scope 计数）
 export async function GET(request: Request) {
-  const context = await getTenantContext(request);
+  const context = requireBusinessContext(await getTenantContext(request));
   requirePermission(context, 'settings:read');
   const supabase = getSupabaseClient();
   const tables = ['products', 'orders', 'customers', 'reviews', 'emails', 'knowledge_docs', 'marketing_contents', 'reservations'] as const;
   const counts: Record<string, number> = {};
   for (const table of tables) {
-    const { count, error } = await supabase.from(table).select('id', { count: 'exact', head: true }).eq('tenant_id', context.tenantId);
+    const { count, error } = await supabase
+      .from(table)
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', context.tenantId)
+      .eq('business_id', context.businessId);
     if (error) throw new Error(error.message);
     counts[table] = count ?? 0;
   }

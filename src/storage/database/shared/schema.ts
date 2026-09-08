@@ -460,6 +460,7 @@ export const reservations = pgTable(
     status: varchar("status", { length: 20 }).notNull().default("pending"),
     source: varchar("source", { length: 20 }).notNull().default("phone"),
     notes: text("notes"),
+    due_amount: numeric("due_amount", { precision: 10, scale: 2 }),
     created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [

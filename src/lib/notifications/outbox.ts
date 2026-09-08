@@ -202,7 +202,9 @@ export async function dispatchNotificationOutbox(
   for (const item of items) {
     try {
       if (item.channel === 'web_push') {
-        await dispatchWebPushToBusiness({
+        // P0-16：瞬时失败/零送达视为未完成（抛出 → 下方按 attempts/backoff 重试）；
+        // 无订阅为终端失败（不重试）。
+        const result = await dispatchWebPushToBusiness({
           tenantId: item.tenant_id,
           businessId: item.business_id,
           title: item.title,
@@ -210,6 +212,27 @@ export async function dispatchNotificationOutbox(
           data: { eventId: item.event_id, notificationType: item.notification_type },
           userId: item.user_id,
         });
+        if (result.noSubscribers) {
+          await client
+            .from('notification_outbox')
+            .update({
+              status: 'failed',
+              attempts: item.max_attempts,
+              last_error: 'no push subscriptions for recipients',
+              claimed_by: null,
+              claimed_at: null,
+            })
+            .eq('id', item.id)
+            .eq('tenant_id', item.tenant_id)
+            .eq('business_id', item.business_id);
+          failed++;
+          continue;
+        }
+        if (result.sent === 0 || result.failed > 0) {
+          throw new Error(
+            `web push delivery incomplete: ${result.sent} sent, ${result.failed} failed, ${result.deleted} deleted`,
+          );
+        }
       } else if (item.channel === 'email') {
         await dispatchEmailNotification(item);
       } else {

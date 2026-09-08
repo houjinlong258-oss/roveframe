@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
 import { InstallPrompt } from '@/components/pwa/InstallPrompt';
+import { PushSubscribe } from '@/components/pwa/PushSubscribe';
 import { redirectToLoginOn401 } from '@/lib/utils';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -52,6 +53,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <main className="flex-1 min-w-0 overflow-y-auto bg-background p-6">{children}</main>
       </div>
       <InstallPrompt />
+      <PushSubscribe />
     </div>
   );
 }

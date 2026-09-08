@@ -40,7 +40,7 @@ interface SmtpCredentials {
   smtp_pass?: string;
 }
 
-async function loadDefaultAccount(tenantId: string, businessId: string, accountId: string | null): Promise<EmailAccountRow | null> {
+export async function loadDefaultAccount(tenantId: string, businessId: string, accountId: string | null): Promise<EmailAccountRow | null> {
   const supabase = getSupabaseClient();
   let query = supabase.from('email_accounts')
     .select('id, email, display_name, smtp_host, smtp_port, credentials_encrypted')
@@ -82,6 +82,22 @@ async function sendViaSmtp(account: EmailAccountRow, to: string, subject: string
 
 function backoff(attempts: number): number {
   return Math.min(60, 2 ** Math.max(0, attempts - 1));
+}
+
+/**
+ * 用 business 默认发件账号真实发送一封邮件（供通知/营销等复用）。
+ * 返回 provider message id。
+ */
+export async function sendEmailWithDefaultAccount(
+  tenantId: string,
+  businessId: string,
+  to: string,
+  subject: string,
+  text: string,
+): Promise<string> {
+  const account = await loadDefaultAccount(tenantId, businessId, null);
+  if (!account) throw new Error('No active SMTP email account configured for this business');
+  return sendViaSmtp(account, to, subject, text);
 }
 
 /**

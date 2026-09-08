@@ -369,7 +369,19 @@ function registerDefaultTaskHandlers(): void {
   const dailyBriefingHandler: TaskHandler = async (ctx) => {
     const locale = typeof ctx.input.locale === 'string' ? ctx.input.locale : 'en';
     const message = await buildBriefing(ctx.tenantId, ctx.businessId, locale);
-    const notification = await enqueueNotification({
+    const dateKey = new Date().toISOString().slice(0, 10);
+    // 主通道 Email + 增强通道 Web Push 双投递（幂等键区分通道）。
+    const emailNotification = await enqueueNotification({
+      tenantId: ctx.tenantId,
+      businessId: ctx.businessId,
+      channel: 'email',
+      notificationType: 'DAILY_BRIEFING',
+      title: 'Daily Business Briefing',
+      content: message,
+      priority: 'normal',
+      idempotencyKey: `daily-briefing:${ctx.businessId}:${dateKey}:email`,
+    });
+    const pushNotification = await enqueueNotification({
       tenantId: ctx.tenantId,
       businessId: ctx.businessId,
       channel: 'web_push',
@@ -377,10 +389,13 @@ function registerDefaultTaskHandlers(): void {
       title: 'Daily Business Briefing',
       content: message,
       priority: 'normal',
-      idempotencyKey: `daily-briefing:${ctx.businessId}:${new Date().toISOString().slice(0, 10)}`,
+      idempotencyKey: `daily-briefing:${ctx.businessId}:${dateKey}:push`,
     });
     return {
-      result: { notificationId: notification.id, queued: notification.created },
+      result: {
+        email: { notificationId: emailNotification.id, queued: emailNotification.created },
+        webPush: { notificationId: pushNotification.id, queued: pushNotification.created },
+      },
       tokenUsage: { prompt_tokens: 150, completion_tokens: 250, total_tokens: 400 },
     };
   };

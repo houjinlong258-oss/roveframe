@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { dispatchWebPushToBusiness } from './push';
+import { sendEmailWithDefaultAccount } from '@/lib/email/outgoing';
 
 export type NotificationChannel = 'web_push' | 'email' | 'whatsapp' | 'telegram' | 'sms';
 
@@ -99,6 +100,33 @@ export async function claimNotificationOutbox(
   return (data ?? []) as NotificationOutboxItem[];
 }
 
+interface OwnerRow { id: string; email: string }
+
+/** Email 通道：把通知真实发送给该 business 的 owner 邮箱。 */
+async function dispatchEmailNotification(item: NotificationOutboxItem): Promise<void> {
+  const supabase = getSupabaseClient();
+  let ownersQuery = supabase.from('users').select('id, email')
+    .eq('tenant_id', item.tenant_id).eq('business_id', item.business_id).eq('role', 'owner');
+  if (item.user_id) ownersQuery = ownersQuery.eq('id', item.user_id);
+  const { data: owners, error: ownersError } = await ownersQuery;
+  if (ownersError) throw new Error(`Owner email lookup failed: ${ownersError.message}`);
+  const recipients = (owners ?? []) as OwnerRow[];
+  if (recipients.length === 0) throw new Error('No owner recipients configured for email notifications');
+  const failures: string[] = [];
+  for (const owner of recipients) {
+    try {
+      await sendEmailWithDefaultAccount(
+        item.tenant_id, item.business_id, owner.email, item.title, item.content,
+      );
+    } catch (sendError) {
+      failures.push(owner.email + ': ' + (sendError instanceof Error ? sendError.message : String(sendError)));
+    }
+  }
+  if (failures.length === recipients.length) {
+    throw new Error('Email notification delivery failed for all owners: ' + failures.join(' | '));
+  }
+}
+
 /** Delivers claimed intents via Web Push adapter. */
 export async function dispatchNotificationOutbox(
   workerId = `notification-${randomUUID().slice(0, 8)}`,
@@ -111,18 +139,20 @@ export async function dispatchNotificationOutbox(
 
   for (const item of items) {
     try {
-      if (item.channel !== 'web_push') {
+      if (item.channel === 'web_push') {
+        await dispatchWebPushToBusiness({
+          tenantId: item.tenant_id,
+          businessId: item.business_id,
+          title: item.title,
+          body: item.content,
+          data: { eventId: item.event_id, notificationType: item.notification_type },
+          userId: item.user_id,
+        });
+      } else if (item.channel === 'email') {
+        await dispatchEmailNotification(item);
+      } else {
         throw new Error(`Unsupported notification channel: ${item.channel}`);
       }
-
-      await dispatchWebPushToBusiness({
-        tenantId: item.tenant_id,
-        businessId: item.business_id,
-        title: item.title,
-        body: item.content,
-        data: { eventId: item.event_id, notificationType: item.notification_type },
-        userId: item.user_id,
-      });
 
       await client
         .from('notification_outbox')

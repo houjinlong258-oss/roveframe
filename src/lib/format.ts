@@ -1,6 +1,11 @@
-export function fmtCurrency(amount: number | string, currency = 'USD'): string {
+function localeTag(locale: string): string {
+  return locale === 'zh' ? 'zh-CN' : locale === 'es' ? 'es-ES' : 'en-US';
+}
+
+// P0-8：币种与 locale 显式参数化 —— 海外市场不再恒显 USD/$。
+export function fmtCurrency(amount: number | string, currency = 'USD', locale = 'en'): string {
   const n = typeof amount === 'string' ? Number(amount) : amount;
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat(localeTag(locale), {
     style: 'currency',
     currency,
     minimumFractionDigits: n % 1 === 0 ? 0 : 2,
@@ -8,13 +13,11 @@ export function fmtCurrency(amount: number | string, currency = 'USD'): string {
 }
 
 export function fmtDateTime(iso: string, locale = 'en'): string {
-  const loc = locale === 'zh' ? 'zh-CN' : locale === 'es' ? 'es-ES' : 'en-US';
-  return new Date(iso).toLocaleString(loc, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleString(localeTag(locale), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 export function fmtDate(iso: string, locale = 'en'): string {
-  const loc = locale === 'zh' ? 'zh-CN' : locale === 'es' ? 'es-ES' : 'en-US';
-  return new Date(iso).toLocaleDateString(loc, { month: 'short', day: 'numeric' });
+  return new Date(iso).toLocaleDateString(localeTag(locale), { month: 'short', day: 'numeric' });
 }
 
 export function timeAgo(iso: string, locale = 'en'): string {

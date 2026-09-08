@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import {
   UtensilsCrossed, Plus, Minus, ShoppingCart, X, CheckCircle2, Play, Store as StoreIcon, ClipboardList, UserRound,
 } from 'lucide-react';
@@ -28,6 +28,7 @@ interface MenuData {
 
 function Storefront() {
   const t = useTranslations('store');
+  const locale = useLocale();
   const params = useSearchParams();
   const token = params.get('token');
 
@@ -60,6 +61,8 @@ function Storefront() {
   );
   const cartCount = Object.values(cart).reduce((s, q) => s + q, 0);
   const cartTotal = Object.entries(cart).reduce((s, [id, q]) => s + Number(byId.get(id)?.price ?? 0) * q, 0);
+  // P0-8：币种随菜单数据，不再恒显 USD
+  const fmt = (amount: number) => fmtCurrency(amount, menu?.store.currency ?? 'USD', locale);
   const tipPercent =
     tipChoice === 'custom'
       ? (Number(customTip) || 0) / 100
@@ -160,7 +163,7 @@ function Storefront() {
           )}
           <div className="flex justify-between text-sm py-1">
             <span className="text-on-surface-variant">{t('total')}</span>
-            <span className="font-semibold text-primary">{fmtCurrency(placed.total)}</span>
+            <span className="font-semibold text-primary">{fmt(placed.total)}</span>
           </div>
         </div>
         {placed.tip > 0 && !thanked && staffList.length > 0 && (
@@ -267,7 +270,7 @@ function Storefront() {
                   <p className="text-xs text-on-surface-variant line-clamp-2 mt-0.5 flex-1">{p.description}</p>
                 )}
                 <div className="flex items-center justify-between mt-auto pt-2">
-                  <span className="text-base font-bold text-primary">{fmtCurrency(Number(p.price))}</span>
+                  <span className="text-base font-bold text-primary">{fmt(Number(p.price))}</span>
                   <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                     {qty > 0 && (
                       <>
@@ -309,7 +312,7 @@ function Storefront() {
                 <ShoppingCart className="w-5 h-5" />
                 {t('cart')} · {cartCount}
               </span>
-              <span className="text-base font-bold">{fmtCurrency(cartTotal)}</span>
+              <span className="text-base font-bold">{fmt(cartTotal)}</span>
             </button>
           </div>
         </div>
@@ -343,7 +346,7 @@ function Storefront() {
               <p className="text-xs text-on-surface-variant mt-1">{detail.category} · {t('sold', { count: detail.sales_count })}</p>
               {detail.description && <p className="text-sm text-on-surface-variant mt-3 leading-relaxed">{detail.description}</p>}
               <div className="flex items-center justify-between mt-5">
-                <span className="text-xl font-bold text-primary">{fmtCurrency(Number(detail.price))}</span>
+                <span className="text-xl font-bold text-primary">{fmt(Number(detail.price))}</span>
                 <div className="flex items-center gap-3">
                   {(cart[detail.id] ?? 0) > 0 && (
                     <>
@@ -386,7 +389,7 @@ function Storefront() {
                   <div key={id} className="flex items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-on-surface truncate">{p.name}</p>
-                      <p className="text-xs text-primary font-semibold">{fmtCurrency(Number(p.price))}</p>
+                      <p className="text-xs text-primary font-semibold">{fmt(Number(p.price))}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <button onClick={() => add(id, -1)} className="w-7 h-7 rounded-full bg-surface-container text-on-surface flex items-center justify-center">
@@ -441,17 +444,17 @@ function Storefront() {
               )}
               <div className="flex justify-between text-sm mb-1">
                 <span className="text-on-surface-variant">{t('subtotal')}</span>
-                <span className="text-on-surface">{fmtCurrency(cartTotal)}</span>
+                <span className="text-on-surface">{fmt(cartTotal)}</span>
               </div>
               {tipAmount > 0 && (
                 <div className="flex justify-between text-sm mb-1">
                   <span className="text-on-surface-variant">{t('tip')}</span>
-                  <span className="text-on-surface">{fmtCurrency(tipAmount)}</span>
+                  <span className="text-on-surface">{fmt(tipAmount)}</span>
                 </div>
               )}
               <div className="flex justify-between text-sm mb-3">
                 <span className="text-on-surface-variant">{t('total')}</span>
-                <span className="text-lg font-bold text-primary">{fmtCurrency(grandTotal)}</span>
+                <span className="text-lg font-bold text-primary">{fmt(grandTotal)}</span>
               </div>
               <button
                 onClick={placeOrder}

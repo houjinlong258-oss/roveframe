@@ -3,6 +3,12 @@ import { decrypt } from '@/lib/crypto';
 import { invokeChat } from '@/lib/ai/router';
 import { fetchWithOutboundGuard } from '@/lib/security/outbound-url';
 import { CHANNEL_KEYS, type ChannelKey } from '@/lib/channels-presets';
+import { getSettings } from '@/lib/settings';
+import {
+  businessDayRange,
+  localDateInTimeZone,
+  resolveBusinessTimeZone,
+} from '@/lib/time';
 
 type ChannelConfig = Record<string, string>;
 
@@ -197,18 +203,21 @@ function webhookPayload(provider: ChannelKey): { test: unknown } | null {
 /** 聚合经营事实快照（营收/订单、库存告警、待回复差评、今日预约），供 AI 生成简报 */
 export async function buildStoreSnapshot(tenantId: string, businessId: string, locale = 'en'): Promise<string> {
   const client = getSupabaseClient();
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  // P0-8：按业务配置时区取本地零点切日（进程时区不参与口径）
+  const settings = await getSettings(tenantId, businessId);
+  const timeZone = resolveBusinessTimeZone(settings.locale?.timezone);
+  const todayStr = localDateInTimeZone(new Date(), timeZone);
+  const { start: todayStart, end: todayEnd } = businessDayRange(todayStr, timeZone);
   const todayIso = todayStart.toISOString();
-  const weekStart = new Date(todayStart);
-  weekStart.setDate(weekStart.getDate() - 6);
+  const todayEndIso = todayEnd.toISOString();
+  const weekStart = new Date(todayStart.getTime() - 6 * 86_400_000);
 
   const [todayOrders, weekOrders, inventory, pendingReviews, todayResv] = await Promise.all([
-    client.from('orders').select('total').eq('tenant_id', tenantId).eq('business_id', businessId).gte('created_at', todayIso).neq('status', 'cancelled'),
+    client.from('orders').select('total').eq('tenant_id', tenantId).eq('business_id', businessId).gte('created_at', todayIso).lt('created_at', todayEndIso).neq('status', 'cancelled'),
     client.from('orders').select('total').eq('tenant_id', tenantId).eq('business_id', businessId).gte('created_at', weekStart.toISOString()).neq('status', 'cancelled'),
     client.from('inventory_items').select('name, current_stock, safety_stock').eq('tenant_id', tenantId).eq('business_id', businessId),
     client.from('reviews').select('id').eq('tenant_id', tenantId).eq('business_id', businessId).eq('status', 'pending'),
-    client.from('reservations').select('customer_name, party_size, table_no, reserved_at').eq('tenant_id', tenantId).eq('business_id', businessId).gte('reserved_at', todayIso).order('reserved_at').limit(5),
+    client.from('reservations').select('customer_name, party_size, table_no, reserved_at').eq('tenant_id', tenantId).eq('business_id', businessId).gte('reserved_at', todayIso).lt('reserved_at', todayEndIso).order('reserved_at').limit(5),
   ]);
 
   const sum = (rows: { total?: string | number | null }[] | null) =>

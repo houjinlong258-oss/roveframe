@@ -7,50 +7,51 @@ import {
 } from '@/lib/tenant-db';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
 import { errorResponse } from '@/lib/api-helpers';
-
-function dayRange(dateStr: string): { start: string; end: string } {
-  // 按服务器本地时区解释自然日
-  const start = new Date(`${dateStr}T00:00:00`);
-  const end = new Date(start.getTime() + 86400000);
-  return { start: start.toISOString(), end: end.toISOString() };
-}
+import { getSettings } from '@/lib/settings';
+import {
+  businessDayRange,
+  localDateInTimeZone,
+  resolveBusinessTimeZone,
+} from '@/lib/time';
 
 export async function GET(request: NextRequest) {
   try {
     const ctx = requireBusinessContext(await getTenantContext(request));
     // P0-4：读接口 RBAC —— staff 无 reservations:read（电话/备注含 PII）。
     requirePermission(ctx, 'reservations:read');
-    const now = new Date();
-    const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    // P0-8：按业务时区取本地零点切日（进程时区不参与口径）
+    const settings = await getSettings(ctx.tenantId, ctx.businessId);
+    const timeZone = resolveBusinessTimeZone(settings.locale?.timezone);
+    const localToday = localDateInTimeZone(new Date(), timeZone);
     const date = request.nextUrl.searchParams.get('date') ?? localToday;
-    const { start, end } = dayRange(date);
+    const { start, end } = businessDayRange(date, timeZone);
+    const startIso = start.toISOString();
+    const endIso = end.toISOString();
 
     const listRes = await scopedTable(ctx, 'reservations')
-      .gte('reserved_at', start)
-      .lt('reserved_at', end)
+      .gte('reserved_at', startIso)
+      .lt('reserved_at', endIso)
       .order('reserved_at', { ascending: true });
     if (listRes.error) throw new Error(listRes.error.message);
     const list = (listRes.data ?? []) as { status: string; [k: string]: unknown }[];
 
-    // 本周取消率
-    const weekStart = new Date(start);
-    weekStart.setUTCDate(weekStart.getUTCDate() - weekStart.getUTCDay());
+    // 本周取消率（自然周起点：业务时区本周日零点）
+    const weekStart = new Date(start.getTime() - start.getUTCDay() * 86_400_000);
     const weekRes = await scopedTable(ctx, 'reservations', 'status')
       .gte('reserved_at', weekStart.toISOString());
     if (weekRes.error) throw new Error(weekRes.error.message);
     const week = (weekRes.data ?? []) as { status: string }[];
     const cancelRate = week.length > 0 ? Math.round((week.filter((r) => r.status === 'cancelled').length / week.length) * 100) : 0;
 
-    // 未来 6 天每日占用
+    // 未来 6 天每日占用（业务时区切日）
     const occupancy: { date: string; count: number }[] = [];
-    const startMs = new Date(start).getTime();
     for (let i = 0; i < 7; i++) {
-      const d = new Date(startMs + i * 86400000);
-      const ds = d.toISOString().slice(0, 10);
-      const { start: s2, end: e2 } = dayRange(ds);
+      const dayStart = new Date(start.getTime() + i * 86_400_000);
+      const ds = localDateInTimeZone(dayStart, timeZone);
+      const { start: s2, end: e2 } = businessDayRange(ds, timeZone);
       const dayRes = await scopedTable(ctx, 'reservations', 'id')
-        .gte('reserved_at', s2)
-        .lt('reserved_at', e2)
+        .gte('reserved_at', s2.toISOString())
+        .lt('reserved_at', e2.toISOString())
         .neq('status', 'cancelled');
       occupancy.push({ date: ds, count: (dayRes.data ?? []).length });
     }

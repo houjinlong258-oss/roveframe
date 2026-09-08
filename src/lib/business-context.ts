@@ -1,4 +1,10 @@
 import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { getSettings } from '@/lib/settings';
+import {
+  businessDayRange,
+  localDateInTimeZone,
+  resolveBusinessTimeZone,
+} from '@/lib/time';
 
 export type BusinessContext = {
   businessName: string;
@@ -30,36 +36,66 @@ export async function getBusinessContext(
   businessId: string,
 ): Promise<BusinessContext> {
   const client = getSupabaseClient();
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  // P0-8：按业务配置时区取本地零点切日；统计走 count/avg 聚合而非静默截断。
+  const settings = await getSettings(tenantId, businessId);
+  const timeZone = resolveBusinessTimeZone(settings.locale?.timezone);
+  const todayStr = localDateInTimeZone(new Date(), timeZone);
+  const { start: todayStart, end: todayEnd } = businessDayRange(todayStr, timeZone);
   const todayIso = todayStart.toISOString();
-  const yesterdayStart = new Date(todayStart);
-  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-  const weekStart = new Date(todayStart);
-  weekStart.setDate(weekStart.getDate() - 6);
+  const todayEndIso = todayEnd.toISOString();
+  const yesterdayStart = new Date(todayStart.getTime() - 86_400_000);
+  const weekStart = new Date(todayStart.getTime() - 6 * 86_400_000);
 
   const scopedQuery = (table: string, columns: string) => {
     return client.from(table).select(columns)
       .eq('tenant_id', tenantId)
       .eq('business_id', businessId);
   };
-  const [businessRes, todayRes, ydayRes, weekRes, reviewsRes, inventoryRes, customersRes, reservationsRes, productsRes, paymentsRes] = await Promise.all([
+  const [
+    businessRes,
+    todayRes,
+    ydayRes,
+    weekRes,
+    reviewsRecentRes,
+    reviewsAggRes,
+    inventoryRes,
+    customerCountRes,
+    churnRiskRes,
+    reservationsRes,
+    productsRes,
+    paymentsSucceededRes,
+    paymentsPendingRes,
+    paymentsFailedRes,
+  ] = await Promise.all([
     client.from('businesses').select('name, industry, location, language, currency')
       .eq('tenant_id', tenantId).eq('id', businessId).maybeSingle(),
-    scopedQuery('orders', 'total, channel').gte('created_at', todayIso).neq('status', 'cancelled'),
+    scopedQuery('orders', 'total, channel').gte('created_at', todayIso).lt('created_at', todayEndIso).neq('status', 'cancelled'),
     scopedQuery('orders', 'total, channel').gte('created_at', yesterdayStart.toISOString()).lt('created_at', todayIso).neq('status', 'cancelled'),
     scopedQuery('orders', 'total').gte('created_at', weekStart.toISOString()).neq('status', 'cancelled'),
+    // 差评要点：明确为「最近 20 条」口径
     scopedQuery('reviews', 'rating, content, status').order('created_at', { ascending: false }).limit(20),
+    // 评分/待回复：全量聚合（无截断）
+    scopedQuery('reviews', 'rating, status'),
     scopedQuery('inventory_items', 'name, current_stock, safety_stock'),
-    scopedQuery('customers', 'name, churn_risk').limit(500),
-    scopedQuery('reservations', 'id').gte('reserved_at', todayIso),
+    client.from('customers').select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId).eq('business_id', businessId),
+    scopedQuery('customers', 'name').eq('churn_risk', 'high').limit(5),
+    scopedQuery('reservations', 'id').gte('reserved_at', todayIso).lt('reserved_at', todayEndIso),
     scopedQuery('products', 'name, price, sales_count').eq('status', 'active').order('sales_count', { ascending: false }).limit(8),
-    scopedQuery('payments', 'amount, status').gte('created_at', weekStart.toISOString()).limit(200),
+    scopedQuery('payments', 'amount').eq('status', 'succeeded').gte('created_at', weekStart.toISOString()),
+    client.from('payments').select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId).eq('business_id', businessId)
+      .eq('status', 'pending').gte('created_at', weekStart.toISOString()),
+    client.from('payments').select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId).eq('business_id', businessId)
+      .in('status', ['failed', 'cancelled']).gte('created_at', weekStart.toISOString()),
   ]);
 
   const queryError = [
-    businessRes.error, todayRes.error, ydayRes.error, weekRes.error, reviewsRes.error,
-    inventoryRes.error, customersRes.error, reservationsRes.error, productsRes.error, paymentsRes.error,
+    businessRes.error, todayRes.error, ydayRes.error, weekRes.error, reviewsRecentRes.error,
+    reviewsAggRes.error, inventoryRes.error, customerCountRes.error, churnRiskRes.error,
+    reservationsRes.error, productsRes.error, paymentsSucceededRes.error,
+    paymentsPendingRes.error, paymentsFailedRes.error,
   ].find((error) => error !== null);
   if (queryError) throw new Error(`business context query failed: ${queryError.message}`);
 
@@ -88,15 +124,20 @@ export async function getBusinessContext(
     .slice(0, 8)
     .map((i) => i.name);
 
-  // 近期差评要点
-  const reviews = (reviewsRes.data ?? []) as unknown as { rating: number; content: string; status: string }[];
+  // 近期差评要点（明确口径：最近 20 条评论）
+  const reviews = (reviewsRecentRes.data ?? []) as unknown as { rating: number; content: string; status: string }[];
   const recentNegativeReviews = reviews
     .filter((r) => (r.rating ?? 5) <= 3)
     .slice(0, 3)
     .map((r) => r.content.slice(0, 80));
 
-  const reviewsAll = reviews;
-  const avgRating = reviewsAll.length ? reviewsAll.reduce((s, r) => s + (r.rating ?? 0), 0) / reviewsAll.length : 0;
+  // P0-8：平均分/待回复按全量评论聚合，不因 limit(20) 静默失真
+  const reviewsAll = (reviewsAggRes.data ?? []) as unknown as { rating: number | null; status: string }[];
+  const rated = reviewsAll.filter((r) => r.rating !== null && r.rating !== undefined);
+  const avgRating = rated.length
+    ? rated.reduce((s, r) => s + (r.rating ?? 0), 0) / rated.length
+    : 0;
+  const pendingReviews = reviewsAll.filter((r) => r.status === 'pending').length;
 
   const todayRevenue = Math.round(sum(todayRows) * 100) / 100;
   const yesterdayRevenue = Math.round(sum(ydayRows) * 100) / 100;
@@ -111,15 +152,14 @@ export async function getBusinessContext(
     price: Number(product.price ?? 0),
     salesCount: Number(product.sales_count ?? 0),
   }));
-  const paymentRows = (paymentsRes.data ?? []) as unknown as Array<{
-    amount: string | number; status: string;
+  const paymentRows = (paymentsSucceededRes.data ?? []) as unknown as Array<{
+    amount: string | number;
   }>;
   const paymentSummary = {
-    succeeded: paymentRows.filter((payment) => payment.status === 'succeeded').length,
-    pending: paymentRows.filter((payment) => payment.status === 'pending').length,
-    failed: paymentRows.filter((payment) => ['failed', 'cancelled'].includes(payment.status)).length,
+    succeeded: paymentRows.length,
+    pending: paymentsPendingRes.count ?? 0,
+    failed: paymentsFailedRes.count ?? 0,
     volume: Math.round(paymentRows
-      .filter((payment) => payment.status === 'succeeded')
       .reduce((total, payment) => total + Number(payment.amount ?? 0), 0) * 100) / 100,
   };
 
@@ -136,12 +176,10 @@ export async function getBusinessContext(
     weekRevenue,
     weekOrders: weekRows.length,
     avgRating: Math.round(avgRating * 10) / 10,
-    pendingReviews: reviewsAll.filter((r) => r.status === 'pending').length,
+    pendingReviews,
     lowStockItems,
-    customerCount: customersRes.data?.length ?? 0,
-    churnRiskCustomers: ((customersRes.data ?? []) as unknown as { name: string; churn_risk: string }[])
-      .filter((customer) => customer.churn_risk === 'high')
-      .slice(0, 5)
+    customerCount: customerCountRes.count ?? 0,
+    churnRiskCustomers: ((churnRiskRes.data ?? []) as unknown as { name: string }[])
       .map((customer) => customer.name),
     todayReservations: reservationsRes.data?.length ?? 0,
     channelRevenue,

@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processApproval } from '@/lib/agent/approvals';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
-import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
+import { getTenantContext, requireBusinessContext, requirePermission } from '@/lib/tenant';
+import { errorResponse } from '@/lib/api-helpers';
 
 /** List approval items for the current business (full lifecycle fields). */
 export async function GET(request: NextRequest) {
   try {
     const context = requireBusinessContext(await getTenantContext(request));
+    // P0-4：审批载荷（payload/arguments 含退款金额与工具参数）仅 owner/manager 可读。
+    requirePermission(context, 'approvals:read');
 
     const supabase = getSupabaseClient();
     const { data: approvals, error } = await supabase
@@ -24,12 +27,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ approvals });
   } catch (authError) {
-    // 未认证/无业务上下文：401 而非 500。
-    const message = authError instanceof Error ? authError.message : String(authError);
-    if (message.includes('uthenticat') || message.includes('session')) {
-      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-    }
-    return NextResponse.json({ error: message }, { status: 500 });
+    return errorResponse(authError);
   }
 }
 

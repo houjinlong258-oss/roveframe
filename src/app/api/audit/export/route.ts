@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
+import { getTenantContext, requireBusinessContext, requirePermission } from '@/lib/tenant';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { errorResponse } from '@/lib/api-helpers';
 
 interface AuditEventRow {
   created_at: string;
@@ -25,6 +26,8 @@ function csvCell(value: unknown): string {
 export async function GET(request: NextRequest) {
   try {
     const context = requireBusinessContext(await getTenantContext(request));
+    // P0-4：审计全量导出（含 result 载荷）仅 owner/manager。
+    requirePermission(context, 'audit:read');
     const { searchParams } = new URL(request.url);
     const approvalId = searchParams.get('approval_id') ?? undefined;
 
@@ -57,10 +60,6 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (authError) {
-    const message = authError instanceof Error ? authError.message : String(authError);
-    if (message.includes('uthenticat') || message.includes('session')) {
-      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-    }
-    return NextResponse.json({ error: message }, { status: 500 });
+    return errorResponse(authError);
   }
 }

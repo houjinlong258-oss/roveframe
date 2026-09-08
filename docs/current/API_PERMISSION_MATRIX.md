@@ -50,6 +50,20 @@ Every row executes: authenticated identity → exact tenant/business scope → p
 | `users:write` | Yes | No | No | `POST /api/auth/invite` (user creation and role assignment) |
 | `settings:write` | Yes | No | No | `POST /api/onboarding/confirm` (tenant/business bootstrap confirmation) |
 
+## Read boundaries (P0-4)
+
+GET endpoints are permission-gated with `requirePermission(ctx, '<entity>:read')`. Staff may read only `orders` and `customers`; anything carrying PII, approval payloads, or audit results requires manager or owner.
+
+| Permission | Owner | Manager | Staff | Routes and methods |
+|---|:---:|:---:|:---:|---|
+| `emails:read` | Yes | Yes | No | `GET /api/emails` (mail bodies) |
+| `reservations:read` | Yes | Yes | No | `GET /api/reservations` (phone/notes) |
+| `reviews:read` | Yes | Yes | No | `GET /api/reviews` |
+| `approvals:read` | Yes | Yes | No | `GET /api/agent/approvals` (payload/arguments) |
+| `audit:read` | Yes | Yes | No | `GET /api/audit/export` (results payload) |
+| `orders:read` / `customers:read` | Yes | Yes | Yes | staff-scoped read endpoints per role model |
+| Platform support access | — | — | — | `GET /api/admin/support-access` requires `tenantId` and returns only the caller's own grant. |
+
 ## Exact boundary exceptions
 
 These routes do not use merchant RBAC because their caller identity or semantics belong to a different trust boundary. They remain part of the executable route inventory.

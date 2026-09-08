@@ -22,6 +22,8 @@ export const ROLE_PERMISSIONS: Record<RoleKey, string[]> = {
     'notifications:read', 'notifications:write',
     'agent:use',
     'approvals:decide',
+    'approvals:read',
+    'audit:read',
     'coding:propose',
     'customization:write',
     'healing:write',

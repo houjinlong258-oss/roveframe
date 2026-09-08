@@ -1,28 +1,22 @@
 import { NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { adminHandler } from '@/lib/admin-api';
 import { createSupportGrant, getActiveSupportGrant, writePlatformAudit } from '@/lib/platform-admin';
 
 /**
- * GET /api/admin/support-access?tenantId= — 查看当前管理员的授权状态。
+ * GET /api/admin/support-access?tenantId= — 查看当前管理员对指定租户的授权状态（tenantId 必填）。
  * POST /api/admin/support-access — 创建限时只读排障授权（必须填原因）。
  */
 export async function GET(request: Request) {
   return adminHandler(request, { action: 'admin.support_access.read' }, async (ctx) => {
     const url = new URL(request.url);
     const tenantId = url.searchParams.get('tenantId');
-    if (tenantId) {
-      const grant = await getActiveSupportGrant(tenantId, ctx.adminId);
-      return NextResponse.json({ active: grant });
+    // P0-4：tenantId 必填；仅返回当前管理员自身的授权记录，
+    // 禁止无过滤列出其它管理员的授权记录。
+    if (!tenantId) {
+      return NextResponse.json({ error: 'tenantId required' }, { status: 400 });
     }
-    const client = getSupabaseClient();
-    const { data, error } = await client
-      .from('support_access_grants')
-      .select('id, tenant_id, admin_id, reason, read_only, starts_at, ends_at, revoked_at')
-      .order('created_at', { ascending: false })
-      .limit(100);
-    if (error) return NextResponse.json({ grants: [], active: null });
-    return NextResponse.json({ grants: data ?? [], active: null });
+    const grant = await getActiveSupportGrant(tenantId, ctx.adminId);
+    return NextResponse.json({ active: grant });
   });
 }
 

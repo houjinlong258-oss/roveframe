@@ -1,11 +1,13 @@
 import { json, jsonError, errorResponse } from '@/lib/api-helpers';
-import { getTenantContext } from '@/lib/tenant';
+import { getTenantContext, requirePermission } from '@/lib/tenant';
 import { scopedTable, updateWithScope } from '@/lib/tenant-db';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
 
 export async function GET(request: Request) {
   try {
     const ctx = await getTenantContext(request);
+    // P0-4：读接口 RBAC —— staff 无 reviews:read（含客户昵称/评论原文）。
+    requirePermission(ctx, 'reviews:read');
     const { searchParams } = new URL(request.url);
     const platform = searchParams.get('platform');
     const sentiment = searchParams.get('sentiment');

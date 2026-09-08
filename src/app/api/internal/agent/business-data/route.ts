@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { json } from '@/lib/api-helpers';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { analyzeChurnCustomers, executeRecoveryCampaign } from '@/lib/agent/recovery-campaign';
+import { verifyRoveAgentPayload } from '@/lib/roveagent/signature';
+import { hashApprovalArguments } from '@/lib/agent/approvals';
 
 const READ_OPERATIONS = [
   'read_sales',
@@ -43,6 +45,80 @@ function validServiceKey(provided: string, expected: string): boolean {
   const expectedBytes = Buffer.from(expected);
   return providedBytes.length === expectedBytes.length
     && timingSafeEqual(providedBytes, expectedBytes);
+}
+
+/** 审批关联校验失败（携带 HTTP 状态，供 POST 层转为结构化响应） */
+class CampaignApprovalError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'CampaignApprovalError';
+    this.status = status;
+  }
+}
+
+export interface CampaignApprovalRow {
+  id: string;
+  status?: string | null;
+  execution_id?: string | null;
+  agent?: string | null;
+  user_id?: string | null;
+  tool_name?: string | null;
+  action_type?: string | null;
+  arguments_hash?: string | null;
+}
+
+export interface CampaignSendParams {
+  campaign_title: unknown;
+  subject: unknown;
+  body: unknown;
+  customer_ids: unknown;
+  language: unknown;
+}
+
+/**
+ * 群发类写操作强制绑定已冻结审批的执行周期（P0 审批绕过防线）：
+ * 必须存在 action_type=roveagent.tool_call、tool_name=send_customer_recovery_campaign
+ * 且状态 ∈ {executing, executed} 的审批行，且请求参数 canonical hash 与冻结时一致。
+ * 导出供安全测试直接驱动。
+ */
+export function validateCampaignApprovalLinkage(
+  approval: CampaignApprovalRow | null,
+  params: CampaignSendParams,
+  invocationId: string,
+): { ok: true; approvalId: string; executionId: string; agentId: string; userId: string }
+  | { ok: false; status: number; error: string } {
+  if (!invocationId) {
+    return { ok: false, status: 403, error: 'campaign send requires an approved invocation_id' };
+  }
+  if (!approval) {
+    return { ok: false, status: 403, error: 'campaign send is not linked to any approval' };
+  }
+  if (approval.action_type !== 'roveagent.tool_call'
+    || approval.tool_name !== 'send_customer_recovery_campaign') {
+    return { ok: false, status: 409, error: 'approval invocation does not match the campaign tool' };
+  }
+  if (approval.status !== 'executing' && approval.status !== 'executed') {
+    return { ok: false, status: 409, error: `approval is not authorized for execution (${approval.status ?? 'unknown'})` };
+  }
+  const canonical = hashApprovalArguments({
+    campaign_title: params.campaign_title,
+    subject: params.subject,
+    body: params.body,
+    customer_ids: params.customer_ids,
+    language: params.language,
+  });
+  if (approval.arguments_hash && canonical !== approval.arguments_hash) {
+    return { ok: false, status: 409, error: 'campaign parameters changed after approval' };
+  }
+  return {
+    ok: true,
+    approvalId: approval.id,
+    executionId: approval.execution_id ?? '',
+    agentId: approval.agent ?? 'roveagent',
+    userId: approval.user_id ?? '',
+  };
 }
 
 function periodStart(period: 'today' | 'week'): string {
@@ -345,25 +421,29 @@ async function writeOperation(
       language: z.enum(['en', 'zh', 'es']).default('en'),
       invocation_id: z.string().trim().max(128).optional(),
     }).strict().parse(params);
+    const invocationId = value.invocation_id ?? '';
 
-    // 关联本次审批执行周期（Python 侧 invocation 由门禁冻结时生成）。
-    let approvalId = '';
-    let executionId = '';
-    let agentId = 'roveagent';
-    let userId = '';
-    if (value.invocation_id) {
-      const { data: approval } = await client.from('agent_approvals')
-        .select('id, execution_id, agent, user_id')
-        .eq('tenant_id', tenantId)
-        .eq('business_id', businessId)
-        .eq('invocation_id', value.invocation_id)
-        .maybeSingle();
-      if (approval) {
-        approvalId = String((approval as { id: string }).id);
-        executionId = String((approval as { execution_id?: string | null }).execution_id ?? '');
-        agentId = String((approval as { agent?: string }).agent ?? 'roveagent');
-        userId = String((approval as { user_id?: string | null }).user_id ?? '');
-      }
+    // P0 审批绕过防线：群发必须绑定已冻结且处于执行态的审批（无关联即拒绝），
+    // 冻结参数 canonical hash 与审批行一致才放行（参数被篡改即拒绝）。
+    const { data: approval } = await client.from('agent_approvals')
+      .select('id, status, execution_id, agent, user_id, tool_name, action_type, arguments_hash')
+      .eq('tenant_id', tenantId)
+      .eq('business_id', businessId)
+      .eq('invocation_id', invocationId)
+      .maybeSingle();
+    const linkage = validateCampaignApprovalLinkage(
+      approval ? (approval as CampaignApprovalRow) : null,
+      {
+        campaign_title: params.campaign_title,
+        subject: params.subject,
+        body: params.body,
+        customer_ids: params.customer_ids,
+        language: params.language,
+      },
+      invocationId,
+    );
+    if (!linkage.ok) {
+      throw new CampaignApprovalError(linkage.status, linkage.error);
     }
     const result = await executeRecoveryCampaign(tenantId, businessId, {
       campaign_title: value.campaign_title,
@@ -371,7 +451,12 @@ async function writeOperation(
       body: value.body,
       customer_ids: value.customer_ids,
       language: value.language,
-    }, { approvalId, executionId, agentId, userId });
+    }, {
+      approvalId: linkage.approvalId,
+      executionId: linkage.executionId,
+      agentId: linkage.agentId,
+      userId: linkage.userId,
+    });
     await auditConnectorWrite(tenantId, businessId, operation, result.campaign_id);
     return result;
   }
@@ -384,7 +469,22 @@ export async function POST(request: Request) {
   if (!validServiceKey(request.headers.get('x-roveagent-key') ?? '', expectedKey)) {
     return json({ error: 'invalid service authentication' }, 401);
   }
-  const parsed = requestSchema.safeParse(await request.json().catch(() => null));
+  // 请求体 HMAC + 时间戳（与 approvals/events 同强度）：防静态密钥泄露后的篡改/重放
+  const rawBody = await request.text();
+  if (!verifyRoveAgentPayload(
+    rawBody,
+    request.headers.get('x-roveagent-timestamp') ?? '',
+    request.headers.get('x-roveagent-signature') ?? '',
+  )) {
+    return json({ error: 'invalid or expired RoveAgent signature' }, 401);
+  }
+  let rawPayload: unknown;
+  try {
+    rawPayload = JSON.parse(rawBody);
+  } catch {
+    return json({ error: 'invalid business-data request' }, 400);
+  }
+  const parsed = requestSchema.safeParse(rawPayload);
   if (!parsed.success) return json({ error: 'invalid business-data request' }, 400);
   const { tenant_id: tenantId, business_id: businessId, operation, params } = parsed.data;
   try {
@@ -396,6 +496,9 @@ export async function POST(request: Request) {
       : await writeOperation(operation, tenantId, businessId, params);
     return json(scopeEnvelope(tenantId, businessId, data));
   } catch (error) {
+    if (error instanceof CampaignApprovalError) {
+      return json({ error: error.message }, error.status);
+    }
     if (error instanceof z.ZodError) return json({ error: 'invalid operation parameters' }, 400);
     return json({ error: error instanceof Error ? error.message : 'business-data operation failed' }, 500);
   }

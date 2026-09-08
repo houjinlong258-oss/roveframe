@@ -17,7 +17,7 @@
 import { updateActiveCustomization, TenantCustomizationBundle } from '../../custom/loader';
 import { pluginRegistry } from '../plugins/registry';
 import { PluginPermission } from '../plugins/types';
-import { invokeChat } from '../ai/router';
+import { invokeChat, PLATFORM_AI_SCOPE } from '../ai/router';
 
 // ---------------------------------------------------------------------------
 // 模板参数规格：AI 抽取的参数按键名收敛，数值夹取到 [min,max]
@@ -533,9 +533,10 @@ export class NLCustomizationEngine {
         },
         { role: 'user', content: userPrompt.slice(0, 1000) },
       ],
-      // 平台级定制引擎：无租户业务 scope（允许的例外），用 agent 标记审计来源
+      // 平台级定制引擎：显式平台 scope（PLATFORM_AI_SCOPE）——只允许平台内置模型，
+      // 路由层绝不读取任何租户的 settings/model_configs（跨租户凭据滥用防线）
       forwardHeaders,
-      undefined,
+      PLATFORM_AI_SCOPE,
       { agent: 'customization:nl-engine' }
     );
 

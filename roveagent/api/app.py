@@ -263,9 +263,12 @@ def create_app():
             raise HTTPException(404, f"unknown agent: {req.agent}")
 
         industry = req.industry
+        # L4 会话记忆强制绑定当前 session_id（同租户其它会话/用户的私密对话
+        # 绝不注入当前 Agent 上下文）。
         memories = ctx.memory.search(
             req.message, tenant_id=req.tenant_id,
             business_id=req.business_id, industry=industry, limit=5,
+            session_id=req.session_id,
         )
         memory_block = "\n".join(f"- [{m.kind}] {m.content}" for m in memories) or "(no memory)"
 

@@ -4,7 +4,11 @@
  * - joinEndpoint 处理 base URL 已含 /v1、尾斜杠、双斜杠等情况。
  * - assertBaseUrlAllowed 阻止生产环境把模型请求打到云 metadata、
  *   loopback、内网管理地址；本地模型仅在非生产显式 opt-in。
+ * - checkBaseUrlResolved 在字面校验之上叠加 DNS 解析逐地址复检
+ *   （防公网域名解析到内网的重绑定），供发起真实连接前调用。
  */
+
+import { assertDnsResolutionSafe, expandIpv6, isBlockedIPv6, isMetadataHostname, isRebindingHostname, parseSingleNumberIpv4 } from '@/lib/security/outbound-url';
 
 /** 把 base 与 path 拼成单个 URL，避免出现 /v1/v1 或双斜杠。 */
 export function joinEndpoint(baseUrl: string, path: string): string {
@@ -47,7 +51,17 @@ function isPrivateIPv4(host: string): boolean {
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
   if (a === 0) return true;
+  // CGNAT（运营商级 NAT，不可作为公网出站目标）
+  if (a === 100 && b >= 64 && b <= 127) return true;
   return false;
+}
+
+/** IPv6 字面量是否为 loopback/ULA/链路本地/映射私网/保留 */
+function isPrivateIPv6Literal(host: string): boolean {
+  const bare = host.replace(/^\[|\]$/g, '');
+  const bytes = expandIpv6(bare);
+  if (!bytes) return false;
+  return isBlockedIPv6(bytes);
 }
 
 export interface BaseUrlCheck {
@@ -57,8 +71,8 @@ export interface BaseUrlCheck {
 }
 
 /**
- * 校验自定义 base URL。
- * 生产默认：仅 https，公网主机，禁止 metadata/loopback/私网。
+ * 校验自定义 base URL（同步字面校验，不发起 DNS）。
+ * 生产默认：仅 https，公网主机，禁止 metadata/loopback/私网/重绑定域名。
  * 非生产 + allowLocal：允许 http 与 loopback/私网（本地 Ollama/LM Studio 等），
  * 但仍禁止云 metadata 地址。
  */
@@ -73,23 +87,28 @@ export function checkBaseUrl(raw: string, policy: BaseUrlPolicy = {}): BaseUrlCh
     return { ok: false, reason: 'invalid_url' };
   }
 
-  const host = url.hostname.toLowerCase();
-  const isLoopback = host === 'localhost' || host === '::1' || host === '[::1]' || host.startsWith('127.');
+  const host = url.hostname.toLowerCase().replace(/\.$/, '');
 
   // 云 metadata 在任何环境下都禁止
-  if (BLOCKED_HOSTNAMES.has(host) || BLOCKED_IPS.has(host)) {
+  if (BLOCKED_HOSTNAMES.has(host) || BLOCKED_IPS.has(host) || isMetadataHostname(host)) {
     return { ok: false, reason: 'metadata_endpoint_blocked' };
   }
+  // DNS 重绑定域名：默认拒绝；本地模型显式 opt-in 才放行
+  if (!allowLocal && isRebindingHostname(host)) {
+    return { ok: false, reason: 'rebinding_hostname_blocked' };
+  }
+
+  const isLoopback = host === 'localhost' || host === '::1' || host.startsWith('127.');
 
   if (url.protocol === 'https:') {
-    if (production && !allowLocal && (isLoopback || isPrivateIPv4(host))) {
+    if (production && !allowLocal && (isLoopback || isPrivateIPv4(host) || isPrivateIPv6Literal(host))) {
       return { ok: false, reason: 'private_address_blocked_in_production' };
     }
     return { ok: true, url };
   }
 
   if (url.protocol === 'http:') {
-    const localTarget = isLoopback || isPrivateIPv4(host);
+    const localTarget = isLoopback || isPrivateIPv4(host) || isPrivateIPv6Literal(host);
     // 公网明文 http 任何环境都拒绝（密钥会明文传输）
     if (!localTarget) return { ok: false, reason: 'plaintext_http_to_public_host' };
     // 本地模型必须显式 opt-in
@@ -98,6 +117,27 @@ export function checkBaseUrl(raw: string, policy: BaseUrlPolicy = {}): BaseUrlCh
   }
 
   return { ok: false, reason: 'unsupported_protocol' };
+}
+
+/**
+ * 字面校验 + DNS 解析逐地址复检（防域名重绑定到私网/loopback/metadata）。
+ * 供即将发起真实连接的调用点使用；DNS 失败按拒绝处理（fail-closed）。
+ */
+export async function checkBaseUrlResolved(raw: string, policy: BaseUrlPolicy = {}): Promise<BaseUrlCheck> {
+  const check = checkBaseUrl(raw, policy);
+  if (!check.ok || !check.url) return check;
+  const host = check.url.hostname.toLowerCase().replace(/\.$/, '');
+  const looksLikeLiteral = isIPv4(host)
+    || parseSingleNumberIpv4(host) !== null
+    || expandIpv6(host.replace(/^\[|\]$/g, '')) !== null;
+  if (looksLikeLiteral) return check;
+  if (policy.allowLocal) return check;
+  try {
+    await assertDnsResolutionSafe(host);
+  } catch {
+    return { ok: false, reason: 'dns_resolves_to_private' };
+  }
+  return check;
 }
 
 /** 校验失败时抛出带原因的 Error；成功返回规范化 URL 字符串。 */

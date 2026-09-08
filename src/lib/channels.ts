@@ -1,6 +1,7 @@
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { decrypt } from '@/lib/crypto';
 import { invokeChat } from '@/lib/ai/router';
+import { fetchWithOutboundGuard } from '@/lib/security/outbound-url';
 import { CHANNEL_KEYS, type ChannelKey } from '@/lib/channels-presets';
 
 type ChannelConfig = Record<string, string>;
@@ -85,7 +86,8 @@ export async function sendChannelMessage(
       const token = config.accessToken?.trim();
       const roomId = config.roomId?.trim();
       if (!hs || !token || !roomId) throw new Error('homeserver, accessToken and roomId required');
-      const resp = await fetch(
+      // SSRF：homeserver 为商户配置输入，出站统一校验（公网 https + DNS 复检 + 重定向复检）
+      const resp = await fetchWithOutboundGuard(
         `${hs}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${Date.now()}`,
         {
           method: 'PUT',
@@ -94,7 +96,7 @@ export async function sendChannelMessage(
           signal: AbortSignal.timeout(15000),
         },
       );
-      if (!resp.ok) throw new Error(`Matrix ${resp.status}: ${await resp.text()}`);
+      if (!resp.ok) throw new Error(`Matrix ${resp.status}`);
       return;
     }
     case 'feishu':
@@ -115,13 +117,15 @@ export async function sendChannelMessage(
 async function postWebhook(config: ChannelConfig, payload: unknown): Promise<void> {
   const url = config.webhookUrl?.trim();
   if (!url) throw new Error('webhookUrl required');
-  const resp = await fetch(url, {
+  // SSRF：webhook URL 为客户端可控输入，出站统一校验（公网 https + DNS 复检 + 重定向复检）；
+  // 失败不回显上游响应体（防内网响应泄露）
+  const resp = await fetchWithOutboundGuard(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(15000),
   });
-  if (!resp.ok) throw new Error(`Webhook ${resp.status}: ${await resp.text()}`);
+  if (!resp.ok) throw new Error(`Webhook ${resp.status}`);
 }
 
 /** 连通性测试：机器人渠道只验证凭据，webhook 渠道发送一条测试消息 */

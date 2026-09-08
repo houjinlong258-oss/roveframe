@@ -8,8 +8,11 @@ internal API with an explicit tenant and business scope.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -62,13 +65,25 @@ class BusinessDataLayer:
         if self._transport is not None:
             response = self._transport(operation, payload)
         else:
+            # 请求体 HMAC + 时间戳（与 approvals/events 推送同强度）：
+            # 防静态共享密钥泄露后的请求篡改/重放。
+            body_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            timestamp = str(int(time.time()))
+            signing_key = os.environ.get("ROVEAGENT_APPROVAL_SECRET", "") or self.api_key
+            signature = hmac.new(
+                signing_key.encode("utf-8"),
+                timestamp.encode("ascii") + b"." + body_bytes,
+                hashlib.sha256,
+            ).hexdigest()
             request = urllib.request.Request(
                 f"{self.base_url}/api/internal/agent/business-data",
-                data=json.dumps(payload).encode("utf-8"),
+                data=body_bytes,
                 method="POST",
                 headers={
                     "Content-Type": "application/json",
                     "X-RoveAgent-Key": self.api_key,
+                    "X-RoveAgent-Timestamp": timestamp,
+                    "X-RoveAgent-Signature": signature,
                 },
             )
             try:

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantContext, requirePermission } from '@/lib/tenant';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
+import { fetchWithOutboundGuard } from '@/lib/security/outbound-url';
 
 // 集成连通性测试：按服务商调用真实只读接口
 async function testIntegration(request: NextRequest) {
@@ -15,7 +16,8 @@ async function testIntegration(request: NextRequest) {
       case 'erpnext': {
         const { url, apiKey, apiSecret } = config;
         if (!url || !apiKey || !apiSecret) return NextResponse.json({ ok: false, error: 'url, apiKey, apiSecret required' });
-        const resp = await fetch(`${url.replace(/\/$/, '')}/api/method/ping`, {
+        // SSRF：ERPNext url 为客户端可控输入，出站统一校验（公网 https + DNS 复检 + 重定向复检）
+        const resp = await fetchWithOutboundGuard(`${url.replace(/\/$/, '')}/api/method/ping`, {
           headers: { Authorization: `token ${apiKey}:${apiSecret}` },
           signal: AbortSignal.timeout(15000),
         });
@@ -35,7 +37,8 @@ async function testIntegration(request: NextRequest) {
       case 'shopify': {
         const { shopDomain, accessToken } = config;
         if (!shopDomain || !accessToken) return NextResponse.json({ ok: false, error: 'shopDomain, accessToken required' });
-        const resp = await fetch(`https://${shopDomain}/admin/api/2024-04/shop.json`, {
+        // SSRF：shopDomain 为客户端可控输入（可含 IP/重绑定域名），出站统一校验
+        const resp = await fetchWithOutboundGuard(`https://${shopDomain}/admin/api/2024-04/shop.json`, {
           headers: { 'X-Shopify-Access-Token': accessToken },
           signal: AbortSignal.timeout(15000),
         });

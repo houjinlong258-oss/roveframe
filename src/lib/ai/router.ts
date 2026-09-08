@@ -6,6 +6,7 @@ import { getCatalogEntry, runtimeProtocolOf } from "@/lib/ai/provider-catalog";
 import { AIError, classifyHTTPError } from "@/lib/ai/errors";
 import { joinEndpoint, checkBaseUrl } from "@/lib/ai/url-utils";
 import { recordAIUsage } from "@/lib/ai/usage-ledger";
+import { assertSafeOutboundUrl, fetchWithOutboundGuard } from "@/lib/security/outbound-url";
 
 /** 多模态内容块：text + image_url（url 可为 data URL 或 http(s) 地址） */
 export type ChatContentPart =
@@ -46,6 +47,28 @@ export type AIRequestScope = {
   userId?: string;
   requestId?: string;
 };
+
+/**
+ * 平台级调用（无租户业务 scope）的显式标记。
+ * 此类调用只允许走平台内置模型（AUTO_ROUTE），永不读取任何租户的
+ * settings/model_configs，防止跨租户凭据滥用。
+ */
+export const PLATFORM_AI_SCOPE: null = null;
+
+/**
+ * 解析前校验 scope 形状（fail-closed）。导出供安全契约测试使用。
+ * - scope 缺省 → 平台级路由（platform_scope）
+ * - scope 存在但 tenant/business 缺失 → 拒绝（business_scope_required）
+ */
+export function validateModelResolutionScope(
+  scope: AIRequestScope | null,
+): { ok: true; tenantId: string; businessId: string } | { ok: false; reason: string } {
+  if (!scope) return { ok: false, reason: 'platform_scope' };
+  if (!scope.tenantId || !scope.businessId) {
+    return { ok: false, reason: 'business_scope_required' };
+  }
+  return { ok: true, tenantId: scope.tenantId, businessId: scope.businessId };
+}
 
 export interface AICallOptions {
   signal?: AbortSignal;
@@ -94,17 +117,33 @@ function textOf(content: ChatContent): string {
   return content.filter((p): p is { type: "text"; text: string } => p.type === "text").map((p) => p.text).join("\n");
 }
 
+/** 图片拉取上限（防恶意超大响应占内存） */
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
 /** 从 URL 或 data URL 拿到 base64 图片数据（Anthropic 图片协议要求 base64） */
 async function imageToBase64(url: string): Promise<{ media_type: string; data: string }> {
   const dataMatch = /^data:([^;,]+);base64,([\s\S]+)$/.exec(url);
   if (dataMatch) {
     return { media_type: dataMatch[1], data: dataMatch[2].replace(/\s/g, "") };
   }
-  const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  // SSRF：模型消息里的 image_url 是客户端可控输入，与模型 base URL 同等对待——
+  // 仅公网 https（DNS 解析逐地址复检 + 重定向逐跳复检），禁止 metadata/loopback/私网。
+  const safeUrl = await assertSafeOutboundUrl(url, {});
+  const resp = await fetchWithOutboundGuard(
+    safeUrl,
+    { signal: AbortSignal.timeout(15000) },
+    {},
+  );
   if (!resp.ok) throw new Error(`图片拉取失败 (${resp.status})`);
   const mediaType = (resp.headers.get("content-type") || "image/jpeg").split(";")[0];
-  const data = Buffer.from(await resp.arrayBuffer()).toString("base64");
-  return { media_type: mediaType, data };
+  if (!/^image\//i.test(mediaType)) {
+    throw new Error('图片地址返回的不是图片内容');
+  }
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  if (buffer.length > MAX_IMAGE_BYTES) {
+    throw new Error('图片超过 10MB 上限');
+  }
+  return { media_type: mediaType, data: buffer.toString("base64") };
 }
 
 type AnthropicContentBlock =
@@ -131,11 +170,13 @@ interface ModelConfigRow {
   base_url: string | null;
   default_model: string | null;
   is_enabled: boolean;
-  tenant_id?: string;
-  business_id?: string | null;
   timeout_ms?: number | null;
   max_retries?: number | null;
 }
+
+/** model_configs 读取列白名单：绝不 select('*')，凭据列仅在路由层解密使用 */
+const MODEL_CONFIG_COLUMNS =
+  'provider, api_key_encrypted, base_url, default_model, is_enabled, timeout_ms, max_retries';
 
 interface Resolution {
   resolved: ResolvedModel;
@@ -171,19 +212,26 @@ function platformResolution(capability: Capability, requestId: string, usedFallb
  * 配置存在但不可用（SSRF 拒绝、adapter 未验收）时抛结构化错误，
  * 不静默切换到平台模型。
  */
-async function resolveModelDetailed(capability: Capability, scope?: AIRequestScope): Promise<Resolution> {
+async function resolveModelDetailed(capability: Capability, scope: AIRequestScope | null = null): Promise<Resolution> {
   const requestId = scope?.requestId ?? crypto.randomUUID();
-  if (scope && !scope.businessId) {
+  const scopeCheck = validateModelResolutionScope(scope);
+  if (!scopeCheck.ok) {
+    if (scopeCheck.reason === 'platform_scope') {
+      // 平台级任务：只允许平台内置模型，绝不读取任何租户的 settings/model_configs
+      //（防止无 scope 时无过滤 select 命中任意租户并解密其付费 Key）。
+      return platformResolution(capability, requestId, false, null);
+    }
     throw new Error('business scope is required for model resolution');
   }
+  const tenantId = scopeCheck.tenantId;
+  const businessId = scopeCheck.businessId;
   const client = getSupabaseClient();
-  let settingsQuery = client.from("settings").select("model_assign");
-  if (scope) {
-    settingsQuery = settingsQuery
-      .eq("tenant_id", scope.tenantId)
-      .eq("business_id", scope.businessId);
-  }
-  const { data: settingsRows, error: sErr } = await settingsQuery.limit(1);
+  const { data: settingsRows, error: sErr } = await client
+    .from("settings")
+    .select("model_assign")
+    .eq("tenant_id", tenantId)
+    .eq("business_id", businessId)
+    .limit(1);
   if (sErr) throw new Error(`读取设置失败: ${sErr.message}`);
   const assign = (settingsRows?.[0]?.model_assign ?? {}) as Record<string, string>;
   const target = assign[capability] ?? "auto";
@@ -196,17 +244,13 @@ async function resolveModelDetailed(capability: Capability, scope?: AIRequestSco
   const provider = PROVIDER_ALIAS[rawProvider] ?? rawProvider;
   const catalog = getCatalogEntry(provider);
 
-  let configQuery = client
+  const { data: cfgRows, error: cErr } = await client
     .from("model_configs")
-    .select("*")
-    .eq("provider", rawProvider)
-    .eq("is_enabled", true);
-  if (scope) {
-    configQuery = configQuery
-      .eq("tenant_id", scope.tenantId)
-      .eq("business_id", scope.businessId);
-  }
-  const { data: cfgRows, error: cErr } = await configQuery;
+    .select(MODEL_CONFIG_COLUMNS)
+    .eq("provider", provider)
+    .eq("is_enabled", true)
+    .eq("tenant_id", tenantId)
+    .eq("business_id", businessId);
   if (cErr) throw new Error(`读取模型配置失败: ${cErr.message}`);
 
   const rows = (cfgRows ?? []) as ModelConfigRow[];
@@ -288,7 +332,12 @@ export async function fetchWithResilience(
       await new Promise((r) => setTimeout(r, 250 * 2 ** (attempt - 1)));
     }
     try {
-      const resp = await fetch(url, { ...init, signal: composeSignal(resolved, opts) });
+      // 受控出站：重定向逐跳复检 + DNS 解析后逐地址拦截（allowLocal 仅非生产本地模型）
+      const resp = await fetchWithOutboundGuard(
+        url,
+        { ...init, signal: composeSignal(resolved, opts) },
+        resolved.allowLocal ? { allowHttp: true, allowPrivate: true } : {},
+      );
       if (resp.ok) return resp;
       const { code, retryable } = classifyHTTPError(resp.status);
       const body = await resp.text().catch(() => "");
@@ -302,6 +351,19 @@ export async function fetchWithResilience(
       if (err instanceof AIError) {
         lastError = err;
         continue;
+      }
+      // SSRF/重定向守卫拒绝：结构化不可重试错误，绝不换路重试绕过
+      if (err instanceof Error && err.message.startsWith('outbound_url_rejected:')) {
+        throw new AIError(
+          {
+            code: "ssrf_blocked",
+            provider: resolved.provider,
+            model: resolved.model,
+            requestId,
+            retryable: false,
+          },
+          err.message,
+        );
       }
       const isTimeout = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
       lastError = new AIError(
@@ -329,7 +391,7 @@ interface UsageCapture {
 
 async function trackUsage(
   diagnostics: AIRouteDiagnostics,
-  scope: AIRequestScope | undefined,
+  scope: AIRequestScope | null,
   opts: AICallOptions | undefined,
   startedAt: number,
   status: "ok" | "error" | "fallback",
@@ -362,7 +424,7 @@ export async function* streamChat(
   capability: Capability,
   messages: ChatMessage[],
   forwardHeaders?: Record<string, string>,
-  scope?: AIRequestScope,
+  scope: AIRequestScope | null = null,
   opts?: AICallOptions,
 ): AsyncGenerator<string> {
   const startedAt = Date.now();
@@ -397,7 +459,7 @@ export async function invokeChat(
   capability: Capability,
   messages: ChatMessage[],
   forwardHeaders?: Record<string, string>,
-  scope?: AIRequestScope,
+  scope: AIRequestScope | null = null,
   opts?: AICallOptions,
 ): Promise<string> {
   let result = "";
@@ -408,7 +470,7 @@ export async function invokeChat(
 }
 
 /** 诊断当前路由决策（设置页展示“实际使用的 provider/model/fallback”），不发起模型调用 */
-export async function peekAIRoute(capability: Capability, scope?: AIRequestScope): Promise<AIRouteDiagnostics> {
+export async function peekAIRoute(capability: Capability, scope: AIRequestScope | null = null): Promise<AIRouteDiagnostics> {
   const { diagnostics } = await resolveModelDetailed(capability, scope);
   return diagnostics;
 }
@@ -423,7 +485,7 @@ export async function invokeToolDecision(
   messages: ChatMessage[],
   tools: AIToolDefinition[],
   _forwardHeaders?: Record<string, string>,
-  scope?: AIRequestScope,
+  scope: AIRequestScope | null = null,
   opts?: AICallOptions,
 ): Promise<AIToolDecision> {
   if (tools.length === 0) return { supported: true, text: '', toolCalls: [] };

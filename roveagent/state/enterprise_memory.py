@@ -154,7 +154,8 @@ class EnterpriseMemory:
         layers: Optional[Sequence[MemoryLayer]] = None,
         limit: int = 8,
     ) -> list[MemoryRecord]:
-        """租户过滤检索。L0 全局 + L1 同行业 + L2/L3/L4 本租户。"""
+        """租户过滤检索。L0 全局 + L1 同行业 + L2/L3 本租户业务 +
+        L4 本租户业务且同会话（未传 session_id 时不含 L4）。"""
         if not tenant_id or not business_id:
             raise ValueError("tenant_id and business_id are required")
         now = time.time()
@@ -170,7 +171,10 @@ class EnterpriseMemory:
         if MemoryLayer.L1_INDUSTRY in wanted and industry:
             layer_clauses.append("(m.layer = 1 AND m.industry = ?)")
             params.append(industry)
-        tenant_layers = [int(l) for l in wanted if l >= MemoryLayer.L2_TENANT]
+        tenant_layers = [
+            int(l) for l in wanted
+            if l >= MemoryLayer.L2_TENANT and l != MemoryLayer.L4_SESSION
+        ]
         if tenant_layers:
             ph = ",".join("?" * len(tenant_layers))
             layer_clauses.append(
@@ -179,6 +183,15 @@ class EnterpriseMemory:
             params.extend(tenant_layers)
             params.append(tenant_id)
             params.append(business_id)
+        # L4 会话记忆：强制 session_id 精确匹配（P0 跨会话/跨用户泄漏防线）；
+        # 调用方未提供 session_id 时静默排除 L4（L0–L3 语义不变）。
+        if MemoryLayer.L4_SESSION in wanted:
+            if session_id:
+                layer_clauses.append(
+                    "(m.layer = 4 AND m.tenant_id = ? AND m.business_id = ?"
+                    " AND m.session_id = ?)"
+                )
+                params.extend([tenant_id, business_id, session_id])
         if not layer_clauses:
             return []
 

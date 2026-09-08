@@ -6,6 +6,7 @@
 import { getCatalogEntry, runtimeProtocolOf } from '@/lib/ai/provider-catalog';
 import { joinEndpoint, checkBaseUrl } from '@/lib/ai/url-utils';
 import { sanitizeProviderMessage } from '@/lib/ai/errors';
+import { fetchWithOutboundGuard, type OutboundUrlPolicy } from '@/lib/security/outbound-url';
 
 export interface ConnectionTestResult {
   ok: boolean;
@@ -23,8 +24,18 @@ export interface ConnectionTestInput {
   allowLocal?: boolean;
 }
 
-async function fetchJson(url: string, init: RequestInit, timeoutMs: number): Promise<{ status: number; body: unknown }> {
-  const resp = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+async function fetchJson(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  policy: OutboundUrlPolicy,
+): Promise<{ status: number; body: unknown }> {
+  // 连接测试同样受出站 SSRF 守卫约束（DNS 解析复检 + 重定向逐跳复检）
+  const resp = await fetchWithOutboundGuard(
+    url,
+    { ...init, signal: AbortSignal.timeout(timeoutMs) },
+    policy,
+  );
   const text = await resp.text();
   let body: unknown = null;
   try {
@@ -68,6 +79,9 @@ export async function testProviderConnection(input: ConnectionTestInput): Promis
 
   const timeoutMs = input.timeoutMs ?? 15000;
   const model = input.model || entry?.models[0]?.id || 'gpt-4o-mini';
+  const outboundPolicy: OutboundUrlPolicy = input.allowLocal
+    ? { allowHttp: true, allowPrivate: true }
+    : {};
 
   try {
     if (protocol === 'anthropic') {
@@ -75,7 +89,7 @@ export async function testProviderConnection(input: ConnectionTestInput): Promis
       try {
         const list = await fetchJson(joinEndpoint(baseUrl, 'v1/models'), {
           headers: { 'x-api-key': input.apiKey ?? '', 'anthropic-version': '2023-06-01' },
-        }, timeoutMs);
+        }, timeoutMs, outboundPolicy);
         if (list.status >= 200 && list.status < 300) {
           return { ok: true, latencyMs: Date.now() - startedAt, models: extractAnthropicModels(list.body), error: null };
         }
@@ -94,7 +108,7 @@ export async function testProviderConnection(input: ConnectionTestInput): Promis
           max_tokens: 1,
           messages: [{ role: 'user', content: 'ping' }],
         }),
-      }, timeoutMs);
+      }, timeoutMs, outboundPolicy);
       if (probe.status >= 200 && probe.status < 300) {
         return { ok: true, latencyMs: Date.now() - startedAt, models: null, error: null };
       }
@@ -105,7 +119,7 @@ export async function testProviderConnection(input: ConnectionTestInput): Promis
     try {
       const list = await fetchJson(joinEndpoint(baseUrl, 'models'), {
         headers: { Authorization: `Bearer ${input.apiKey ?? ''}` },
-      }, timeoutMs);
+      }, timeoutMs, outboundPolicy);
       if (list.status >= 200 && list.status < 300) {
         return { ok: true, latencyMs: Date.now() - startedAt, models: extractOpenAIModels(list.body), error: null };
       }
@@ -123,7 +137,7 @@ export async function testProviderConnection(input: ConnectionTestInput): Promis
         max_tokens: 1,
         messages: [{ role: 'user', content: 'ping' }],
       }),
-    }, timeoutMs);
+    }, timeoutMs, outboundPolicy);
     if (probe.status >= 200 && probe.status < 300) {
       return { ok: true, latencyMs: Date.now() - startedAt, models: null, error: null };
     }

@@ -12,7 +12,7 @@
  *   4. This module never writes to the filesystem.
  */
 
-import { invokeChat } from '@/lib/ai/router';
+import { invokeChat, PLATFORM_AI_SCOPE } from '@/lib/ai/router';
 import { CodingTask, CodingContext, CodingProposal, CodeChange } from './types';
 import { checkPath } from './permission-guard';
 
@@ -132,9 +132,10 @@ export async function generateCodingProposal(
         { role: 'system', content: buildSystemPrompt(context) },
         { role: 'user', content: buildUserPrompt(task) },
       ],
-      // 平台级自愈任务：无租户业务 scope（允许的例外），用 agent 标记审计来源
+      // 平台级自愈任务：显式平台 scope（PLATFORM_AI_SCOPE）——只允许平台内置模型，
+      // 路由层绝不读取任何租户的 settings/model_configs（跨租户凭据滥用防线）
       forwardHeaders,
-      undefined,
+      PLATFORM_AI_SCOPE,
       { agent: 'coding-agent:code-generator' }
     );
   } catch (err) {

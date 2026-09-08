@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { joinEndpoint, checkBaseUrl, assertBaseUrlAllowed } from '../src/lib/ai/url-utils';
+import { joinEndpoint, checkBaseUrl, checkBaseUrlResolved, assertBaseUrlAllowed } from '../src/lib/ai/url-utils';
 import { AIError, sanitizeProviderMessage, classifyHTTPError, isAIError } from '../src/lib/ai/errors';
 import { PROVIDER_CATALOG, getCatalogEntry, runtimeProtocolOf, catalogSummary } from '../src/lib/ai/provider-catalog';
 import { fetchWithResilience, parseSSEDataLines, type ResolvedModel } from '../src/lib/ai/router';
@@ -67,6 +67,20 @@ describe('checkBaseUrl SSRF 策略', () => {
     assert.equal(checkBaseUrl('http://localhost:11434/v1', { production: false, allowLocal: true }).ok, true);
     assert.equal(checkBaseUrl('http://192.168.1.20:8000/v1', { production: false, allowLocal: true }).ok, true);
     assert.equal(checkBaseUrl('http://203.0.113.9/v1', { production: false, allowLocal: true }).ok, false);
+  });
+
+  test('DNS 重绑定域名、十进制/八进制 IP 与 IPv6 私网变体在生产被拒绝', () => {
+    assert.equal(checkBaseUrl('https://127.0.0.1.nip.io/v1', { production: true }).ok, false);
+    assert.equal(checkBaseUrl('https://2130706433/v1', { production: true }).ok, false);
+    assert.equal(checkBaseUrl('https://0177.0.0.1/v1', { production: true }).ok, false);
+    assert.equal(checkBaseUrl('https://[::1]/v1', { production: true }).ok, false);
+    assert.equal(checkBaseUrl('https://[::ffff:127.0.0.1]/v1', { production: true }).ok, false);
+    assert.equal(checkBaseUrl('https://[fd00::5]/v1', { production: true }).ok, false);
+  });
+
+  test('DNS 解析层：localhost 在生产被拒绝（解析到 loopback）', async () => {
+    const check = await checkBaseUrlResolved('https://localhost/v1', { production: true });
+    assert.equal(check.ok, false);
   });
 
   test('非法 URL 与不支持协议', () => {
@@ -141,7 +155,7 @@ describe('fetchWithResilience', () => {
       if (calls < 3) return new Response('rate limited', { status: 429 });
       return new Response('{}', { status: 200 });
     }) as typeof fetch;
-    const resp = await fetchWithResilience('https://api.example.com/v1/chat/completions', { method: 'POST' }, fakeResolved(), 'req_retry');
+    const resp = await fetchWithResilience('https://8.8.8.8/v1/chat/completions', { method: 'POST' }, fakeResolved(), 'req_retry');
     assert.equal(resp.status, 200);
     assert.equal(calls, 3);
   });
@@ -153,7 +167,7 @@ describe('fetchWithResilience', () => {
       return new Response('bad request sk-leak-should-hide-999', { status: 400 });
     }) as typeof fetch;
     await assert.rejects(
-      fetchWithResilience('https://api.example.com/v1/chat/completions', { method: 'POST' }, fakeResolved(), 'req_4xx'),
+      fetchWithResilience('https://8.8.8.8/v1/chat/completions', { method: 'POST' }, fakeResolved(), 'req_4xx'),
       (err: unknown) => {
         assert.ok(isAIError(err));
         assert.equal((err as AIError).code, 'provider_error');
@@ -172,7 +186,7 @@ describe('fetchWithResilience', () => {
       return new Response('oops', { status: 500 });
     }) as typeof fetch;
     await assert.rejects(
-      fetchWithResilience('https://api.example.com/v1/x', { method: 'POST' }, fakeResolved({ maxRetries: 2 }), 'req_500'),
+      fetchWithResilience('https://8.8.8.8/v1/x', { method: 'POST' }, fakeResolved({ maxRetries: 2 }), 'req_500'),
       (err: unknown) => isAIError(err) && (err as AIError).code === 'provider_unavailable',
     );
     assert.equal(calls, 3); // 1 + 2 retries，有界
@@ -185,7 +199,7 @@ describe('fetchWithResilience', () => {
       if (calls === 1) throw new TypeError('fetch failed');
       return new Response('{}', { status: 200 });
     }) as typeof fetch;
-    const resp = await fetchWithResilience('https://api.example.com/v1/x', { method: 'POST' }, fakeResolved(), 'req_net');
+    const resp = await fetchWithResilience('https://8.8.8.8/v1/x', { method: 'POST' }, fakeResolved(), 'req_net');
     assert.equal(resp.status, 200);
     assert.equal(calls, 2);
   });

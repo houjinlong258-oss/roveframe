@@ -26,6 +26,7 @@ Design:
 import copy
 import json
 import logging
+import re
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -61,9 +62,32 @@ _memory_surface_flags: ContextVar[Optional[Tuple[bool, bool]]] = ContextVar(
 # (ROVEAGENT_HOME env var changes) are always respected.  The old module-level
 # constant was cached at import time and could go stale if a profile switch
 # happened after the first import.
+def _enterprise_scope_segment(value: str) -> str:
+    """文件系统安全段名：白名单净化，防路径穿越（id 来自服务请求）。"""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", value).strip("._")
+    return cleaned[:64] or "unknown"
+
+
 def get_memory_dir() -> Path:
-    """Return the profile-scoped memories directory."""
-    return get_roveagent_home() / "memories"
+    """Return the profile-scoped memories directory.
+
+    企业请求（已绑定可信 ToolContext 且 tenant/business 齐全）时返回
+    ``<home>/memories/enterprise/<tenant>/<business>/`` —— built-in 记忆
+    工具（MEMORY.md/USER.md）在租户x业务维度严格隔离，任何企业会话都
+    不可能读写其它租户/业务的记忆。未绑定上下文的 CLI/网关用法保持
+    原 profile 级目录（行为不变）。
+    """
+    base = get_roveagent_home() / "memories"
+    try:
+        from roveagent.enterprise.run_context import current_tool_context
+        context = current_tool_context()
+    except Exception:
+        context = None
+    if context is not None and context.tenant_id and context.business_id:
+        tenant = _enterprise_scope_segment(context.tenant_id)
+        business = _enterprise_scope_segment(context.business_id)
+        return base / "enterprise" / tenant / business
+    return base
 
 # Stable header prefixes for the system-prompt memory blocks rendered by
 # MemoryStore._render_block. Exported so compression's prompt-retention check

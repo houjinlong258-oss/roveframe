@@ -5,6 +5,7 @@
 
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
 
 import {
   captureError,
@@ -214,5 +215,51 @@ describe('Patch Generator', () => {
     for (const p of patches) {
       assert.equal(p.requiresHumanApproval, true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P0-13 — Python healing/installer 死代码安全边界（不可触发 + 注入面移除）
+// ---------------------------------------------------------------------------
+
+describe('P0-13 Python healing/installer dead code boundaries', () => {
+  const healing = readFileSync('roveagent/repair/healing.py', 'utf8');
+  const installer = readFileSync('roveagent/deployment/installer.py', 'utf8');
+
+  function sourceFiles(root: string): string[] {
+    return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+      const path = `${root}/${entry.name}`;
+      return entry.isDirectory() ? sourceFiles(path)
+        : /\.(ts|tsx)$/.test(entry.name) ? [path] : [];
+    });
+  }
+
+  test('两模块不可从任何 API/任务路径触发', () => {
+    const hits: string[] = [];
+    for (const file of sourceFiles('src')) {
+      const source = readFileSync(file, 'utf8');
+      if (source.includes('SelfHealingEngine') || source.includes('RoveAgentInstaller')) {
+        hits.push(file);
+      }
+    }
+    assert.deepEqual(hits, [], 'TS 侧不得引用 Python 自愈/安装器引擎');
+  });
+
+  test('healing：rollback 无快速通道自批，git 全部参数列表执行', () => {
+    assert.ok(!healing.includes('permissions.approve('), '不得再有自动批准快速通道');
+    assert.ok(!/git (add|commit|rev-parse|revert)[^\n]*shell=True/.test(healing), 'git 禁止 shell=True 拼接');
+    assert.match(healing, /\["git", "(add|commit|rev-parse|revert)"/);
+    assert.match(healing, /safe_commit_message/);
+    assert.match(healing, /_COMMIT_HASH_RE\.fullmatch/);
+    assert.ok(!/f'git add/.test(healing));
+  });
+
+  test('installer：输入白名单校验 + 移除硬编码口令', () => {
+    assert.match(installer, /_validate_deploy_inputs/);
+    assert.match(installer, /_HOST_RE\.fullmatch/);
+    assert.match(installer, /_APP_DIR_RE\.fullmatch/);
+    assert.match(installer, /_DOMAIN_RE\.fullmatch/);
+    assert.ok(!installer.includes('POSTGRES_PASSWORD=roveframe'), '硬编码口令必须移除');
+    assert.match(installer, /secrets\.token_urlsafe/);
   });
 });

@@ -36,6 +36,7 @@ export interface PendingApprovalItem {
   payload: Record<string, unknown>;
   status: ApprovalStatus;
   expires_at?: string | null;
+  consumed_at?: string | null;
   execution_result?: unknown;
   last_error?: string | null;
   created_at: string;
@@ -290,6 +291,62 @@ async function executeFrozenApproval(item: PendingApprovalItem, approver: string
   throw new Error(`Unsupported approval action: ${item.action_type}`);
 }
 
+/** P0-21：executing 租约（与 claim RPC 一致的 15 分钟）。 */
+export const EXECUTING_LEASE_MS = 15 * 60_000;
+
+/** 纯判定：executing 行是否超过租约（崩溃残留 → 可回收重放）。 */
+export function executingLeaseExpired(
+  item: { status: string; consumed_at?: string | null },
+  nowMs: number,
+  leaseMs: number = EXECUTING_LEASE_MS,
+): boolean {
+  if (item.status !== 'executing' || !item.consumed_at) return false;
+  const consumedAt = new Date(item.consumed_at).getTime();
+  if (Number.isNaN(consumedAt)) return false;
+  return nowMs - consumedAt >= leaseMs;
+}
+
+/**
+ * P0-21：租约过期后 CAS 回收 executing → pending（重放）。
+ * 重放安全性依赖执行层的幂等键（Stripe refund idempotency key 使用 invocation_id；
+ * roveagent 回调由 execution_id 单次 claim）；见 executeFrozenApproval。
+ */
+async function recoverExecutingApproval(
+  item: PendingApprovalItem,
+  role: RoleKey,
+  userId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const supabase = getSupabaseClient();
+  if (!canApprove(role, item.required_role)) {
+    return { ok: false, error: `Approval requires ${item.required_role} role` };
+  }
+  const cutoffIso = new Date(Date.now() - EXECUTING_LEASE_MS).toISOString();
+  const { data: recovered, error } = await supabase.from('agent_approvals')
+    .update({
+      status: 'pending',
+      consumed_at: null,
+      last_error: 'executing lease expired; recovered for replay',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', item.id)
+    .eq('tenant_id', item.tenant_id)
+    .eq('business_id', item.business_id)
+    .eq('status', 'executing')
+    .lte('consumed_at', cutoffIso)
+    .select('id')
+    .maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  if (!recovered) return { ok: false, error: 'Approval is currently executing' };
+  await writeAuditEvent({
+    tenantId: item.tenant_id, businessId: item.business_id,
+    userId, agentId: item.agent,
+    toolName: item.tool_name, action: 'approval.lease_recovered',
+    argumentsHash: item.arguments_hash, approvalId: item.id,
+    actorRole: role, status: 'pending',
+  });
+  return { ok: true };
+}
+
 export async function processApproval(opts: {
   approvalId: string;
   tenantId: string;
@@ -308,7 +365,17 @@ export async function processApproval(opts: {
   if (item.status === 'executed') {
     return { ok: true, status: 'executed', executionId: item.execution_id ?? undefined, executedData: item.execution_result };
   }
-  if (item.status !== 'pending') return { ok: false, error: `Approval item is already ${item.status}` };
+  if (item.status !== 'pending') {
+    // P0-21：executing 租约（15 分钟）超时 → 回收重放。副作用均带幂等键
+    // （Stripe `refund:${invocation_id}`、roveagent execution_id 单次 claim），
+    // 重放不会造成重复资金动作。
+    if (item.status === 'executing' && executingLeaseExpired(item, Date.now())) {
+      const recovered = await recoverExecutingApproval(item, opts.role, opts.userId);
+      if (!recovered.ok) return { ok: false, error: recovered.error ?? 'Approval is currently executing' };
+    } else {
+      return { ok: false, error: `Approval item is already ${item.status}` };
+    }
+  }
   if (!canApprove(opts.role, item.required_role)) return { ok: false, error: `Approval requires ${item.required_role} role` };
 
   const now = new Date();

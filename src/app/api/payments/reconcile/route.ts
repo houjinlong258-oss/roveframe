@@ -4,11 +4,20 @@ import { protectBusinessMutation } from '@/lib/mutation-guard';
 import { mapStripePaymentStatus, retrieveStripePaymentIntent } from '@/lib/payments/stripe';
 import { getTenantContext, requireBusinessContext, requirePermission } from '@/lib/tenant';
 import { scopedTable, updateWithScope } from '@/lib/tenant-db';
+import { checkFixedWindow, rateLimitResponse } from '@/lib/rate-limit';
 
 async function reconcilePayments(request: NextRequest): Promise<NextResponse> {
   const context = requireBusinessContext(await getTenantContext(request));
   requirePermission(context, 'payments:write');
   if (context.role !== 'owner') return NextResponse.json({ error: 'payment reconciliation requires the owner role' }, { status: 403 });
+
+  // P0-1：对账限流 —— 每商户 10 次/分钟（批量上游检索）。
+  const limit = checkFixedWindow(
+    `payments:reconcile:${context.tenantId}:${context.businessId}`,
+    { limit: 10, windowMs: 60_000 },
+  );
+  if (!limit.ok) return rateLimitResponse(limit);
+
   const integration = await scopedTable(context, 'integration_configs', 'config_encrypted')
     .eq('provider', 'stripe').eq('is_enabled', true).maybeSingle();
   if (integration.error) return NextResponse.json({ error: integration.error.message }, { status: 500 });

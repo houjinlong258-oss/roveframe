@@ -6,6 +6,15 @@ import {
   writePlatformAudit,
   PLATFORM_ADMIN_COOKIE,
 } from '@/lib/platform-admin';
+import {
+  checkFixedWindow,
+  getClientIp,
+  noteFailure,
+  noteSuccess,
+  rateLimitResponse,
+} from '@/lib/rate-limit';
+
+const ADMIN_BACKOFF = { baseMs: 15 * 60_000, maxMs: 60 * 60_000 };
 
 /** POST /api/admin/auth/login — 平台管理员独立登录（商户账号无效） */
 export async function POST(request: Request) {
@@ -16,8 +25,26 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'email and password required' }, { status: 400 });
   }
 
+  // P0-1：平台管理员登录限流 —— 每账号 5 次/15min + 指数退避；每 IP 10 次/15min。
+  const emailKey = `admin:auth:email:${email.toLowerCase()}`;
+  const ipKey = `admin:auth:ip:${getClientIp(request)}`;
+  const accountLimit = checkFixedWindow(emailKey, {
+    limit: 5,
+    windowMs: 15 * 60_000,
+    backoff: ADMIN_BACKOFF,
+  });
+  if (!accountLimit.ok) return rateLimitResponse(accountLimit);
+  const ipLimit = checkFixedWindow(ipKey, {
+    limit: 10,
+    windowMs: 15 * 60_000,
+    backoff: ADMIN_BACKOFF,
+  });
+  if (!ipLimit.ok) return rateLimitResponse(ipLimit);
+
   const result = await loginPlatformAdmin(email, password);
   if (!result) {
+    noteFailure(emailKey, ADMIN_BACKOFF);
+    noteFailure(ipKey, ADMIN_BACKOFF);
     await writePlatformAudit({
       adminId: null,
       action: 'admin.auth.login_failed',
@@ -25,6 +52,7 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ error: 'invalid credentials' }, { status: 401 });
   }
+  noteSuccess(emailKey);
 
   await writePlatformAudit({ adminId: result.admin.adminId, action: 'admin.auth.login' });
   const response = NextResponse.json({

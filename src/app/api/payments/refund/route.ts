@@ -4,6 +4,7 @@ import { createPendingApproval } from '@/lib/agent/approvals';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
 import { getTenantContext, requireBusinessContext, requirePermission } from '@/lib/tenant';
 import { scopedTable } from '@/lib/tenant-db';
+import { checkFixedWindow, rateLimitResponse } from '@/lib/rate-limit';
 
 type RefundBody = { payment_id?: unknown; amount_minor?: unknown };
 
@@ -11,6 +12,14 @@ async function requestRefund(request: NextRequest): Promise<NextResponse> {
   const context = requireBusinessContext(await getTenantContext(request));
   requirePermission(context, 'payments:write');
   if (context.role !== 'owner') return NextResponse.json({ error: 'Stripe refunds require the owner role' }, { status: 403 });
+
+  // P0-1：退款申请限流 —— 每商户 10 次/分钟（高敏感资金操作）。
+  const limit = checkFixedWindow(
+    `payments:refund:${context.tenantId}:${context.businessId}`,
+    { limit: 10, windowMs: 60_000 },
+  );
+  if (!limit.ok) return rateLimitResponse(limit);
+
   const body = await request.json() as RefundBody;
   const paymentId = typeof body.payment_id === 'string' ? body.payment_id : '';
   const amountMinor = body.amount_minor === undefined || body.amount_minor === null ? null : Number(body.amount_minor);

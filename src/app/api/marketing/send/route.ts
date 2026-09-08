@@ -4,6 +4,7 @@ import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
 import { insertWithScope, scopedTable } from '@/lib/tenant-db';
 import { HeaderUtils } from 'coze-coding-dev-sdk';
 import { protectBusinessMutation, type BusinessMutationContext } from '@/lib/mutation-guard';
+import { checkFixedWindow, rateLimitResponse } from '@/lib/rate-limit';
 
 interface CustomerRow {
   id: string;
@@ -37,6 +38,14 @@ async function selectSegment(ctx: BusinessMutationContext, segment: string): Pro
 // 个性化预览：为最多 3 位客户各生成一封差异化邮件
 async function prepareOrSendMarketing(request: NextRequest) {
   const ctx = requireBusinessContext(await getTenantContext(request));
+
+  // P0-1：营销生成/发送限流 —— 每商户 10 次/分钟（逐人 LLM 生成成本高）。
+  const limit = checkFixedWindow(
+    `marketing:send:${ctx.tenantId}:${ctx.businessId}`,
+    { limit: 10, windowMs: 60_000 },
+  );
+  if (!limit.ok) return rateLimitResponse(limit);
+
   const body = await request.json();
   const action = (body.action as string) ?? 'preview';
   const segment = (body.segment as string) ?? 'all';

@@ -6,11 +6,22 @@
  */
 import { json, jsonError } from '@/lib/api-helpers';
 import { resolveUserByToken, sessionCookieHeader, signInAndGetToken } from '@/lib/auth';
+import {
+  checkFixedWindow,
+  getClientIp,
+  noteFailure,
+  noteSuccess,
+  rateLimitResponse,
+} from '@/lib/rate-limit';
 
 interface LoginBody {
   email: string;
   password: string;
 }
+
+const AUTH_BACKOFF = { baseMs: 15 * 60_000, maxMs: 60 * 60_000 };
+const ACCOUNT_WINDOW = { limit: 5, windowMs: 15 * 60_000, backoff: AUTH_BACKOFF };
+const IP_WINDOW = { limit: 20, windowMs: 15 * 60_000, backoff: AUTH_BACKOFF };
 
 export async function POST(request: Request) {
   let body: LoginBody;
@@ -25,10 +36,21 @@ export async function POST(request: Request) {
     return jsonError('email / password required', 400);
   }
 
+  // P0-1：登录限流 —— 每账号 5 次/15min + 指数退避；每 IP 20 次/15min。
+  const emailKey = `auth:login:email:${email.trim().toLowerCase()}`;
+  const ipKey = `auth:login:ip:${getClientIp(request)}`;
+  const accountLimit = checkFixedWindow(emailKey, ACCOUNT_WINDOW);
+  if (!accountLimit.ok) return rateLimitResponse(accountLimit);
+  const ipLimit = checkFixedWindow(ipKey, IP_WINDOW);
+  if (!ipLimit.ok) return rateLimitResponse(ipLimit);
+
   const s = await signInAndGetToken({ email, password });
   if (!s.ok) {
+    noteFailure(emailKey, AUTH_BACKOFF);
+    noteFailure(ipKey, AUTH_BACKOFF);
     return jsonError(`sign in failed: ${s.error}`, 401);
   }
+  noteSuccess(emailKey);
 
   const u = await resolveUserByToken(s.data.accessToken);
   if (!u.ok) {

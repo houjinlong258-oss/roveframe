@@ -3,6 +3,7 @@ import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { json, jsonError, errorResponse } from '@/lib/api-helpers';
 import { getTenantContext, requirePermission } from '@/lib/tenant';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
+import { checkFixedWindow, rateLimitResponse } from '@/lib/rate-limit';
 
 const BUCKET = 'product-media';
 const MAX_IMAGE = 5 * 1024 * 1024;
@@ -28,6 +29,14 @@ async function uploadProductMedia(request: NextRequest) {
   try {
     const context = await getTenantContext(request);
     requirePermission(context, 'products:write');
+
+    // P0-1：媒体上传限流 —— 每商户 20 次/分钟。
+    const limit = checkFixedWindow(
+      `upload:${context.tenantId}`,
+      { limit: 20, windowMs: 60_000 },
+    );
+    if (!limit.ok) return rateLimitResponse(limit);
+
     const form = await request.formData();
     const file = form.get('file');
     if (!(file instanceof File)) return jsonError('No file provided', 400);

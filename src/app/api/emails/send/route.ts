@@ -4,6 +4,7 @@ import nodemailer from 'nodemailer';
 import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
 import { scopedTable, updateWithScope } from '@/lib/tenant-db';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
+import { checkFixedWindow, rateLimitResponse } from '@/lib/rate-limit';
 
 interface SmtpCredentials {
   smtp_user?: string;
@@ -13,6 +14,14 @@ interface SmtpCredentials {
 // 通过绑定的邮箱账号真实发送回复
 async function sendEmail(request: NextRequest) {
   const ctx = requireBusinessContext(await getTenantContext(request));
+
+  // P0-1：SMTP 外发限流 —— 每商户 30 次/分钟。
+  const limit = checkFixedWindow(
+    `emails:send:${ctx.tenantId}:${ctx.businessId}`,
+    { limit: 30, windowMs: 60_000 },
+  );
+  if (!limit.ok) return rateLimitResponse(limit);
+
   const body = await request.json();
   const emailId = body.emailId as string;
   const replyBody = (body.reply as string) ?? '';

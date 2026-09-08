@@ -4,6 +4,7 @@ import { getTenantContext, requireBusinessContext, requirePermission } from '@/l
 import { scopedTable, insertWithScope, updateWithScope } from '@/lib/tenant-db';
 import { createStripeCheckoutSession, currencyExponent, toMinorUnits, validateStripeRuntime } from '@/lib/payments/stripe';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
+import { checkFixedWindow, rateLimitResponse } from '@/lib/rate-limit';
 
 type CheckoutBody = {
   amount?: unknown;
@@ -20,6 +21,14 @@ async function createCheckout(request: NextRequest) {
   try {
     const context = requireBusinessContext(await getTenantContext(request));
     requirePermission(context, 'payments:write');
+
+    // P0-1：支付会话创建限流 —— 每商户 20 次/分钟。
+    const limit = checkFixedWindow(
+      `payments:checkout:${context.tenantId}:${context.businessId}`,
+      { limit: 20, windowMs: 60_000 },
+    );
+    if (!limit.ok) return rateLimitResponse(limit);
+
     const body = (await request.json()) as CheckoutBody;
     const amount = typeof body.amount === 'number' ? body.amount : Number(body.amount);
     const currency = typeof body.currency === 'string' && /^[A-Za-z]{3}$/.test(body.currency) ? body.currency.toUpperCase() : 'USD';

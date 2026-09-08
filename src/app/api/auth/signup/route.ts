@@ -13,6 +13,13 @@ import {
   createTenantRow,
   signInAndGetToken,
 } from '@/lib/auth';
+import {
+  checkFixedWindow,
+  getClientIp,
+  noteFailure,
+  noteSuccess,
+  rateLimitResponse,
+} from '@/lib/rate-limit';
 
 interface SignupBody {
   email: string;
@@ -23,6 +30,8 @@ interface SignupBody {
   currency?: string;
   name?: string;
 }
+
+const AUTH_BACKOFF = { baseMs: 15 * 60_000, maxMs: 60 * 60_000 };
 
 export async function POST(request: Request) {
   let body: SignupBody;
@@ -40,9 +49,26 @@ export async function POST(request: Request) {
     return jsonError('password must be at least 8 characters', 400);
   }
 
+  // P0-1：注册限流 —— 每账号 5 次/15min + 指数退避；每 IP 10 次/15min。
+  const emailKey = `auth:signup:email:${email.trim().toLowerCase()}`;
+  const ipKey = `auth:signup:ip:${getClientIp(request)}`;
+  const accountLimit = checkFixedWindow(emailKey, {
+    limit: 5,
+    windowMs: 15 * 60_000,
+    backoff: AUTH_BACKOFF,
+  });
+  if (!accountLimit.ok) return rateLimitResponse(accountLimit);
+  const ipLimit = checkFixedWindow(ipKey, {
+    limit: 10,
+    windowMs: 15 * 60_000,
+    backoff: AUTH_BACKOFF,
+  });
+  if (!ipLimit.ok) return rateLimitResponse(ipLimit);
+
   // 1) 建 tenant
   const t = await createTenantRow({ name: business_name });
   if (!t.ok) {
+    noteFailure(emailKey, AUTH_BACKOFF);
     return jsonError(`create tenant failed: ${t.error}`, 500);
   }
 
@@ -86,8 +112,10 @@ export async function POST(request: Request) {
   // 5) 登录取 access_token
   const s = await signInAndGetToken({ email, password });
   if (!s.ok) {
+    noteFailure(emailKey, AUTH_BACKOFF);
     return jsonError(`sign in failed: ${s.error}`, 500);
   }
+  noteSuccess(emailKey);
 
   const response = json(
     {

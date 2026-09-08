@@ -24,12 +24,20 @@ import {
   countByFingerprint,
 } from '@/lib/healing/persistent-store';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
+import { checkFixedWindow, rateLimitResponse } from '@/lib/rate-limit';
 
 // ---------------------------------------------------------------------------
 // POST — Report a runtime error
 // ---------------------------------------------------------------------------
 
 async function handlePost(request: NextRequest, ctx: AuthContext): Promise<Response> {
+  // P0-1：healing 上报日配额 —— 每商户每日 20 次（分析/补丁生成含 LLM 消耗，staff 可触发）。
+  const limit = checkFixedWindow(
+    `healing:daily:${ctx.tenantId}`,
+    { limit: 20, windowMs: 24 * 60 * 60_000 },
+  );
+  if (!limit.ok) return rateLimitResponse(limit);
+
   let body: unknown;
   try {
     body = await request.json();

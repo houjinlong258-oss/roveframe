@@ -66,6 +66,10 @@ Protected API mutations use one centralized sequence:
 
 Security failures fail closed. Staff cannot modify financial configuration, integration credentials, user roles, destructive staff state, product prices/costs, deployment, refunds, or other owner-only controls.
 
+### Rate limiting
+
+`lib/rate-limit.ts` provides the centralized limiter wired into the brute-force-sensitive, money-sensitive, upload and LLM-consuming endpoints (auth login/signup, platform admin login, emails/channels/marketing send, payments checkout/refund/reconcile, public store orders, upload, agent chat concurrency, healing daily quota). The implementation is an in-process fixed-window + exponential-backoff store, which is exact for a single instance; in a multi-instance deployment each instance counts independently (limits scale with instance count), so a shared backend (e.g. Redis) must be plugged into the same interface before horizontal scaling. `/api/health` is deliberately exempt.
+
 ### Database key model (service_role bypass + application-level predicates)
 
 The application connects to Supabase with the **service role key** as the single primary channel. The current security model is **service_role full bypass + application-level tenant/business predicates** enforced by `lib/tenant-db.ts` table whitelists (`PLATFORM_TABLES` / `BUSINESS_SCOPED_TABLES`). Row-Level Security policies (`scripts/migrate-rls.sql`) are kept as defense in depth for the `authenticated`/`anon` roles, but the application layer never relies on them while the service role channel is in use.

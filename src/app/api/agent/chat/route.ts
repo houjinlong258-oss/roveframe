@@ -18,6 +18,7 @@ import { insertWithScope, scopedTable, updateWithScope } from '@/lib/tenant-db';
 import { ROLE_PERMISSIONS } from '@/lib/rbac';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { acquireSlot } from '@/lib/rate-limit';
 
 const requestSchema = z.object({
   session_id: z.string().uuid().optional(),
@@ -56,8 +57,16 @@ Requirements:
 - Use USD ($) for amounts`;
 
 async function runChat(request: Request) {
+  // P0-1：chat 并发限流 —— 每商户最多 4 个并发会话（SSE 长连接占 LLM 额度）。
+  // slot 在流结束或异常时释放（wrapped 的 finally + 外层 catch）。
+  let slot: { release: () => void } | null = null;
   try {
     const ctx = requireBusinessContext(await getTenantContext(request));
+    const slotResult = acquireSlot(`chat:concurrency:${ctx.tenantId}:${ctx.businessId}`, 4);
+    if (!slotResult.ok) {
+      return json({ error: 'too_many_concurrent_chats', retryAfterSec: slotResult.retryAfterSec }, 429);
+    }
+    slot = slotResult;
     const parsed = requestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return json({ error: 'invalid chat request', details: parsed.error.flatten() }, 400);
     const body = parsed.data;
@@ -236,45 +245,50 @@ async function runChat(request: Request) {
     const scopedContext = ctx;
     async function* wrapped(): AsyncGenerator<string> {
       let full = '';
-      for await (const chunk of stream) {
-        full += chunk;
-        yield chunk;
-      }
-      const ins = await insertWithScope(scopedContext, 'chat_messages', {
-        user_id: ctx.userId,
-        session_id: activeSessionId,
-        role: 'assistant',
-        content: full,
-      });
-      if (ins.error) throw new Error(ins.error.message);
-      const upd = await updateWithScope(scopedContext, 'chat_sessions', activeSessionId, {
-        updated_at: new Date().toISOString(),
-      }).eq('user_id', ctx.userId);
-      if (upd.error) throw new Error(upd.error.message);
-
-      // 沉淀企业长期记忆（tenant 化，失败不影响主流程）
-      if (body.message.trim().length > 15) {
-        try {
-          const memory = await invokeChat(
-            'light',
-            [
-              {
-                role: 'system',
-                content:
-                  locale === 'zh'
-                    ? '你是经营助手。从下面老板与 AI 的对话中，若存在值得长期记住的「企业事实/经验」（如活动 ROI、客户偏好、经营结论），用一句话提炼并输出；若无，输出空字符串。'
-                    : 'You are a business assistant. Extract one memorable business fact/insight (e.g. campaign ROI, customer preference, operating conclusion) from the exchange below, in one sentence. Output an empty string if nothing is worth remembering.',
-              },
-              { role: 'user', content: `老板: ${body.message}\nAI: ${full.slice(0, 1500)}` },
-            ],
-            forwardHeaders,
-            { tenantId, businessId: ctx.businessId, userId: ctx.userId },
-            { agent: 'agent:memory-extract' },
-          );
-          if (memory && memory.trim()) await addMemory(tenantId, ctx.businessId, memory.trim());
-        } catch {
-          // 记忆沉淀失败不影响主流程
+      try {
+        for await (const chunk of stream) {
+          full += chunk;
+          yield chunk;
         }
+        const ins = await insertWithScope(scopedContext, 'chat_messages', {
+          user_id: ctx.userId,
+          session_id: activeSessionId,
+          role: 'assistant',
+          content: full,
+        });
+        if (ins.error) throw new Error(ins.error.message);
+        const upd = await updateWithScope(scopedContext, 'chat_sessions', activeSessionId, {
+          updated_at: new Date().toISOString(),
+        }).eq('user_id', ctx.userId);
+        if (upd.error) throw new Error(upd.error.message);
+
+        // 沉淀企业长期记忆（tenant 化，失败不影响主流程）
+        if (body.message.trim().length > 15) {
+          try {
+            const memory = await invokeChat(
+              'light',
+              [
+                {
+                  role: 'system',
+                  content:
+                    locale === 'zh'
+                      ? '你是经营助手。从下面老板与 AI 的对话中，若存在值得长期记住的「企业事实/经验」（如活动 ROI、客户偏好、经营结论），用一句话提炼并输出；若无，输出空字符串。'
+                      : 'You are a business assistant. Extract one memorable business fact/insight (e.g. campaign ROI, customer preference, operating conclusion) from the exchange below, in one sentence. Output an empty string if nothing is worth remembering.',
+                },
+                { role: 'user', content: `老板: ${body.message}\nAI: ${full.slice(0, 1500)}` },
+              ],
+              forwardHeaders,
+              { tenantId, businessId: ctx.businessId, userId: ctx.userId },
+              { agent: 'agent:memory-extract' },
+            );
+            if (memory && memory.trim()) await addMemory(tenantId, ctx.businessId, memory.trim());
+          } catch {
+            // 记忆沉淀失败不影响主流程
+          }
+        }
+      } finally {
+        // 流结束（含异常/中断）即释放并发额度
+        slot?.release();
       }
     }
 
@@ -282,6 +296,8 @@ async function runChat(request: Request) {
     response.headers.set('X-Session-Id', activeSessionId);
     return response;
   } catch (error) {
+    // 请求阶段异常（未进入流）时立即释放并发额度
+    slot?.release();
     return errorResponse(error);
   }
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { isValidIdempotencyKey, resolvePublicStore } from '@/lib/storefront';
+import { checkFixedWindow, rateLimitResponse } from '@/lib/rate-limit';
 
 interface CartItem { product_id: string; qty: number }
 type StoreOrderBody = { token?: unknown; note?: unknown; items?: unknown; tip_amount?: unknown; tip_percent?: unknown };
@@ -11,6 +12,14 @@ export async function POST(request: NextRequest) {
   try { body = await request.json() as StoreOrderBody; } catch { return NextResponse.json({ error: 'Invalid request body' }, { status: 400 }); }
   const store = await resolvePublicStore(typeof body.token === 'string' ? body.token : null);
   if (!store) return NextResponse.json({ error: 'Invalid or inactive store link' }, { status: 404 });
+
+  // P0-1：公开下单限流 —— 每桌码链接 30 次/分钟。
+  const limit = checkFixedWindow(
+    `store:orders:${store.tenantId}:${store.businessId}:${store.tableNo}`,
+    { limit: 30, windowMs: 60_000 },
+  );
+  if (!limit.ok) return rateLimitResponse(limit);
+
   const idempotencyKey = request.headers.get('idempotency-key')?.trim() ?? '';
   if (idempotencyKey && !isValidIdempotencyKey(idempotencyKey)) {
     return NextResponse.json({ error: 'Invalid Idempotency-Key' }, { status: 400 });

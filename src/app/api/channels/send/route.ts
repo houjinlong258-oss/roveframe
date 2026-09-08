@@ -4,6 +4,7 @@ import { buildBriefing, getChannelConfig, listConnectedChannels, sendChannelMess
 import { CHANNEL_KEYS, type ChannelKey } from '@/lib/channels-presets';
 import { getTenantContext, requireBusinessContext, requirePermission } from '@/lib/tenant';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
+import { checkFixedWindow, rateLimitResponse } from '@/lib/rate-limit';
 
 // 推送到社交通讯渠道
 // body: { provider?: ChannelKey, text?: string, locale?: string }
@@ -12,6 +13,14 @@ import { protectBusinessMutation } from '@/lib/mutation-guard';
 async function sendChannel(request: NextRequest) {
   const tenant = requireBusinessContext(await getTenantContext(request));
   requirePermission(tenant, 'channels:write');
+
+  // P0-1：渠道外发限流 —— 每商户 20 次/分钟。
+  const limit = checkFixedWindow(
+    `channels:send:${tenant.tenantId}:${tenant.businessId}`,
+    { limit: 20, windowMs: 60_000 },
+  );
+  if (!limit.ok) return rateLimitResponse(limit);
+
   const body = await request.json();
   const provider = (body.provider ?? null) as ChannelKey | null;
   const text = (body.text ?? '') as string;

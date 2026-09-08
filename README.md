@@ -1,8 +1,19 @@
-# RoveFrame AI Business OS
+# RoveFrame AI Executive Operations Platform
 
-RoveFrame AI Business OS is a multi-tenant AI COO platform for small and medium-sized businesses. RoveFrame is the SaaS product and control plane; RoveAgent Core is the intelligence and execution plane.
+RoveFrame is an **AI Executive Operations Platform** — not restaurant software, not a chatbot. The first-stage product is the **Restaurant AI Chief of Staff**: it helps a restaurant owner every day to *understand the business, spot risks, get recommendations, approve actions, and have them executed automatically*.
 
-The current product includes the management dashboard, business data, AI chat, knowledge/RAG, reviews, customers, marketing, email, reservations, settings, approval workflows, integrations, and a public QR ordering storefront. The default locale and currency are English and USD, with Chinese and Spanish translations available through `next-intl`.
+Core loop (real, no stubs):
+
+```
+Business Data → AI Insight → Recommendation → Approval → Real Action
+  → Execution Result → Audit → Memory
+```
+
+Three core entries: **Morning Executive Brief** (email + web push, 08:00 local), **Ask Business Question** (CEO Insight / COO / CMO / CTO personas on one runtime), **Approve AI Actions** (frozen-argument approvals with visible execution status and audit trail).
+
+- RoveFrame is the SaaS product and control plane; RoveAgent Core is the intelligence and execution plane.
+- Supabase business tables are the only source of truth; every protected operation is scoped by verified `tenant_id` + `business_id`, enforced in the application layer AND in Supabase RLS (see `scripts/migrate-rls.sql`).
+- Pilot-readiness status: [`docs/current/PILOT_READY_STATUS.md`](docs/current/PILOT_READY_STATUS.md); upgrade plan: `PRODUCTION_GAP_PLAN.md`.
 
 ## Architecture
 

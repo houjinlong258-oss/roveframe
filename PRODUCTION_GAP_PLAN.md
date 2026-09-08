@@ -7,6 +7,25 @@
 
 ---
 
+## 实施状态（2026-09-08 更新）
+
+| 项 | 状态 | 提交 |
+|---|---|---|
+| Step 1 git baseline | ✅ | `65fa020` |
+| Step 2 本计划 | ✅ | `a939ad2` |
+| P0-1 召回活动真实审批动作 | ✅ | `6a282b5` |
+| P0-2 通知投递（Email + Web Push） | ✅ | `10beb0e` |
+| P0-3 Square OAuth + 定时同步 + 游标 | ✅ | `ee5d4fb` |
+| P0-4 审批 UI 最后一公里 | ✅ | `a870757` |
+| P0-5 Production Audit Store | ✅ | `a870757` |
+| P0-6 Supabase RLS | ✅ | `67386de` |
+| AI Executive Layer（四 persona） | ✅ | `75a42dc` |
+| Step 6 测试 | ✅ | TS 278 + Python 21 全绿；live E2E 见 `scripts/e2e-recovery-campaign.mts`（需运行栈 + 真实凭据） |
+
+**外部依赖（非代码，上线前必须配置）**：Supabase 目标库跑 `scripts/migrate-pilot-ready.sql` + `scripts/migrate-rls.sql` + `scripts/verify-rls.sql`；`ENCRYPTION_SECRET`；SMTP 邮箱账号；`SQUARE_APP_ID/SECRET`（OAuth 回调白名单）；`node scripts/generate-vapid.mjs` 生成 VAPID 并写入 env。详见 `docs/current/PILOT_READY_STATUS.md`。
+
+---
+
 ## 0. 目标闭环（真实链路，禁 stub）
 
 ```

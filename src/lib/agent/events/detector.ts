@@ -9,61 +9,8 @@ export interface BusinessEvent {
   details?: Record<string, unknown>;
 }
 
-async function triggerEventTask(opts: {
-  tenantId: string;
-  businessId: string;
-  taskType: string;
-  name: string;
-  priority: 'high' | 'medium' | 'low';
-  input: Record<string, unknown>;
-  idempotencyKey: string;
-}): Promise<void> {
-  const supabase = getSupabaseClient();
-  const scheduledAt = new Date().toISOString();
-
-  // Deduplicate
-  const { data: existing } = await supabase
-    .from('agent_tasks')
-    .select('id')
-    .eq('tenant_id', opts.tenantId)
-    .eq('business_id', opts.businessId)
-    .eq('idempotency_key', opts.idempotencyKey)
-    .maybeSingle();
-
-  if (existing) return;
-
-  const { data: task } = await supabase
-    .from('agent_tasks')
-    .insert({
-      tenant_id: opts.tenantId,
-      business_id: opts.businessId,
-      agent_type: 'coo-agent',
-      task_type: opts.taskType,
-      name: opts.name,
-      priority: opts.priority,
-      status: 'QUEUED',
-      input: opts.input,
-      context: {},
-      idempotency_key: opts.idempotencyKey,
-      scheduled_at: scheduledAt,
-    })
-    .select('id')
-    .maybeSingle();
-
-  if (task?.id) {
-    await supabase.from('agent_task_runs').insert({
-      tenant_id: opts.tenantId,
-      business_id: opts.businessId,
-      task_id: task.id,
-      attempt_number: 1,
-      max_attempts: 3,
-      status: 'QUEUED',
-      idempotency_key: `${opts.idempotencyKey}:run:1`,
-      available_at: scheduledAt,
-      input: opts.input,
-    });
-  }
-}
+// P0-20：检测器只产出事件（agent_events）+ 通知 outbox；不再创建无 handler 的
+// 库存补货/差评分析/销售下滑三类死任务（任务触发路径已随契约对齐移除）。
 
 export async function detectBusinessEvents(tenantId: string, businessId: string): Promise<BusinessEvent[]> {
   const supabase = getSupabaseClient();
@@ -88,17 +35,6 @@ export async function detectBusinessEvents(tenantId: string, businessId: string)
           title: `Low Stock Alert: ${item.name}`,
           content: `${item.name} stock (${stock} ${item.unit}) is below safety threshold (${safety} ${item.unit}).`,
           details: { itemId: item.id, stock, safety, unit: item.unit },
-        });
-
-        // Trigger INVENTORY_ALERT_TASK
-        await triggerEventTask({
-          tenantId,
-          businessId,
-          taskType: 'INVENTORY_ALERT_TASK',
-          name: `Inventory Restock Task: ${item.name}`,
-          priority: stock === 0 ? 'high' : 'medium',
-          input: { itemId: item.id, itemName: item.name, stock, safety, unit: item.unit },
-          idempotencyKey: `inventory_alert_${item.id}_${todayStr}`,
         });
       }
     }
@@ -138,17 +74,6 @@ export async function detectBusinessEvents(tenantId: string, businessId: string)
       content: `Detected low rating review or ${Math.round(spikeRatio * 100)}% spike in negative reviews over past 7 days.`,
       details: { recentNegatives, priorNegatives, spikeRatio },
     });
-
-    // Trigger REVIEW_ANALYSIS_TASK
-    await triggerEventTask({
-      tenantId,
-      businessId,
-      taskType: 'REVIEW_ANALYSIS_TASK',
-      name: 'Negative Review Deep Analysis Task',
-      priority: 'high',
-      input: { recentNegatives, priorNegatives, spikeRatio },
-      idempotencyKey: `review_anomaly_${businessId}_${todayStr}`,
-    });
   }
 
   // 3. Sales Event Detection (today sales dropped 20% vs 7-day average)
@@ -174,17 +99,6 @@ export async function detectBusinessEvents(tenantId: string, businessId: string)
         title: `Sales Revenue Drop Alert (-${dropPercent}%)`,
         content: `Today's revenue ($${todayTotal.toFixed(2)}) is ${dropPercent}% below the 7-day daily average ($${avgDailyRevenue.toFixed(2)}).`,
         details: { todayTotal, avgDailyRevenue, dropPercent },
-      });
-
-      // Trigger SALES_DROP_ANALYSIS_TASK
-      await triggerEventTask({
-        tenantId,
-        businessId,
-        taskType: 'SALES_DROP_ANALYSIS_TASK',
-        name: 'Sales Drop Diagnostic & Strategy Task',
-        priority: 'high',
-        input: { todayTotal, avgDailyRevenue, dropPercent },
-        idempotencyKey: `sales_drop_${businessId}_${todayStr}`,
       });
     }
   }

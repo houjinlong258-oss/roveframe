@@ -4,10 +4,23 @@ import { buildBriefing } from '@/lib/channels';
 import { getSettings } from '@/lib/settings';
 import { detectBusinessEvents } from '@/lib/agent/events/detector';
 import { enqueueNotification } from '@/lib/notifications/outbox';
-import type { AgentTaskPriority, AgentTaskStatusState, ClaimedTaskRun, TaskHandler, TaskHandlerContext } from './types';
+import type {
+  AgentTaskPriority,
+  AgentTaskRunStatus,
+  ClaimedTaskRun,
+  TaskHandler,
+  TaskHandlerContext,
+} from './types';
 
 const taskHandlers = new Map<string, TaskHandler>();
 const DEFAULT_MAX_ATTEMPTS = 3;
+
+/**
+ * P0-20：全部读写以 scripts/migrate.sql 权威 schema 为准。
+ * 状态词汇：任务 'active'；运行 'pending'→'running'→'completed'|'failed'。
+ * 原子认领由 DB 函数 claim_agent_task_runs 完成（要求 run.status='pending'
+ * 且 task.status='active'，租约 15 分钟）。
+ */
 
 export function buildScheduledRunIdempotencyKey(taskId: string, scheduledFor: string): string {
   return `scheduled:${taskId}:${scheduledFor}`;
@@ -21,11 +34,13 @@ export function registerTaskHandler(taskType: string, handler: TaskHandler): voi
   taskHandlers.set(taskType, handler);
 }
 
-/** Helper to create an Agent Task with idempotency deduplication. */
+/**
+ * 创建 Agent Task（幂等去重：agent_tasks 唯一索引 (business_id, name)）。
+ * 返回已存在时不重复创建。
+ */
 export async function createAgentTask(opts: {
   tenantId: string;
   businessId: string;
-  agentType?: string;
   taskType: string;
   name: string;
   priority?: AgentTaskPriority;
@@ -34,45 +49,36 @@ export async function createAgentTask(opts: {
   idempotencyKey?: string;
   scheduledAt?: string;
   maxAttempts?: number;
+  scheduleCron?: string;
 }): Promise<{ ok: true; taskId: string; created: boolean } | { ok: false; error: string }> {
   const supabase = getSupabaseClient();
-  const agentType = opts.agentType ?? 'coo-agent';
-  const priority = opts.priority ?? 'medium';
   const input = opts.input ?? {};
   const context = opts.context ?? {};
-  const idempotencyKey = opts.idempotencyKey ?? `task:${opts.businessId}:${opts.taskType}:${randomUUID()}`;
+  const payload = { ...input, ...(context ?? {}) };
   const scheduledAt = opts.scheduledAt ?? new Date().toISOString();
 
-  // Check deduplication via idempotencyKey
-  if (opts.idempotencyKey) {
-    const { data: existing } = await supabase
-      .from('agent_tasks')
-      .select('id, status')
-      .eq('tenant_id', opts.tenantId)
-      .eq('business_id', opts.businessId)
-      .eq('idempotency_key', opts.idempotencyKey)
-      .maybeSingle();
+  // 唯一索引 (business_id, name) 去重
+  const { data: existing, error: lookupError } = await supabase
+    .from('agent_tasks')
+    .select('id')
+    .eq('tenant_id', opts.tenantId)
+    .eq('business_id', opts.businessId)
+    .eq('name', opts.name)
+    .maybeSingle();
+  if (lookupError) return { ok: false, error: lookupError.message };
+  if (existing) return { ok: true, taskId: existing.id, created: false };
 
-    if (existing) {
-      return { ok: true, taskId: existing.id, created: false };
-    }
-  }
-
-  // Create Task in QUEUED status
   const { data: task, error } = await supabase
     .from('agent_tasks')
     .insert({
       tenant_id: opts.tenantId,
       business_id: opts.businessId,
-      agent_type: agentType,
       task_type: opts.taskType,
       name: opts.name,
-      priority,
-      status: 'QUEUED',
-      input,
-      context,
-      idempotency_key: idempotencyKey,
-      scheduled_at: scheduledAt,
+      schedule_cron: opts.scheduleCron ?? null,
+      status: 'active',
+      payload,
+      next_run_at: scheduledAt,
     })
     .select('id')
     .single();
@@ -81,15 +87,15 @@ export async function createAgentTask(opts: {
     return { ok: false, error: error?.message ?? 'Failed to insert agent task' };
   }
 
-  // Create initial Run entry
+  // 初始运行记录（权威词汇：pending / attempt）
   await supabase.from('agent_task_runs').insert({
     tenant_id: opts.tenantId,
     business_id: opts.businessId,
     task_id: task.id,
-    attempt_number: 1,
+    attempt: 1,
     max_attempts: opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
-    status: 'QUEUED',
-    idempotency_key: `${idempotencyKey}:run:1`,
+    status: 'pending',
+    idempotency_key: `${opts.idempotencyKey ?? `task:${opts.businessId}:${opts.taskType}`}:run:1`,
     available_at: scheduledAt,
     input,
   });
@@ -97,7 +103,7 @@ export async function createAgentTask(opts: {
   return { ok: true, taskId: task.id, created: true };
 }
 
-/** Enqueues a task run directly. */
+/** Enqueues a task run directly（权威词汇 pending/attempt）。 */
 export async function enqueueTaskRun(opts: {
   tenantId: string;
   businessId: string;
@@ -112,8 +118,8 @@ export async function enqueueTaskRun(opts: {
     tenant_id: opts.tenantId,
     business_id: opts.businessId,
     task_id: opts.taskId,
-    status: 'QUEUED',
-    attempt_number: 1,
+    status: 'pending',
+    attempt: 1,
     max_attempts: opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
     idempotency_key: key,
     available_at: new Date().toISOString(),
@@ -130,10 +136,11 @@ export async function enqueueTaskRun(opts: {
   return existing?.id ?? null;
 }
 
-function nextRunAt(task: { next_run_at: string; payload?: Record<string, unknown> | null }): string {
+function nextRunAt(task: { next_run_at: string | null; payload?: Record<string, unknown> | null }): string {
+  const base = task.next_run_at ? new Date(task.next_run_at).getTime() : Date.now();
   const intervalMinutes = Number(task.payload?.interval_minutes ?? 1440);
   const safeInterval = Number.isFinite(intervalMinutes) && intervalMinutes > 0 ? Math.min(intervalMinutes, 7 * 24 * 60) : 1440;
-  return new Date(new Date(task.next_run_at).getTime() + safeInterval * 60_000).toISOString();
+  return new Date(base + safeInterval * 60_000).toISOString();
 }
 
 function localDateParts(date: Date, timeZone: string): { year: number; month: number; day: number } {
@@ -189,7 +196,7 @@ async function initialRunAt(
   }
 }
 
-/** Creates system default agent tasks. */
+/** Creates system default agent tasks（权威 schema 字段）。 */
 export async function ensureSystemAgentTasks(): Promise<number> {
   const client = getSupabaseClient();
   const { data: businesses, error } = await client.from('businesses').select('id, tenant_id');
@@ -210,12 +217,12 @@ export async function ensureSystemAgentTasks(): Promise<number> {
       const res = await createAgentTask({
         tenantId: business.tenant_id,
         businessId: business.id,
-        agentType: 'coo-agent',
         taskType: definition.task_type,
         name: definition.name,
         priority: 'high',
         idempotencyKey: `system:${business.id}:${definition.task_type}`,
         scheduledAt: await initialRunAt(business.tenant_id, business.id, definition.task_type),
+        scheduleCron: definition.schedule_cron,
       });
 
       if (res.ok && res.created) created++;
@@ -224,13 +231,13 @@ export async function ensureSystemAgentTasks(): Promise<number> {
   return created;
 }
 
-/** Enqueues task runs for due tasks. */
+/** Enqueues runs for due ACTIVE tasks（next_run_at 推进，任务保持 active）。 */
 async function enqueueDueTaskRuns(): Promise<number> {
   const client = getSupabaseClient();
   const now = new Date().toISOString();
   const { data: dueTasks, error } = await client.from('agent_tasks')
-    .select('id, tenant_id, business_id, agent_type, task_type, input, context, next_run_at')
-    .in('status', ['active', 'QUEUED', 'COMPLETED'])
+    .select('id, tenant_id, business_id, task_type, payload, next_run_at')
+    .eq('status', 'active')
     .not('next_run_at', 'is', null)
     .lte('next_run_at', now)
     .order('next_run_at')
@@ -239,25 +246,24 @@ async function enqueueDueTaskRuns(): Promise<number> {
   if (error || !dueTasks) return 0;
 
   let enqueued = 0;
-  for (const task of dueTasks as { id: string; tenant_id: string; business_id: string; agent_type: string; task_type: string; input: Record<string, unknown> | null; context: Record<string, unknown> | null; next_run_at: string }[]) {
+  for (const task of dueTasks as { id: string; tenant_id: string; business_id: string; task_type: string; payload: Record<string, unknown> | null; next_run_at: string }[]) {
     const idempotencyKey = buildScheduledRunIdempotencyKey(task.id, task.next_run_at);
 
     const { error: insertError } = await client.from('agent_task_runs').upsert({
       tenant_id: task.tenant_id,
       business_id: task.business_id,
       task_id: task.id,
-      attempt_number: 1,
+      attempt: 1,
       max_attempts: DEFAULT_MAX_ATTEMPTS,
-      status: 'QUEUED',
+      status: 'pending',
       idempotency_key: idempotencyKey,
       available_at: now,
-      input: task.input ?? {},
+      input: task.payload ?? {},
     }, { onConflict: 'idempotency_key', ignoreDuplicates: true });
 
     if (!insertError) {
       await client.from('agent_tasks').update({
-        status: 'QUEUED',
-        next_run_at: nextRunAt({ next_run_at: task.next_run_at }),
+        next_run_at: nextRunAt({ next_run_at: task.next_run_at, payload: task.payload }),
         updated_at: now,
       }).eq('id', task.id)
         .eq('tenant_id', task.tenant_id)
@@ -268,7 +274,7 @@ async function enqueueDueTaskRuns(): Promise<number> {
   return enqueued;
 }
 
-/** Claims queued task runs atomically using database locking. */
+/** Claims pending task runs atomically via the DB lease function. */
 async function claimTaskRuns(workerId: string, limit: number): Promise<ClaimedTaskRun[]> {
   const { data, error } = await getSupabaseClient().rpc('claim_agent_task_runs', {
     p_worker_id: workerId,
@@ -279,20 +285,18 @@ async function claimTaskRuns(workerId: string, limit: number): Promise<ClaimedTa
   return (data ?? []) as ClaimedTaskRun[];
 }
 
-/** Transitions task and task run to COMPLETED or WAITING_APPROVAL status. */
+/** Transitions the run to completed（任务保持 active，回写 last_run_at）。 */
 async function completeTaskRun(
   run: ClaimedTaskRun,
-  resultData: { result?: Record<string, unknown>; tokenUsage?: Record<string, number>; waitingApproval?: boolean },
+  resultData: { result?: Record<string, unknown>; waitingApproval?: boolean },
 ): Promise<void> {
   const supabase = getSupabaseClient();
   const now = new Date().toISOString();
-  const finalStatus: AgentTaskStatusState = resultData.waitingApproval ? 'WAITING_APPROVAL' : 'COMPLETED';
+  const finalStatus: AgentTaskRunStatus = 'completed';
 
   await supabase.from('agent_task_runs').update({
     status: finalStatus,
-    result: resultData.result ?? {},
-    token_usage: resultData.tokenUsage ?? null,
-    finished_at: now,
+    result: { ...(resultData.result ?? {}), waitingApproval: resultData.waitingApproval ?? false },
     completed_at: now,
     claimed_by: null,
     claimed_at: null,
@@ -303,34 +307,29 @@ async function completeTaskRun(
     .eq('business_id', run.business_id);
 
   await supabase.from('agent_tasks').update({
-    status: finalStatus,
-    completed_at: now,
+    last_run_at: now,
     updated_at: now,
   }).eq('id', run.task_id)
     .eq('tenant_id', run.tenant_id)
     .eq('business_id', run.business_id);
 }
 
-/** Fail and retry / final fail transition according to attempt count. */
+/** Fail and retry / final fail transition（权威词汇 pending/failed，attempt 计数）。 */
 async function failTaskRun(workerId: string, run: ClaimedTaskRun, error: unknown): Promise<void> {
   const supabase = getSupabaseClient();
   const message = error instanceof Error ? error.message : 'Task execution failed';
-  const currentAttempt = run.attempt_number || 1;
+  const currentAttempt = run.attempt || 1;
   const maxAttempts = run.max_attempts || DEFAULT_MAX_ATTEMPTS;
   const retryable = currentAttempt < maxAttempts;
   const nextAttempt = currentAttempt + 1;
-
-  const nextStatus: AgentTaskStatusState = retryable ? 'RETRYING' : 'FAILED_FINAL';
-  const taskStatus: AgentTaskStatusState = retryable ? 'QUEUED' : 'FAILED_FINAL';
   const backoffMinutes = calculateTaskRetryDelayMinutes(currentAttempt);
   const now = new Date();
   const nextAvailableAt = new Date(now.getTime() + backoffMinutes * 60_000).toISOString();
 
   await supabase.from('agent_task_runs').update({
-    status: nextStatus,
-    error_message: message.slice(0, 4000),
+    status: retryable ? 'pending' : 'failed',
     error: message.slice(0, 4000),
-    finished_at: retryable ? null : now.toISOString(),
+    available_at: retryable ? nextAvailableAt : null,
     completed_at: retryable ? null : now.toISOString(),
     claimed_by: null,
     claimed_at: null,
@@ -340,25 +339,19 @@ async function failTaskRun(workerId: string, run: ClaimedTaskRun, error: unknown
     .eq('tenant_id', run.tenant_id)
     .eq('business_id', run.business_id);
 
-  await supabase.from('agent_tasks').update({
-    status: taskStatus,
-    updated_at: now.toISOString(),
-  }).eq('id', run.task_id)
-    .eq('tenant_id', run.tenant_id)
-    .eq('business_id', run.business_id);
-
   if (retryable) {
-    // Insert new task run for the next retry attempt
+    // 重试插新运行行（attempt+1）；claim RPC 的租约回收也会把本行重新置 pending，
+    // 但显式插入保证退避语义确定。
     await supabase.from('agent_task_runs').insert({
       tenant_id: run.tenant_id,
       business_id: run.business_id,
       task_id: run.task_id,
-      attempt_number: nextAttempt,
+      attempt: nextAttempt,
       max_attempts: maxAttempts,
-      status: 'QUEUED',
+      status: 'pending',
       idempotency_key: `${run.idempotency_key}:retry:${nextAttempt}`,
       available_at: nextAvailableAt,
-      input: run.input ?? {},
+      input: {},
     });
   }
 }
@@ -415,7 +408,7 @@ function registerDefaultTaskHandlers(): void {
   registerTaskHandler('event_detection', eventDetectionHandler);
 }
 
-/** Main task worker loop. */
+/** Main task worker loop（与 claim 语义对齐：pending → running → completed/failed）。 */
 export async function pollAndExecuteTasks(workerId = `worker-${randomUUID().slice(0, 8)}`, limit = 10): Promise<number> {
   registerDefaultTaskHandlers();
   await ensureSystemAgentTasks();
@@ -431,19 +424,30 @@ export async function pollAndExecuteTasks(workerId = `worker-${randomUUID().slic
       continue;
     }
 
+    // claim RPC 不返回 input：按运行行回读（失败回落任务 payload）。
+    let input: Record<string, unknown> = run.payload ?? {};
+    const { data: runRow, error: runRowError } = await getSupabaseClient()
+      .from('agent_task_runs')
+      .select('input')
+      .eq('id', run.id)
+      .maybeSingle();
+    if (!runRowError && runRow) {
+      input = (runRow as { input?: Record<string, unknown> | null }).input ?? run.payload ?? {};
+    }
+
     const context: TaskHandlerContext = {
       tenantId: run.tenant_id,
       businessId: run.business_id,
       taskId: run.task_id,
       runId: run.id,
-      input: run.input ?? {},
-      payload: run.input ?? {},
-      context: run.context ?? {},
+      input,
+      payload: run.payload ?? {},
+      context: run.payload ?? {},
     };
 
     try {
       const handlerResult = await handler(context);
-      await completeTaskRun(run, handlerResult);
+      await completeTaskRun(run, handlerResult as { result?: Record<string, unknown>; waitingApproval?: boolean });
       executedCount++;
     } catch (error) {
       await failTaskRun(workerId, run, error);

@@ -5,6 +5,11 @@ import dotenv from 'dotenv';
 
 let envLoaded = false;
 
+// 模块级客户端缓存：按 url+key 复用 service-role 客户端实例，
+// 避免 216 处调用点每请求重建 createClient 与重复 env 探测。
+// 仅缓存无 token 的 service-role 客户端（带 token 的请求按用户变化，不缓存）。
+const clientCache = new Map<string, SupabaseClient>();
+
 interface SupabaseCredentials {
   url: string;
   anonKey: string;
@@ -90,17 +95,11 @@ function getSupabaseServiceRoleKey(): string | undefined {
   return process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
 }
 
-function getSupabaseClient(token?: string): SupabaseClient {
-  const { url, anonKey } = getSupabaseCredentials();
-
-  let key: string;
-  if (token) {
-    key = anonKey;
-  } else {
-    const serviceRoleKey = getSupabaseServiceRoleKey();
-    key = serviceRoleKey ?? anonKey;
-  }
-
+function buildSupabaseClient(
+  url: string,
+  key: string,
+  token?: string,
+): SupabaseClient {
   const globalOptions: Record<string, unknown> = {};
   if (token) {
     globalOptions.headers = { Authorization: `Bearer ${token}` };
@@ -124,6 +123,44 @@ function getSupabaseClient(token?: string): SupabaseClient {
       persistSession: false,
     },
   });
+}
+
+function getSupabaseClient(token?: string): SupabaseClient {
+  const { url, anonKey } = getSupabaseCredentials();
+
+  let key: string;
+  if (token) {
+    key = anonKey;
+  } else {
+    const serviceRoleKey = getSupabaseServiceRoleKey();
+    if (!serviceRoleKey) {
+      if (process.env.COZE_PROJECT_ENV === 'PROD') {
+        // 生产 fail-closed：缺失 service role key 直接抛错，
+        // 绝不静默回落 anon（否则漏配 env 会退化成 anon 全表读写）。
+        throw new Error(
+          'COZE_SUPABASE_SERVICE_ROLE_KEY is not set — refusing to fall back to the anon key in production (COZE_PROJECT_ENV=PROD).',
+        );
+      }
+      // 非生产（本地/preview）保留 anon 回落以支持无 service key 的演示环境。
+      console.warn(
+        '[supabase-client] COZE_SUPABASE_SERVICE_ROLE_KEY is not set; falling back to anon key (non-production only).',
+      );
+      key = anonKey;
+    } else {
+      key = serviceRoleKey;
+    }
+  }
+
+  if (!token) {
+    const cacheKey = `${url}|${key}`;
+    const cached = clientCache.get(cacheKey);
+    if (cached) return cached;
+    const client = buildSupabaseClient(url, key);
+    clientCache.set(cacheKey, client);
+    return client;
+  }
+
+  return buildSupabaseClient(url, key, token);
 }
 
 export { loadEnv, getSupabaseCredentials, getSupabaseServiceRoleKey, getSupabaseClient };

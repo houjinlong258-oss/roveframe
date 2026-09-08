@@ -66,6 +66,16 @@ Protected API mutations use one centralized sequence:
 
 Security failures fail closed. Staff cannot modify financial configuration, integration credentials, user roles, destructive staff state, product prices/costs, deployment, refunds, or other owner-only controls.
 
+### Database key model (service_role bypass + application-level predicates)
+
+The application connects to Supabase with the **service role key** as the single primary channel. The current security model is **service_role full bypass + application-level tenant/business predicates** enforced by `lib/tenant-db.ts` table whitelists (`PLATFORM_TABLES` / `BUSINESS_SCOPED_TABLES`). Row-Level Security policies (`scripts/migrate-rls.sql`) are kept as defense in depth for the `authenticated`/`anon` roles, but the application layer never relies on them while the service role channel is in use.
+
+Operational rules:
+
+- **Production fail-closed**: `COZE_PROJECT_ENV=PROD` without `COZE_SUPABASE_SERVICE_ROLE_KEY` makes `getSupabaseClient()` throw. There is no silent fallback to the anon key (a missing env must never degrade into anon full-table access). Non-production environments may fall back to anon for preview/demo flows.
+- **Client reuse**: the service-role client instance is cached at module level by `url+key`; requests do not rebuild the client or re-probe the environment.
+- **RLS enablement order** (future hardening): before switching any code path to the `anon`/`authenticated` role, enable RLS policies per table and verify with `scripts/verify-rls.sql` on a staging database, then migrate call sites one table at a time. Do not enable RLS on a table that service-role code still writes without its tenant/business columns populated.
+
 ## Agent tool boundary
 
 Every model-callable business tool is registered with name, description, input schema, required permissions, risk level, approval policy, and audit category. There is no direct model-to-database or model-to-side-effect path.

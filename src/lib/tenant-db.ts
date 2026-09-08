@@ -105,6 +105,13 @@ function rejectTenantOnlyBusinessAccess(table: string): void {
   }
 }
 
+/** plain* 系列只允许平台表：业务表一律拒绝，防止无过滤跨租户读/写。 */
+function rejectUnfilteredBusinessAccess(table: string): void {
+  if (BUSINESS_SCOPED_TABLES.has(table)) {
+    throw new Error(`unfiltered data access is forbidden for business table: ${table}`);
+  }
+}
+
 /** 业务表名是否在白名单之外（粗略判定，正式判定请用 isPlatformTable） */
 export function isPlatformTable(table: string): boolean {
   return PLATFORM_TABLES.has(table);
@@ -211,20 +218,24 @@ export function deleteWithScope(context: TenantContext, table: string, id: strin
 
 /** 读：返回未过滤的查询构建器（仅用于平台表，需调用方自己 .select(cols)） */
 export function plainTable(table: string): QueryBuilder {
+  rejectUnfilteredBusinessAccess(table);
   return getSupabaseClient().from(table) as unknown as QueryBuilder;
 }
 
 /** 写：insert（仅用于平台表，不注入 tenant_id） */
 export function plainInsert(table: string, row: Record<string, unknown>) {
+  rejectUnfilteredBusinessAccess(table);
   return getSupabaseClient().from(table).insert(row);
 }
 
 /** 写：按 id 更新（仅用于平台表） */
 export function plainUpdate(table: string, id: string, patch: Record<string, unknown>) {
+  rejectUnfilteredBusinessAccess(table);
   return getSupabaseClient().from(table).update(patch).eq('id', id);
 }
 
 /** 写：按 id 删除（仅用于平台表） */
 export function plainDelete(table: string, id: string) {
+  rejectUnfilteredBusinessAccess(table);
   return getSupabaseClient().from(table).delete().eq('id', id);
 }

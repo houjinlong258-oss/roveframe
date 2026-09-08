@@ -3,6 +3,10 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
 import {
   BUSINESS_SCOPED_TABLES,
+  plainDelete,
+  plainInsert,
+  plainTable,
+  plainUpdate,
   scopedTable,
   tenantTable,
 } from '../src/lib/tenant-db';
@@ -121,5 +125,22 @@ describe('P0-5 business isolation contracts', () => {
       migration,
       /set business_id = business\.id from public\.businesses business where row\.business_id is null/,
     );
+  });
+
+  test('P0-3 plain* helpers reject business tables (no unfiltered cross-tenant access)', () => {
+    // 业务表无论读写都不允许无过滤访问；平台表不受影响。
+    for (const table of ['products', 'integration_configs', 'settings', 'agent_approvals']) {
+      assert.throws(() => plainTable(table), /unfiltered data access is forbidden for business table/);
+      assert.throws(() => plainInsert(table, {}), /unfiltered data access is forbidden for business table/);
+      assert.throws(() => plainUpdate(table, 'id', {}), /unfiltered data access is forbidden for business table/);
+      assert.throws(() => plainDelete(table, 'id'), /unfiltered data access is forbidden for business table/);
+    }
+  });
+
+  test('P0-3 inventory route reads integration_configs through scopedTable (tenant+business)', () => {
+    const src = read('src/app/api/business/inventory/route.ts');
+    assert.ok(!/import\s*\{[^}]*plainTable/.test(src), 'inventory 路由禁止导入 plainTable');
+    assert.match(src, /scopedTable\(\s*ctx,\s*'integration_configs'/);
+    assert.match(src, /\.eq\('provider', 'erpnext'\)/);
   });
 });

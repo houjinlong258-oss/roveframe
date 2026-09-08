@@ -35,7 +35,7 @@ describe('P0-21 审批 executing 租约恢复与幂等对账', () => {
     assert.match(src, /eq\('status', 'executing'\)\s*\n\s*\.lte\('consumed_at', cutoffIso\)/);
     assert.match(src, /status: 'pending',\s*\n\s*consumed_at: null/);
     assert.match(src, /approval\.lease_recovered/);
-    assert.match(src, /executing lease expired; recovered for replay/);
+    assert.match(src, /executing lease expired \(recovered for replay\)/);
     assert.match(src, /Approval is currently executing/);
   });
 

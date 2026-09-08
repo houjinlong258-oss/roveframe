@@ -325,7 +325,7 @@ async function recoverExecutingApproval(
     .update({
       status: 'pending',
       consumed_at: null,
-      last_error: 'executing lease expired; recovered for replay',
+      last_error: 'executing lease expired (recovered for replay)',
       updated_at: new Date().toISOString(),
     })
     .eq('id', item.id)

@@ -424,12 +424,14 @@ export async function pollAndExecuteTasks(workerId = `worker-${randomUUID().slic
       continue;
     }
 
-    // claim RPC 不返回 input：按运行行回读（失败回落任务 payload）。
+    // claim RPC 不返回 input：按运行行回读（tenant/business 双 scope，失败回落任务 payload）。
     let input: Record<string, unknown> = run.payload ?? {};
     const { data: runRow, error: runRowError } = await getSupabaseClient()
       .from('agent_task_runs')
       .select('input')
       .eq('id', run.id)
+      .eq('tenant_id', run.tenant_id)
+      .eq('business_id', run.business_id)
       .maybeSingle();
     if (!runRowError && runRow) {
       input = (runRow as { input?: Record<string, unknown> | null }).input ?? run.payload ?? {};

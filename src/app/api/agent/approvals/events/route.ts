@@ -112,8 +112,10 @@ export async function POST(request: NextRequest) {
       || payload.risk === 'medium' || payload.risk === 'low'
       ? payload.risk
       : 'high',
-    requiredRole: payload.approval_policy === 'owner' || payload.approval_policy === 'admin'
-      ? payload.approval_policy
+    // P0-12：admin 级审批在商户域无人可批（canApprove 对 admin 恒 false）→
+    // 映射为 owner，避免 deploy/process 类动作审批永久卡死。
+    requiredRole: payload.approval_policy === 'admin' || payload.approval_policy === 'owner'
+      ? 'owner'
       : 'manager',
     invocationId: invocationId || `task:${String(payload.task_id ?? '')}`,
     title,

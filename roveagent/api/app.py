@@ -41,7 +41,10 @@ from ..kernel import RoveAgentKernel
 from ..state.enterprise_memory import EnterpriseMemory, MemoryLayer
 from ..tools.framework import ToolContext
 from ..workforce import BusinessGoalEngine, find_employee
-from .tasks import Task, TaskStep, TaskStore, new_task
+from .permissions import derive_permissions  # P0-11 权限服务端推导
+from .security import require_safe_id, sanitize_skill_name  # P0-10 输入白名单
+from .tasks import (ConcurrentTaskUpdateError, Task, TaskStep, TaskStore,
+                    new_task)
 
 _LAYER_BY_NAME = {
     "global": MemoryLayer.L0_GLOBAL, "industry": MemoryLayer.L1_INDUSTRY,
@@ -454,7 +457,7 @@ def create_app():
 
         executed, blocked = [], []
         for step in task.steps:
-            if step.status in ("done", "failed", "skipped"):
+            if step.status in ("done", "failed", "skipped", "approved"):
                 continue
             if step.needs_approval and not req.approved:
                 step.status = "awaiting_approval"
@@ -463,17 +466,40 @@ def create_app():
             if step.needs_approval and req.approved:
                 ctx.audit(req.tenant_id, req.approver or "approver",
                           "step_approved", f"{task.id}/{step.id}: {step.title[:80]}")
-            # 分析/提案/度量步骤在 Python 侧完成；执行类步骤登记为已执行，
-            # 真实外部动作经由 EnterpriseToolGate 的工具链（chat/工具调用时强制）。
+            if step.kind == "execute":
+                # P0-12：execute 类步骤仅落「意图登记」——真实外部动作必须经
+                # EnterpriseToolGate 工具链执行（chat/工具调用时强制），
+                # 此处绝不伪报「已执行」。
+                step.status = "approved"
+                step.result = (
+                    f"intent registered at {int(time.time())}; real execution "
+                    "goes through the EnterpriseToolGate tool chain")
+                executed.append(step.id)
+                ctx.audit(req.tenant_id, step.assignee, "step_intent_registered",
+                          f"{task.id}/{step.id}: {step.title[:80]}")
+                continue
+            # 分析/提案/度量步骤在 Python 侧完成
             step.status = "done"
-            step.result = f"executed by {step.assignee} at {int(time.time())}"
+            step.result = f"completed by {step.assignee} at {int(time.time())}"
             executed.append(step.id)
             ctx.audit(req.tenant_id, step.assignee, "step_executed",
                       f"{task.id}/{step.id}: {step.title[:80]}")
 
-        task.status = "done" if all(s.status == "done" for s in task.steps) else (
-            "awaiting_approval" if blocked else "running")
-        ctx.tasks.update(task)
+        terminal = {"done", "failed", "skipped"}
+        all_done = all(s.status in terminal for s in task.steps)
+        any_approved = any(s.status == "approved" for s in task.steps)
+        all_settled = all(s.status in (terminal | {"approved"}) for s in task.steps)
+        task.status = (
+            "done" if all_done else
+            "awaiting_approval" if blocked else
+            "approved" if all_settled and any_approved else
+            "running"
+        )
+        try:
+            ctx.tasks.update(task)
+        except ConcurrentTaskUpdateError:
+            # P0-12：并发双 execute 只生效一次 —— 冲突方 409
+            raise HTTPException(409, "task was modified concurrently; retry")
         return {"task_id": task.id, "status": task.status,
                 "executed": executed, "awaiting_approval": blocked}
 

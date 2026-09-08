@@ -1,0 +1,12 @@
+P0-6: Supabase RLS - database-layer tenant/business isolation
+
+- scripts/migrate-rls.sql: enable RLS on all 33 business-scoped tables
+  (incl. audit_events) with service_role full-access policies and
+  authenticated tenant+business scope policies bound to
+  auth.uid() -> users.tenant_id/business_id; users self-row policy;
+  tenants member-read policy; anon denied by default (no policy)
+- scripts/verify-rls.sql: single-transaction zero-crossover verification
+  (two tenants/businesses/users via request.jwt.claims simulation:
+  cross-tenant read/insert/update and same-tenant different-business
+  all must return zero or raise; rollback leaves no residue)
+- tests/rls-policy.test.ts: static contract coverage

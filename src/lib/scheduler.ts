@@ -136,16 +136,37 @@ async function broadcast(tenantId: string, businessId: string, connected: Channe
 }
 
 // ---------- 每日简报 ----------
+/**
+ * P0-17：DB 水位原子抢占（update-where-guard + insert on conflict do nothing），
+ * 多实例/重叠 tick 下同一商户当日简报恰发送一次。
+ */
+export async function claimDailyBriefingSlot(tenantId: string, businessId: string, today: string): Promise<boolean> {
+  const client = getSupabaseClient();
+  const key = `daily_briefing.${tenantId}.${businessId}`;
+  const { data, error } = await client.rpc('claim_daily_briefing_slot', {
+    p_key: key,
+    p_today: today,
+  });
+  if (error) {
+    // RPC 不可用（旧库未跑迁移）→ 回落旧的读-判-写（多实例下可能有极小重复风险）
+    console.error('[scheduler] claim_daily_briefing_slot RPC unavailable, falling back:', error.message);
+    const state = await getCronState(key);
+    if (state?.last_date === today) return false;
+    await setCronState(key, { last_date: today });
+    return true;
+  }
+  return data === true;
+}
+
 async function maybeSendDailyBriefing(tenantId: string, businessId: string, cfg: SchedulingConfig): Promise<void> {
   const connected = await listConnectedChannels(tenantId, businessId);
   if (connected.length === 0) return;
   const today = dateInTz(cfg.timeZone);
-  const state = await getCronState(`daily_briefing.${tenantId}.${businessId}`);
-  if (state?.last_date === today) return;
   if (hhmmInTz(cfg.timeZone) < cfg.briefingTime) return;
+  // P0-17：先原子抢占当日发送槽位；未抢到（已发送/他实例占用）直接返回。
+  if (!(await claimDailyBriefingSlot(tenantId, businessId, today))) return;
   const message = await buildBriefing(tenantId, businessId, cfg.lang);
   await broadcast(tenantId, businessId, connected, message);
-  await setCronState(`daily_briefing.${tenantId}.${businessId}`, { last_date: today });
 }
 
 // ---------- 异常告警推送 ----------
@@ -254,7 +275,23 @@ async function maybeSyncInboundEmail(tenantId: string, businessId: string): Prom
 }
 
 // ---------- 对外入口：每一 tick（60s）调用一次 ----------
-export async function runScheduledJobs(): Promise<void> {
+// P0-17：模块级 in-flight 锁 —— 上一 tick 未结束则跳过本轮，避免重叠
+// tick 导致 cron_state 读-判-写竞态与重复外发；卡死超过上限强制续跑。
+const TICK_STALL_TIMEOUT_MS = 10 * 60_000;
+let _tickInFlight = false;
+let _tickStartedAt = 0;
+
+export function _resetTickLockForTests(): void {
+  _tickInFlight = false;
+  _tickStartedAt = 0;
+}
+
+export function _forceTickInFlightForTests(): void {
+  _tickInFlight = true;
+  _tickStartedAt = Date.now();
+}
+
+async function runScheduledJobsInner(): Promise<void> {
   try {
     if (!(await ensureCronState())) return;
 
@@ -287,25 +324,58 @@ export async function runScheduledJobs(): Promise<void> {
     if (error) throw new Error(error.message);
 
     for (const tenant of (tenants ?? []) as { id: string }[]) {
-      const { data: businesses, error: businessesError } = await getSupabaseClient()
-        .from('businesses')
-        .select('id')
-        .eq('tenant_id', tenant.id);
-      if (businessesError) throw new Error(businessesError.message);
-      for (const business of (businesses ?? []) as { id: string }[]) {
-        const cfg = await getSchedulingConfig(tenant.id, business.id);
+      let businesses: { id: string }[] = [];
+      try {
+        const { data, error: businessesError } = await getSupabaseClient()
+          .from('businesses')
+          .select('id')
+          .eq('tenant_id', tenant.id);
+        if (businessesError) throw new Error(businessesError.message);
+        businesses = (data ?? []) as { id: string }[];
+      } catch (tenantError) {
+        // P0-17：单租户失败不得中断整轮 —— 记录并继续其余租户。
+        console.error('[scheduler] business list failed for tenant:', tenantError instanceof Error ? tenantError.message : tenantError);
+        continue;
+      }
+      for (const business of businesses) {
+        // P0-17：逐 business 独立 try/catch —— 任一门店配置/任务异常不跳过其它门店。
+        try {
+          const cfg = await getSchedulingConfig(tenant.id, business.id);
 
-        // Detection and delivery now run through durable agent tasks/outbox. The legacy
-        // channel briefing remains in place as a migration fallback for connected channels.
-        await maybeSendDailyBriefing(tenant.id, business.id, cfg);
-        await maybePushAlerts(tenant.id, business.id, cfg);
-        await pollTelegram(tenant.id, business.id, cfg);
-        await maybeSyncInboundEmail(tenant.id, business.id);
-        await maybeSyncSquare(tenant.id, business.id);
+          // Detection and delivery now run through durable agent tasks/outbox. The legacy
+          // channel briefing remains in place as a migration fallback for connected channels.
+          await maybeSendDailyBriefing(tenant.id, business.id, cfg);
+          await maybePushAlerts(tenant.id, business.id, cfg);
+          await pollTelegram(tenant.id, business.id, cfg);
+          await maybeSyncInboundEmail(tenant.id, business.id);
+          await maybeSyncSquare(tenant.id, business.id);
+        } catch (businessError) {
+          console.error(
+            `[scheduler] tick failed for business ${tenant.id}/${business.id}:`,
+            businessError instanceof Error ? businessError.message : businessError,
+          );
+        }
       }
     }
   } catch (err) {
     console.error('[scheduler] tick failed:', err);
+  }
+}
+
+export async function runScheduledJobs(): Promise<void> {
+  if (_tickInFlight) {
+    if (Date.now() - _tickStartedAt < TICK_STALL_TIMEOUT_MS) {
+      console.warn('[scheduler] skip tick: previous tick still in flight');
+      return;
+    }
+    console.error('[scheduler] previous tick stalled beyond timeout; forcing re-entry');
+  }
+  _tickInFlight = true;
+  _tickStartedAt = Date.now();
+  try {
+    await runScheduledJobsInner();
+  } finally {
+    _tickInFlight = false;
   }
 }
 

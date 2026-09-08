@@ -631,6 +631,29 @@ grant execute on function public.claim_agent_task_runs(text, integer) to service
 revoke all on function public.claim_notification_outbox(text, integer) from public, anon, authenticated;
 grant execute on function public.claim_notification_outbox(text, integer) to service_role;
 
+-- P0-17：每日简报当日槽位原子抢占（update-where-guard + insert on conflict do nothing）。
+-- 多实例/重叠 tick 下同一 (tenant,business) 当日恰发送一次。
+create or replace function public.claim_daily_briefing_slot(p_key text, p_today text)
+returns boolean language plpgsql as $$
+declare
+  v_claimed boolean;
+begin
+  update public.cron_state
+     set value = jsonb_build_object('last_date', p_today), updated_at = now()
+   where key = p_key
+     and (value->>'last_date') is distinct from p_today
+   returning true into v_claimed;
+  if not found then
+    insert into public.cron_state(key, value, updated_at)
+    values (p_key, jsonb_build_object('last_date', p_today), now())
+    on conflict (key) do nothing
+    returning true into v_claimed;
+  end if;
+  return coalesce(v_claimed, false);
+end $$;
+revoke all on function public.claim_daily_briefing_slot(text, text) from public, anon, authenticated;
+grant execute on function public.claim_daily_briefing_slot(text, text) to service_role;
+
 -- PWA Web Push 订阅
 create table if not exists public.push_subscriptions (
   id varchar(36) primary key default gen_random_uuid(),

@@ -54,8 +54,8 @@ describe('P0-6 金额/幂等源码契约', () => {
     assert.match(src, /from\('orders'\)[\s\S]{0,300}eq\('external_id', idempotencyKey\)/);
   });
 
-  test('订单幂等部分唯一索引三处同构（tenant,business,external_id where source=qr）', () => {
-    for (const file of ['scripts/migrate.sql', 'src/lib/migration.ts']) {
+  test('订单幂等部分唯一索引由迁移 SQL 单一事实源提供', () => {
+    for (const file of ['scripts/migrate.sql']) {
       const sql = read(file);
       assert.match(
         sql,
@@ -63,6 +63,11 @@ describe('P0-6 金额/幂等源码契约', () => {
         `${file} 缺少订单幂等部分唯一索引`,
       );
     }
+    // P0-14：migration.ts 不再内嵌第二份 SQL 副本，改为执行磁盘上的迁移文件
+    const runner = read('src/lib/migration.ts');
+    assert.match(runner, /scripts\/migrate\.sql/);
+    assert.match(runner, /scripts\/migrate-pilot-ready\.sql/);
+    assert.ok(!runner.includes('orders_qr_idempotency_idx'), 'migration.ts 禁止再内嵌 DDL 副本');
   });
 
   test('checkout reservation 分支按权威 due_amount 比对，无权威价拒绝', () => {
@@ -72,10 +77,9 @@ describe('P0-6 金额/幂等源码契约', () => {
     assert.match(src, /does not match the scoped reservation due amount/);
   });
 
-  test('reservations.due_amount 在 schema 与迁移三处定义', () => {
+  test('reservations.due_amount 在 schema 与迁移 SQL 中定义', () => {
     assert.match(read('src/storage/database/shared/schema.ts'), /due_amount: numeric\("due_amount", \{ precision: 10, scale: 2 \}\)/);
     assert.match(read('scripts/migrate.sql'), /add column if not exists due_amount numeric\(10,2\)/);
-    assert.match(read('src/lib/migration.ts'), /add column if not exists due_amount numeric\(10,2\)/);
     assert.match(read('scripts/migrate-business-tables.sql'), /due_amount numeric\(10,2\),/);
   });
 

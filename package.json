@@ -20,7 +20,8 @@
     "scan:artifacts": "node scripts/production-scan.mjs artifacts",
     "scan:production": "node scripts/production-scan.mjs all",
     "package:source": "python scripts/package-source.py",
-    "validate": "pnpm ts-check && pnpm lint:build && pnpm lint:style && pnpm test && pnpm scan:production"
+    "validate:migrations": "node scripts/verify-migrations.mjs",
+    "validate": "pnpm validate:migrations && pnpm ts-check && pnpm lint:build && pnpm lint:style && pnpm test && pnpm scan:production"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.958.0",

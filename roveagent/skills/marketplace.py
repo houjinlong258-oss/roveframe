@@ -100,9 +100,13 @@ def catalog(root: Optional[Path] = None) -> list[MarketSkill]:
 def install(root: Path, tenant_id: str, name: str,
             industry: str = "") -> Optional[Path]:
     """把技能安装进租户目录，返回 SKILL.md 路径；技能不存在返回 None。"""
-    safe = "".join(c for c in name if c.isalnum() or c in "-_").lower()
-    if not safe:
+    # P0-10：tenant_id 白名单校验（防止 ../../ 路径穿越写入任意目录）
+    from ..api.security import require_safe_id, sanitize_skill_name
+    try:
+        tenant_id = require_safe_id(tenant_id, label="tenant_id")
+    except ValueError:
         return None
+    safe = sanitize_skill_name(name)
     entry = next((s for s in catalog(None) if s.name == safe), None)
     if entry is None:
         return None

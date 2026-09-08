@@ -140,12 +140,30 @@ def get_context() -> ServiceContext:
 # ---------------------------------------------------------------------------
 # 请求模型（模块级：FastAPI 需要可全局解析的类型注解）
 # ---------------------------------------------------------------------------
-from pydantic import BaseModel, Field  # noqa: E402  (pydantic 是核心依赖)
+from pydantic import BaseModel, Field, field_validator  # noqa: E402  (pydantic 是核心依赖)
+
+from .security import require_safe_id, sanitize_skill_name  # P0-10 输入白名单
 
 
-class ChatRequest(BaseModel):
-    tenant_id: str = Field(min_length=1)
-    business_id: str = Field(min_length=1)
+class _TenantScopedRequest(BaseModel):
+    """P0-10：所有请求模型的 tenant_id/business_id 统一白名单校验（fail-closed）。"""
+
+    tenant_id: str = Field(min_length=1, max_length=64)
+    business_id: str = Field(min_length=1, max_length=64)
+
+    @field_validator("tenant_id", "business_id")
+    @classmethod
+    def _validate_scope_ids(cls, value: str) -> str:
+        if not isinstance(value, str) or not value:
+            raise ValueError("tenant_id/business_id required")
+        try:
+            require_safe_id(value)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return value
+
+
+class ChatRequest(_TenantScopedRequest):
     user_id: str = Field(min_length=1)
     message: str = Field(min_length=1, max_length=8000)
     agent: str = "ceo"
@@ -158,35 +176,27 @@ class ChatRequest(BaseModel):
     business_context: str = Field(min_length=1, max_length=20_000)
 
 
-class TaskRequest(BaseModel):
-    tenant_id: str = Field(min_length=1)
-    business_id: str = Field(min_length=1)
+class TaskRequest(_TenantScopedRequest):
     title: str = ""
     objective: str = Field(min_length=1)
     created_by: str = "user"
 
 
-class ExecuteRequest(BaseModel):
-    tenant_id: str = Field(min_length=1)
-    business_id: str = Field(min_length=1)
+class ExecuteRequest(_TenantScopedRequest):
     task_id: str = Field(min_length=1)
     approved: bool = False
     approver: str = ""
 
 
-class SkillRequest(BaseModel):
-    tenant_id: str = Field(min_length=1)
-    business_id: str = Field(min_length=1)
+class SkillRequest(_TenantScopedRequest):
     name: str = Field(min_length=1, max_length=64)
     description: str = ""
     workflow: str = ""
     industry: str = ""
 
 
-class ToolResolveRequest(BaseModel):
+class ToolResolveRequest(_TenantScopedRequest):
     """RoveFrame signed callback for one immutable tool invocation."""
-    tenant_id: str = Field(min_length=1)
-    business_id: str = Field(min_length=1)
     tool: str = Field(min_length=1)
     args: dict[str, Any] = Field(default_factory=dict)
     approved: bool = False
@@ -203,9 +213,7 @@ class ToolResolveRequest(BaseModel):
     task_id: str = Field(min_length=1)
 
 
-class SkillInstallRequest(BaseModel):
-    tenant_id: str = Field(min_length=1)
-    business_id: str = Field(min_length=1)
+class SkillInstallRequest(_TenantScopedRequest):
     name: str = Field(min_length=1, max_length=64)
     industry: str = ""
 
@@ -223,6 +231,13 @@ def create_app():
         if (not expected_key or not x_roveagent_key
                 or not secrets.compare_digest(x_roveagent_key, expected_key)):
             raise HTTPException(401, "invalid X-RoveAgent-Key")
+
+    def _safe_tenant_query(tenant_id: str) -> str:
+        """P0-10：Query 参数 tenant_id 白名单校验，非法 422（fail-closed）。"""
+        try:
+            return require_safe_id(tenant_id, label="tenant_id")
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     async def signed_auth(
         request: Request,
@@ -335,6 +350,8 @@ def create_app():
                       business_id: str = Query(...),
                       user_id: str = Query(...)) -> dict[str, Any]:
         """当前 tenant/business/user 的 chat 会话列表。"""
+        # P0-10：Query 参数同样白名单校验（fail-closed 422）
+        tenant_id = _safe_tenant_query(tenant_id)
         sessions = get_context().chat_sessions.list_sessions(
             tenant_id, business_id, user_id,
         )
@@ -346,6 +363,8 @@ def create_app():
                        business_id: str = Query(...),
                        user_id: str = Query(...)) -> dict[str, Any]:
         """清空一个会话的多轮上下文（不可恢复）。"""
+        # P0-10：Query 参数白名单校验
+        tenant_id = _safe_tenant_query(tenant_id)
         n = get_context().chat_sessions.delete_session(
             tenant_id, business_id, user_id, session_id,
         )
@@ -415,6 +434,8 @@ def create_app():
     @app.get("/api/agent/status/{task_id}", dependencies=[Depends(auth)])
     def task_status(task_id: str, tenant_id: str = Query(...),
                     business_id: str = Query(...)) -> dict[str, Any]:
+        # P0-10：Query 参数白名单校验
+        tenant_id = _safe_tenant_query(tenant_id)
         task = get_context().tasks.get(tenant_id, business_id, task_id)
         if task is None:
             raise HTTPException(404, "task not found")
@@ -531,6 +552,8 @@ def create_app():
     def memory(tenant_id: str = Query(...), business_id: str = Query(...),
                query: str = Query(""),
                industry: str = Query(""), limit: int = Query(8, le=50)) -> dict[str, Any]:
+        # P0-10：Query 参数白名单校验
+        tenant_id = _safe_tenant_query(tenant_id)
         hits = get_context().memory.search(
             query, tenant_id=tenant_id, business_id=business_id,
             industry=industry, limit=limit,
@@ -546,6 +569,8 @@ def create_app():
         """技能市场目录：builtin（行业包）+ library（技能库）+ tenant（自建）。"""
         from ..skills.marketplace import catalog
 
+        # P0-10：Query 参数白名单校验
+        tenant_id = _safe_tenant_query(tenant_id)
         items = catalog(get_context().root)
         if industry:
             items = [s for s in items if not s.industry or s.industry == industry]
@@ -579,10 +604,10 @@ def create_app():
     @app.post("/api/agent/skill/create", dependencies=[Depends(auth)])
     def create_skill(req: SkillRequest) -> dict[str, Any]:
         ctx = get_context()
-        safe = "".join(c for c in req.name if c.isalnum() or c in "-_").lower()
-        if not safe:
-            raise HTTPException(400, "invalid skill name")
-        skill_dir = ctx.root / "skills" / f"tenant-{req.tenant_id}" / safe
+        safe = sanitize_skill_name(req.name)
+        # P0-10：tenant_id 已经由模型白名单校验；此处二次校验兜底路径安全
+        tenant_id = require_safe_id(req.tenant_id, label="tenant_id")
+        skill_dir = ctx.root / "skills" / f"tenant-{tenant_id}" / safe
         skill_dir.mkdir(parents=True, exist_ok=True)
         (skill_dir / "SKILL.md").write_text(
             f"---\nname: {safe}\ndescription: {req.description}\n"

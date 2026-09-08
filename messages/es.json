@@ -185,6 +185,7 @@
     "editDoc": "Editar documento",
     "deleteDoc": "Eliminar documento",
     "deleteConfirm": "¿Eliminar \"{title}\"? También se eliminarán sus vectores.",
+    "saveFail": "No se pudo guardar — inténtalo de nuevo",
     "empty": "Sin documentos en esta categoría"
   },
   "reviews": {
@@ -319,6 +320,7 @@
     "sendReply": "Enviar respuesta",
     "sending": "Enviando…",
     "draftSaved": "Borrador guardado",
+    "saveFail": "No se pudo guardar — inténtalo de nuevo",
     "sentOk": "Respuesta enviada correctamente",
     "sentFail": "Error al enviar"
   },
@@ -506,6 +508,7 @@
     "title": "Ajustes",
     "subtitle": "Configura la información del negocio y el comportamiento de la IA. Los cambios se aplican al instante.",
     "saved": "Guardado",
+    "saveFail": "No se pudo guardar — inténtalo de nuevo",
     "groupBusiness": "Negocio",
     "groupLocale": "Idioma y región",
     "groupModels": "Modelos de IA",

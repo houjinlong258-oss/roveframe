@@ -10,6 +10,7 @@ import {
   Send, Palette, Sun, Moon, Monitor,
 } from 'lucide-react';
 import { fmtDateTime } from '@/lib/format';
+import { saveJson } from '@/lib/fetch-utils';
 import { CHANNEL_PRESETS, type ChannelKey } from '@/lib/channels-presets';
 import { useTheme, type ThemeMode } from '@/components/theme/theme-provider';
 
@@ -155,6 +156,7 @@ export default function SettingsPage() {
   const [group, setGroup] = useState<Group>('models');
   const { mode: themeMode, resolved: themeResolved, setMode: setThemeMode } = useTheme();
   const [savedTip, setSavedTip] = useState('');
+  const [saveError, setSaveError] = useState('');
 
   // 设置主数据
   const [settings, setSettings] = useState<{ business: Record<string, string>; locale: Record<string, string>; ai_prefs: Record<string, unknown>; model_assign: Record<string, string> } | null>(null);
@@ -196,7 +198,16 @@ export default function SettingsPage() {
 
   const flashSaved = () => {
     setSavedTip(t('saved'));
+    setSaveError('');
     setTimeout(() => setSavedTip(''), 2000);
+  };
+
+  // P0-7：保存失败必须显式提示，禁止静默「已保存」误报
+  const flashSaveError = (error: unknown) => {
+    const message = error instanceof Error && error.message ? error.message : '';
+    setSaveError(message || t('saveFail'));
+    setSavedTip('');
+    setTimeout(() => setSaveError(''), 4000);
   };
 
   const safeFetchJson = useCallback(async (url: string) => {
@@ -264,12 +275,15 @@ export default function SettingsPage() {
   }, [group, loadProviders, loadRouteInfo, loadAccounts, loadIntegrations, loadChannels, loadCounts]);
 
   const saveSection = async (key: string, value: unknown) => {
-    await fetch('/api/settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ [key]: value }),
-    });
-    flashSaved();
+    try {
+      await saveJson('/api/settings', {
+        method: 'PUT',
+        body: { [key]: value },
+      });
+      flashSaved();
+    } catch (error) {
+      flashSaveError(error);
+    }
   };
 
   // 模型配置
@@ -314,10 +328,9 @@ export default function SettingsPage() {
     if (!modelModal) return;
     setModelSaving(true);
     try {
-      await fetch('/api/settings/models', {
+      await saveJson('/api/settings/models', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           provider: modelModal.id,
           apiKey: modelForm.apiKey || undefined,
           baseUrl: modelForm.baseUrl,
@@ -326,32 +339,37 @@ export default function SettingsPage() {
           timeoutMs: modelForm.timeoutMs ? Number(modelForm.timeoutMs) : undefined,
           maxRetries: modelForm.maxRetries ? Number(modelForm.maxRetries) : undefined,
           optInLocal: modelForm.optInLocal,
-        }),
+        },
       });
       setModelModal(null);
       await loadProviders();
       await loadRouteInfo();
       flashSaved();
+    } catch (error) {
+      flashSaveError(error);
     } finally {
       setModelSaving(false);
     }
   };
 
   const removeModel = async (provider: string) => {
-    await fetch(`/api/settings/models?provider=${provider}`, { method: 'DELETE' });
-    setModelModal(null);
-    await loadProviders();
-    await loadRouteInfo();
+    try {
+      await saveJson(`/api/settings/models?provider=${provider}`, { method: 'DELETE' });
+      setModelModal(null);
+      await loadProviders();
+      await loadRouteInfo();
+    } catch (error) {
+      flashSaveError(error);
+    }
   };
 
   // 邮箱
   const saveMailbox = async () => {
     setMailSaving(true);
     try {
-      await fetch('/api/settings/email-accounts', {
+      await saveJson('/api/settings/email-accounts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           provider: mailType === 'smtp' ? 'smtp' : mailType,
           email: mailForm.email,
           displayName: mailForm.displayName || null,
@@ -361,38 +379,51 @@ export default function SettingsPage() {
           imapPort: Number(mailForm.imapPort) || 993,
           smtpPass: mailForm.pass,
           isDefault: accounts.length === 0,
-        }),
+        },
       });
       setMailModal(false);
       setMailForm({ email: '', displayName: '', smtpHost: '', smtpPort: '465', imapHost: '', imapPort: '993', pass: '' });
       await loadAccounts();
       flashSaved();
+    } catch (error) {
+      flashSaveError(error);
     } finally {
       setMailSaving(false);
     }
   };
 
   const deleteMailbox = async (id: string) => {
-    await fetch(`/api/settings/email-accounts?id=${id}`, { method: 'DELETE' });
-    await loadAccounts();
+    try {
+      await saveJson(`/api/settings/email-accounts?id=${id}`, { method: 'DELETE' });
+      await loadAccounts();
+    } catch (error) {
+      flashSaveError(error);
+    }
   };
 
   // 集成
   const saveIntegration = async (provider: string, config: Record<string, unknown>, syncScope: string[]) => {
-    await fetch('/api/integrations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, config, syncScope }),
-    });
-    setErpModal(false);
-    setIntModal(null);
-    await loadIntegrations();
-    flashSaved();
+    try {
+      await saveJson('/api/integrations', {
+        method: 'POST',
+        body: { provider, config, syncScope },
+      });
+      setErpModal(false);
+      setIntModal(null);
+      await loadIntegrations();
+      flashSaved();
+    } catch (error) {
+      flashSaveError(error);
+    }
   };
 
   const disconnectIntegration = async (provider: string) => {
-    await fetch(`/api/integrations?provider=${provider}`, { method: 'DELETE' });
-    await loadIntegrations();
+    try {
+      await saveJson(`/api/integrations?provider=${provider}`, { method: 'DELETE' });
+      await loadIntegrations();
+    } catch (error) {
+      flashSaveError(error);
+    }
   };
 
   const testIntegration = async (provider: string, config: Record<string, unknown>, setter: typeof setErpTest) => {
@@ -412,19 +443,26 @@ export default function SettingsPage() {
 
   // 社交通讯
   const saveChannel = async (provider: string, config: Record<string, string>) => {
-    await fetch('/api/channels', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, config }),
-    });
-    setChModal(null);
-    await loadChannels();
-    flashSaved();
+    try {
+      await saveJson('/api/channels', {
+        method: 'POST',
+        body: { provider, config },
+      });
+      setChModal(null);
+      await loadChannels();
+      flashSaved();
+    } catch (error) {
+      flashSaveError(error);
+    }
   };
 
   const disconnectChannel = async (provider: string) => {
-    await fetch(`/api/channels?provider=${provider}`, { method: 'DELETE' });
-    await loadChannels();
+    try {
+      await saveJson(`/api/channels?provider=${provider}`, { method: 'DELETE' });
+      await loadChannels();
+    } catch (error) {
+      flashSaveError(error);
+    }
   };
 
   const testChannel = async (provider: string, config: Record<string, unknown>) => {
@@ -545,6 +583,12 @@ export default function SettingsPage() {
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success bg-success/10 px-3 py-1.5 rounded-md">
             <CircleCheck className="w-3.5 h-3.5" />
             {savedTip}
+          </span>
+        )}
+        {saveError && (
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-error bg-error/10 px-3 py-1.5 rounded-md">
+            <CircleX className="w-3.5 h-3.5" />
+            {saveError}
           </span>
         )}
       </div>

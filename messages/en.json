@@ -185,6 +185,7 @@
     "editDoc": "Edit document",
     "deleteDoc": "Delete document",
     "deleteConfirm": "Delete \"{title}\"? Its vector chunks will also be removed.",
+    "saveFail": "Save failed — please try again",
     "empty": "No documents in this category yet"
   },
   "reviews": {
@@ -319,6 +320,7 @@
     "sendReply": "Send Reply",
     "sending": "Sending…",
     "draftSaved": "Draft saved",
+    "saveFail": "Save failed — please try again",
     "sentOk": "Reply sent successfully",
     "sentFail": "Send failed"
   },
@@ -506,6 +508,7 @@
     "title": "Settings",
     "subtitle": "Configure business info and AI behavior. Changes take effect immediately.",
     "saved": "Saved",
+    "saveFail": "Save failed — please try again",
     "groupBusiness": "Business",
     "groupLocale": "Language & Region",
     "groupModels": "AI Models",

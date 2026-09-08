@@ -185,6 +185,7 @@
     "editDoc": "编辑文档",
     "deleteDoc": "删除文档",
     "deleteConfirm": "确定删除「{title}」吗？其向量分块将一并删除。",
+    "saveFail": "保存失败，请重试",
     "empty": "该分类下暂无文档"
   },
   "reviews": {
@@ -319,6 +320,7 @@
     "sendReply": "发送回复",
     "sending": "发送中…",
     "draftSaved": "草稿已保存",
+    "saveFail": "保存失败，请重试",
     "sentOk": "回复已成功发送",
     "sentFail": "发送失败"
   },
@@ -506,6 +508,7 @@
     "title": "设置",
     "subtitle": "配置业务信息与 AI 行为，所有设置即时生效",
     "saved": "已保存",
+    "saveFail": "保存失败，请重试",
     "groupBusiness": "业务信息",
     "groupLocale": "语言与地区",
     "groupModels": "AI 模型接入",

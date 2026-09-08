@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { fmtDateTime } from '@/lib/format';
 import { safeFetchJson } from '@/lib/utils';
+import { saveJson } from '@/lib/fetch-utils';
 import { useRouter } from '@/i18n/navigation';
 
 interface Email {
@@ -176,12 +177,17 @@ export default function EmailsPage() {
 
   const saveDraft = async () => {
     if (!selected) return;
-    await fetch('/api/emails', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: selected.id, reply_draft: draft }),
-    });
-    setSendMsg({ ok: true, text: t('draftSaved') });
+    // P0-7：草稿保存失败不得误报「已保存」
+    try {
+      await saveJson('/api/emails', {
+        method: 'PATCH',
+        body: { id: selected.id, reply_draft: draft },
+      });
+      setSendMsg({ ok: true, text: t('draftSaved') });
+    } catch (error) {
+      const message = error instanceof Error && error.message ? error.message : t('saveFail');
+      setSendMsg({ ok: false, text: message });
+    }
     setTimeout(() => setSendMsg(null), 2500);
   };
 

@@ -21,13 +21,16 @@ export async function safeFetchJson<T = any>(url: string, init?: RequestInit): P
   try {
     const res = await fetch(url, init);
     if (!res.ok) {
+      // P0-7：失败至少留痕，避免调用方「骨架屏永转/空态假死」时无任何诊断
+      console.error(`[safeFetchJson] ${init?.method ?? 'GET'} ${url} → ${res.status}`);
       redirectToLoginOn401(res.status);
       return null;
     }
     const text = await res.text();
     if (!text || !text.trim()) return null;
     return JSON.parse(text) as T;
-  } catch {
+  } catch (error) {
+    console.error(`[safeFetchJson] ${init?.method ?? 'GET'} ${url} failed:`, error);
     return null;
   }
 }

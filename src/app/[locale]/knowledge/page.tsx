@@ -9,6 +9,7 @@ import {
 import { useSSE } from '@/hooks/use-sse';
 import { Markdown } from '@/components/markdown';
 import { cn, safeFetchJson } from '@/lib/utils';
+import { saveJson } from '@/lib/fetch-utils';
 import { fmtDate } from '@/lib/format';
 
 type Doc = {
@@ -39,6 +40,8 @@ export default function KnowledgePage() {
   const [form, setForm] = useState({ title: '', category: 'sop', content: '' });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<Doc | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const { streaming, start } = useSSE();
 
   const loadDocs = async () => {
@@ -83,29 +86,42 @@ export default function KnowledgePage() {
   const save = async () => {
     if (!form.title.trim() || !form.content.trim() || saving) return;
     setSaving(true);
-    if (editing) {
-      await fetch('/api/knowledge/docs', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: editing.id, ...form }),
-      });
-    } else {
-      await fetch('/api/knowledge/docs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      });
+    // P0-7：失败不关弹窗不误报，按钮经 finally 复位
+    try {
+      if (editing) {
+        await saveJson('/api/knowledge/docs', {
+          method: 'PATCH',
+          body: { id: editing.id, ...form },
+        });
+      } else {
+        await saveJson('/api/knowledge/docs', {
+          method: 'POST',
+          body: form,
+        });
+      }
+      setModalOpen(false);
+      loadDocs();
+    } catch (error) {
+      const message = error instanceof Error && error.message ? error.message : t('saveFail');
+      setSaveError(message);
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
-    setModalOpen(false);
-    loadDocs();
   };
 
   const remove = async () => {
     if (!deleting) return;
-    await fetch(`/api/knowledge/docs?id=${deleting.id}`, { method: 'DELETE' });
-    setDeleting(null);
-    loadDocs();
+    setRemoving(true);
+    try {
+      await saveJson(`/api/knowledge/docs?id=${deleting.id}`, { method: 'DELETE' });
+      setDeleting(null);
+      loadDocs();
+    } catch (error) {
+      const message = error instanceof Error && error.message ? error.message : t('saveFail');
+      setSaveError(message);
+    } finally {
+      setRemoving(false);
+    }
   };
 
   return (
@@ -291,6 +307,9 @@ export default function KnowledgePage() {
                   className="w-full bg-muted border-none rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors resize-none"
                 />
               </div>
+              {saveError && (
+                <p className="text-sm text-destructive">{saveError}</p>
+              )}
               <div className="flex justify-end gap-2 pt-2">
                 <button onClick={() => setModalOpen(false)} className="px-4 py-2 rounded-md text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">
                   {tc('cancel')}
@@ -315,12 +334,15 @@ export default function KnowledgePage() {
           <div className="bg-card rounded-xl shadow-dialog max-w-sm w-full p-6">
             <h3 className="text-base font-semibold mb-2">{t('deleteDoc')}</h3>
             <p className="text-sm text-muted-foreground mb-5">{t('deleteConfirm', { title: deleting.title })}</p>
+            {saveError && (
+              <p className="text-sm text-destructive mb-3">{saveError}</p>
+            )}
             <div className="flex justify-end gap-2">
               <button onClick={() => setDeleting(null)} className="px-4 py-2 rounded-md text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">
                 {tc('cancel')}
               </button>
-              <button onClick={remove} className="bg-destructive text-white px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 transition-all">
-                {tc('delete')}
+              <button onClick={remove} disabled={removing} className="bg-destructive text-white px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 transition-all disabled:opacity-60">
+                {removing ? tc('loading') : tc('delete')}
               </button>
             </div>
           </div>

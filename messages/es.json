@@ -13,6 +13,7 @@
     "brand": "RoveFrame",
     "brandBadge": "AI COO",
     "approvals": "Aprobaciones",
+    "audit": "Auditoría",
     "enterpriseApprovals": "Revisión"
   },
   "common": {
@@ -880,9 +881,41 @@
         "roveagent.tool_call": "Llamada de herramienta RoveAgent",
         "roveagent.task_step": "Tarea RoveAgent"
       },
+      "request": "Solicitud",
+      "agent": "Agente",
+      "tool": "Herramienta",
+      "business": "Negocio",
+      "user": "Usuario",
+      "arguments": "Argumentos",
+      "risk": "Riesgo",
+      "approvedBy": "Aprobado por",
+      "executionStatus": "Estado de ejecución",
+      "executingHint": "Ejecutando la acción aprobada…",
+      "result": "Resultado",
+      "noResult": "Aún no hay resultado.",
+      "viewAudit": "Ver auditoría",
       "approvedDone": "Aprobada y ejecutada",
       "rejectedDone": "Rechazada"
     }
+  },
+  "audit": {
+    "title": "Auditoría",
+    "subtitle": "Eventos de aprobación y ejecución de este negocio",
+    "refresh": "Actualizar",
+    "export": "Exportar CSV",
+    "filterApproval": "Filtrado por aprobación",
+    "clear": "Limpiar",
+    "count": "Eventos",
+    "time": "Hora",
+    "action": "Acción",
+    "tool": "Herramienta",
+    "agent": "Agente",
+    "approval": "Aprobación",
+    "execution": "Ejecución",
+    "status": "Estado",
+    "result": "Resultado",
+    "loading": "Cargando…",
+    "empty": "Aún no hay eventos de auditoría."
   },
   "enterpriseApprovals": {
     "title": "Revisión de cambios",

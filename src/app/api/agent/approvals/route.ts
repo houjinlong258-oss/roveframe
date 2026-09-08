@@ -4,24 +4,33 @@ import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
 import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
 
-/** List pending approval items for the current business. */
+/** List approval items for the current business (full lifecycle fields). */
 export async function GET(request: NextRequest) {
-  const context = requireBusinessContext(await getTenantContext(request));
+  try {
+    const context = requireBusinessContext(await getTenantContext(request));
 
-  const supabase = getSupabaseClient();
-  const { data: approvals, error } = await supabase
-    .from('agent_approvals')
-    .select('*')
-    .eq('tenant_id', context.tenantId)
-    .eq('business_id', context.businessId)
-    .order('created_at', { ascending: false })
-    .limit(50);
+    const supabase = getSupabaseClient();
+    const { data: approvals, error } = await supabase
+      .from('agent_approvals')
+      .select('*')
+      .eq('tenant_id', context.tenantId)
+      .eq('business_id', context.businessId)
+      .order('created_at', { ascending: false })
+      .limit(50);
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ approvals });
+  } catch (authError) {
+    // 未认证/无业务上下文：401 而非 500。
+    const message = authError instanceof Error ? authError.message : String(authError);
+    if (message.includes('uthenticat') || message.includes('session')) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    }
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  return NextResponse.json({ approvals });
 }
 
 type ProcessApprovalBody = {

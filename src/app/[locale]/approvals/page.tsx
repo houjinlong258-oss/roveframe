@@ -73,6 +73,19 @@ interface AgentApproval {
   execution_id?: string | null;
   created_at: string;
   payload: Record<string, unknown>;
+  arguments?: Record<string, unknown> | null;
+  agent?: string | null;
+  user_id?: string | null;
+  requester?: string | null;
+  business_id?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  executed_at?: string | null;
+  failed_at?: string | null;
+  rejected_at?: string | null;
+  execution_result?: unknown;
+  last_error?: string | null;
+  expires_at?: string | null;
 }
 
 const BIZ_STATUS_STYLES: Record<AgentApproval['status'], string> = {
@@ -97,7 +110,7 @@ const RISK_STYLES: Record<Proposal['riskLevel'], string> = {
 
 export default function ApprovalsPage() {
   const t = useTranslations('approvals');
-  const [tab, setTab] = useState<'code' | 'business'>('code');
+  const [tab, setTab] = useState<'code' | 'business'>('business');
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Proposal | null>(null);
@@ -106,6 +119,7 @@ export default function ApprovalsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [bizApprovals, setBizApprovals] = useState<AgentApproval[]>([]);
   const [bizLoading, setBizLoading] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -132,6 +146,15 @@ export default function ApprovalsPage() {
     loadList();
     loadBiz();
   }, [loadList, loadBiz]);
+
+  // 审批台轮询：business 标签页可见时每 8 秒刷新（新审批单/执行结果自动可见）。
+  useEffect(() => {
+    if (tab !== 'business') return;
+    const id = setInterval(() => {
+      void loadBiz();
+    }, 8000);
+    return () => clearInterval(id);
+  }, [tab, loadBiz]);
 
   useEffect(() => {
     if (selectedId) loadDetail(selectedId);
@@ -255,51 +278,159 @@ export default function ApprovalsPage() {
             {!bizLoading && bizApprovals.length === 0 && (
               <div className="p-6 text-sm text-on-surface-variant">{t('biz.empty')}</div>
             )}
-            {bizApprovals.map((a) => (
-              <div key={a.id} className="px-4 py-3 flex items-start gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium">{a.title}</span>
-                    <span className={`text-[11px] px-1.5 py-0.5 rounded ${BIZ_STATUS_STYLES[a.status]}`}>
-                      {t(`biz.status.${a.status}`)}
-                    </span>
-                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-surface-container text-on-surface-variant">
-                      {t.has(`biz.type.${a.action_type}`) ? t(`biz.type.${a.action_type}`) : a.action_type}
-                    </span>
-                    {a.risk_level && (
-                      <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-50 text-red-700">
-                        {a.risk_level} · {a.required_role}
-                      </span>
+            {bizApprovals.map((a) => {
+              const expanded = expandedId === a.id;
+              const step = (label: string, done: boolean, failed = false) => (
+                <span
+                  className={`inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded ${
+                    failed ? 'bg-red-100 text-red-700' : done ? 'bg-green-100 text-green-700' : 'bg-surface-container text-on-surface-variant/60'
+                  }`}
+                >
+                  {done ? <Check className="w-3 h-3" /> : failed ? <X className="w-3 h-3" /> : <span className="w-3 h-3 inline-block border border-current rounded-full" />}
+                  {label}
+                </span>
+              );
+              const timeline = [
+                { label: t.has('biz.status.pending') ? t('biz.status.pending') : 'Pending', done: true, failed: false, at: a.created_at },
+                ...(a.status === 'rejected' ? [{ label: t.has('biz.status.rejected') ? t('biz.status.rejected') : 'Rejected', done: true, failed: false, at: a.rejected_at ?? null }]
+                  : a.status === 'expired' ? [{ label: t.has('biz.status.expired') ? t('biz.status.expired') : 'Expired', done: true, failed: false, at: a.expires_at ?? null }]
+                  : [
+                    { label: t.has('biz.status.approved') ? t('biz.status.approved') : 'Approved', done: Boolean(a.approved_at), failed: false, at: a.approved_at ?? null },
+                    { label: t.has('biz.status.executing') ? t('biz.status.executing') : 'Executing', done: Boolean(a.execution_id), failed: false, at: a.executed_at ?? null },
+                    { label: t.has('biz.status.executed') ? t('biz.status.executed') : 'Completed', done: a.status === 'executed', failed: false, at: a.executed_at ?? null },
+                    ...(a.status === 'failed' ? [{ label: t.has('biz.status.failed') ? t('biz.status.failed') : 'Failed', done: false, failed: true, at: a.failed_at ?? null }] : []),
+                  ]),
+              ];
+              return (
+                <div key={a.id} className="px-4 py-3">
+                  <div className="flex items-start gap-4">
+                    <button
+                      className="flex-1 min-w-0 text-left"
+                      onClick={() => setExpandedId(expanded ? null : a.id)}
+                    >
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium">{a.title}</span>
+                        <span className={`text-[11px] px-1.5 py-0.5 rounded ${BIZ_STATUS_STYLES[a.status]}`}>
+                          {t(`biz.status.${a.status}`)}
+                        </span>
+                        <span className="text-[11px] px-1.5 py-0.5 rounded bg-surface-container text-on-surface-variant">
+                          {t.has(`biz.type.${a.action_type}`) ? t(`biz.type.${a.action_type}`) : a.action_type}
+                        </span>
+                        {a.risk_level && (
+                          <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-50 text-red-700">
+                            {a.risk_level} · {a.required_role}
+                          </span>
+                        )}
+                      </div>
+                      {a.description && (
+                        <p className="text-xs text-on-surface-variant mt-1">{a.description}</p>
+                      )}
+                      <div className="text-[11px] text-on-surface-variant mt-1">
+                        {fmtDateTime(a.created_at)}
+                        <span className="font-mono ml-2">{a.tool_name}{a.execution_id ? ` · ${a.execution_id.slice(0, 8)}` : ''}</span>
+                      </div>
+                    </button>
+                    {a.status === 'pending' && (
+                      <div className="flex gap-2 shrink-0">
+                        <button
+                          disabled={actionBusy !== null}
+                          onClick={() => bizAction(a.id, 'approve')}
+                          className="flex items-center gap-1 px-3 py-1.5 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          <Check className="w-3.5 h-3.5" /> {t('approve')}
+                        </button>
+                        <button
+                          disabled={actionBusy !== null}
+                          onClick={() => bizAction(a.id, 'reject')}
+                          className="flex items-center gap-1 px-3 py-1.5 text-xs rounded-md border border-outline hover:bg-surface-container disabled:opacity-50"
+                        >
+                          <X className="w-3.5 h-3.5" /> {t('reject')}
+                        </button>
+                      </div>
                     )}
                   </div>
-                  {a.description && (
-                    <p className="text-xs text-on-surface-variant mt-1">{a.description}</p>
+                  {expanded && (
+                    <div className="mt-3 space-y-3 rounded-md bg-surface-container/50 p-3">
+                      {/* Request */}
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant mb-1">
+                          {t.has('biz.request') ? t('biz.request') : 'Request'}
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-xs">
+                          <div><span className="text-on-surface-variant">{t.has('biz.agent') ? t('biz.agent') : 'Agent'}:</span> <span className="font-mono">{a.agent ?? '—'}</span></div>
+                          <div><span className="text-on-surface-variant">{t.has('biz.tool') ? t('biz.tool') : 'Tool'}:</span> <span className="font-mono">{a.tool_name ?? '—'}</span></div>
+                          <div><span className="text-on-surface-variant">{t.has('biz.business') ? t('biz.business') : 'Business'}:</span> <span className="font-mono">{a.business_id ?? '—'}</span></div>
+                          <div><span className="text-on-surface-variant">{t.has('biz.user') ? t('biz.user') : 'User'}:</span> <span className="font-mono">{a.requester ?? a.user_id ?? '—'}</span></div>
+                        </div>
+                        {a.arguments && (
+                          <pre className="mt-2 text-[11px] leading-relaxed bg-surface rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">
+                            {JSON.stringify(a.arguments, null, 2)}
+                          </pre>
+                        )}
+                      </div>
+                      {/* Risk */}
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant mb-1">
+                          {t.has('biz.risk') ? t('biz.risk') : 'Risk'}
+                        </p>
+                        <div className="flex gap-2 text-xs">
+                          <span className="px-2 py-0.5 rounded bg-red-50 text-red-700">{a.risk_level ?? '—'}</span>
+                          <span className="px-2 py-0.5 rounded bg-surface text-on-surface-variant">{a.required_role ?? '—'}</span>
+                          {a.approved_by && (
+                            <span className="px-2 py-0.5 rounded bg-surface text-on-surface-variant">
+                              {t.has('biz.approvedBy') ? t('biz.approvedBy') : 'Approved by'}: {a.approved_by}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {/* Execution Status */}
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant mb-1">
+                          {t.has('biz.executionStatus') ? t('biz.executionStatus') : 'Execution Status'}
+                        </p>
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {timeline.map((s, idx) => (
+                            <span key={idx} className="inline-flex items-center gap-1">
+                              {step(s.label, s.done, s.failed)}
+                              {s.at && <span className="text-[10px] text-on-surface-variant/70">{fmtDateTime(s.at)}</span>}
+                              {idx < timeline.length - 1 && <span className="text-on-surface-variant/40">→</span>}
+                            </span>
+                          ))}
+                        </div>
+                        {a.status === 'executing' && (
+                          <p className="text-xs text-blue-700 mt-1">{t.has('biz.executingHint') ? t('biz.executingHint') : 'Executing the approved action…'}</p>
+                        )}
+                      </div>
+                      {/* Result */}
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant mb-1">
+                          {t.has('biz.result') ? t('biz.result') : 'Result'}
+                        </p>
+                        {a.execution_result !== undefined && a.execution_result !== null ? (
+                          <pre className="text-[11px] leading-relaxed bg-surface rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">
+                            {typeof a.execution_result === 'string' ? a.execution_result : JSON.stringify(a.execution_result, null, 2)}
+                          </pre>
+                        ) : a.last_error ? (
+                          <p className="text-xs text-red-700 whitespace-pre-wrap">{a.last_error}</p>
+                        ) : (
+                          <p className="text-xs text-on-surface-variant">{t.has('biz.noResult') ? t('biz.noResult') : 'No execution result yet.'}</p>
+                        )}
+                      </div>
+                      {/* Audit */}
+                      <div>
+                        <a
+                          href={`/audit?approval_id=${encodeURIComponent(a.id)}`}
+                          className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+                        >
+                          <FileCode2 className="w-3.5 h-3.5" />
+                          {t.has('biz.viewAudit') ? t('biz.viewAudit') : 'View audit trail'}
+                        </a>
+                      </div>
+                    </div>
                   )}
-                  <div className="text-[11px] text-on-surface-variant mt-1">{fmtDateTime(a.created_at)}</div>
-                  <div className="text-[11px] text-on-surface-variant mt-1 font-mono">
-                    {a.tool_name}{a.execution_id ? ` · ${a.execution_id.slice(0, 8)}` : ''}
-                  </div>
                 </div>
-                {a.status === 'pending' && (
-                  <div className="flex gap-2 shrink-0">
-                    <button
-                      disabled={actionBusy !== null}
-                      onClick={() => bizAction(a.id, 'approve')}
-                      className="flex items-center gap-1 px-3 py-1.5 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      <Check className="w-3.5 h-3.5" /> {t('approve')}
-                    </button>
-                    <button
-                      disabled={actionBusy !== null}
-                      onClick={() => bizAction(a.id, 'reject')}
-                      className="flex items-center gap-1 px-3 py-1.5 text-xs rounded-md border border-outline hover:bg-surface-container disabled:opacity-50"
-                    >
-                      <X className="w-3.5 h-3.5" /> {t('reject')}
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

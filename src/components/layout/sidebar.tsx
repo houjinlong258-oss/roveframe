@@ -4,7 +4,7 @@ import { useTranslations } from 'next-intl';
 import { Link, usePathname } from '@/i18n/navigation';
 import {
   LayoutDashboard, Bot, Brain, Star, Users, Megaphone, Mail, Database,
-  CalendarDays, Settings, X, ShieldCheck, GitPullRequest,
+  CalendarDays, Settings, X, ShieldCheck, GitPullRequest, ScrollText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { RoveFrameLogo } from '@/components/layout/brand-logo';
@@ -20,6 +20,7 @@ const NAV_ITEMS = [
   { href: '/business', key: 'business', icon: Database },
   { href: '/reservations', key: 'reservations', icon: CalendarDays },
   { href: '/approvals', key: 'approvals', icon: ShieldCheck },
+  { href: '/audit', key: 'audit', icon: ScrollText },
   { href: '/enterprise/approvals', key: 'enterpriseApprovals', icon: GitPullRequest },
 ] as const;
 

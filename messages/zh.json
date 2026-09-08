@@ -13,6 +13,7 @@
     "brand": "RoveFrame",
     "brandBadge": "AI COO",
     "approvals": "变更审批",
+    "audit": "审计记录",
     "enterpriseApprovals": "变更审批"
   },
   "common": {
@@ -880,9 +881,41 @@
         "roveagent.tool_call": "RoveAgent 工具调用",
         "roveagent.task_step": "RoveAgent 任务"
       },
+      "request": "请求",
+      "agent": "Agent",
+      "tool": "工具",
+      "business": "门店",
+      "user": "用户",
+      "arguments": "参数",
+      "risk": "风险",
+      "approvedBy": "批准人",
+      "executionStatus": "执行状态",
+      "executingHint": "正在执行已批准的动作…",
+      "result": "执行结果",
+      "noResult": "暂无执行结果。",
+      "viewAudit": "查看审计记录",
       "approvedDone": "已批准并执行",
       "rejectedDone": "已拒绝"
     }
+  },
+  "audit": {
+    "title": "审计记录",
+    "subtitle": "本门店的审批与执行事件",
+    "refresh": "刷新",
+    "export": "导出 CSV",
+    "filterApproval": "按审批单过滤",
+    "clear": "清除",
+    "count": "事件数",
+    "time": "时间",
+    "action": "动作",
+    "tool": "工具",
+    "agent": "Agent",
+    "approval": "审批单",
+    "execution": "执行",
+    "status": "状态",
+    "result": "结果",
+    "loading": "加载中…",
+    "empty": "暂无审计事件。"
   },
   "enterpriseApprovals": {
     "title": "变更审批",

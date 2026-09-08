@@ -13,6 +13,7 @@
     "brand": "RoveFrame",
     "brandBadge": "AI COO",
     "approvals": "Approvals",
+    "audit": "Audit Trail",
     "enterpriseApprovals": "Change Review"
   },
   "common": {
@@ -880,9 +881,41 @@
         "roveagent.tool_call": "RoveAgent tool call",
         "roveagent.task_step": "RoveAgent task"
       },
+      "request": "Request",
+      "agent": "Agent",
+      "tool": "Tool",
+      "business": "Business",
+      "user": "User",
+      "arguments": "Arguments",
+      "risk": "Risk",
+      "approvedBy": "Approved by",
+      "executionStatus": "Execution Status",
+      "executingHint": "Executing the approved action…",
+      "result": "Result",
+      "noResult": "No execution result yet.",
+      "viewAudit": "View audit trail",
       "approvedDone": "Approved and executed",
       "rejectedDone": "Rejected"
     }
+  },
+  "audit": {
+    "title": "Audit Trail",
+    "subtitle": "Approval and execution events for this business",
+    "refresh": "Refresh",
+    "export": "Export CSV",
+    "filterApproval": "Filtered by approval",
+    "clear": "Clear",
+    "count": "Events",
+    "time": "Time",
+    "action": "Action",
+    "tool": "Tool",
+    "agent": "Agent",
+    "approval": "Approval",
+    "execution": "Execution",
+    "status": "Status",
+    "result": "Result",
+    "loading": "Loading…",
+    "empty": "No audit events yet."
   },
   "enterpriseApprovals": {
     "title": "Change Review",

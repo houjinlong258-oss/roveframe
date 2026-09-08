@@ -66,6 +66,7 @@ class ToolContext:
     request_id: str = ""
     task_id: str = ""
     agent_id: str = ""
+    invocation_id: str = ""
 
 
 @dataclass
@@ -98,6 +99,9 @@ DEFAULT_POLICIES: list[ToolPolicy] = [
     # 部署 / 生产变更：管理员审批
     ToolPolicy("deploy_*", "admin:deploy", RiskLevel.CRITICAL, ApprovalPolicy.ADMIN),
     ToolPolicy("process_kill", "admin:process", RiskLevel.HIGH, ApprovalPolicy.ADMIN),
+    # RoveFrame 客户召回活动（真实外发）：业主审批 —— CMO 起草、老板批准后真实发送
+    ToolPolicy("send_customer_recovery_campaign", "comms:send",
+               RiskLevel.HIGH, ApprovalPolicy.OWNER),
     # 对外通信：经理审批
     ToolPolicy("send_*", "comms:send", RiskLevel.HIGH, ApprovalPolicy.MANAGER),
     ToolPolicy("*message*", "comms:send", RiskLevel.MEDIUM, ApprovalPolicy.MANAGER),

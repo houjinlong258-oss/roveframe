@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { RoleKey } from '@/lib/rbac';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { writeAuditEvent } from '@/lib/agent/audit';
 
 export type ActionType =
   | 'purchase.create_draft'
@@ -134,7 +135,16 @@ export async function createPendingApproval(opts: {
     .select('id')
     .single();
 
-  if (!error && data) return { ok: true, approvalId: data.id, created: true };
+  if (!error && data) {
+    await writeAuditEvent({
+      tenantId: opts.tenantId, businessId: opts.businessId,
+      userId: opts.userId, agentId: opts.agent,
+      toolName: opts.toolName, action: 'approval.created',
+      argumentsHash, approvalId: data.id,
+      actorRole: opts.requiredRole, status: 'pending',
+    });
+    return { ok: true, approvalId: data.id, created: true };
+  }
   if (error?.code === '23505') {
     const existing = await findByInvocation(opts.tenantId, opts.businessId, invocationId);
     if (existing && existing.arguments_hash === argumentsHash
@@ -316,6 +326,13 @@ export async function processApproval(opts: {
       .eq('status', 'pending').select('id').maybeSingle();
     if (error) return { ok: false, error: error.message };
     if (!rejected) return { ok: false, error: 'Approval decision lost a concurrent race' };
+    await writeAuditEvent({
+      tenantId: item.tenant_id, businessId: item.business_id,
+      userId: opts.userId, agentId: item.agent,
+      toolName: item.tool_name, action: 'approval.rejected',
+      argumentsHash: item.arguments_hash, approvalId: item.id,
+      actorRole: opts.role, status: 'rejected',
+    });
     if (item.action_type === 'roveagent.tool_call') {
       try {
         const { roveAgentResolveTool } = await import('@/lib/roveagent/client');
@@ -357,6 +374,13 @@ export async function processApproval(opts: {
   }
 
   const frozen = claimed as PendingApprovalItem;
+  await writeAuditEvent({
+    tenantId: item.tenant_id, businessId: item.business_id,
+    userId: opts.userId, agentId: item.agent,
+    toolName: item.tool_name, action: 'approval.approved',
+    argumentsHash: item.arguments_hash, approvalId: item.id,
+    executionId, actorRole: opts.role, status: 'executing',
+  });
   try {
     const executedData = await executeFrozenApproval(frozen, opts.userId);
     const completedAt = new Date().toISOString();
@@ -365,6 +389,13 @@ export async function processApproval(opts: {
       .eq('id', item.id).eq('tenant_id', item.tenant_id).eq('business_id', item.business_id)
       .eq('execution_id', executionId).eq('status', 'executing');
     if (error) throw new Error(`Approval result persistence failed: ${error.message}`);
+    await writeAuditEvent({
+      tenantId: item.tenant_id, businessId: item.business_id,
+      userId: opts.userId, agentId: item.agent,
+      toolName: item.tool_name, action: 'approval.executed',
+      argumentsHash: item.arguments_hash, approvalId: item.id,
+      executionId, result: executedData, actorRole: opts.role, status: 'executed',
+    });
     return { ok: true, status: 'executed', executionId, executedData };
   } catch (executionError) {
     const message = executionError instanceof Error ? executionError.message : String(executionError);
@@ -373,6 +404,13 @@ export async function processApproval(opts: {
       .update({ status: 'failed', failed_at: failedAt, last_error: message, updated_at: failedAt })
       .eq('id', item.id).eq('tenant_id', item.tenant_id).eq('business_id', item.business_id)
       .eq('execution_id', executionId).eq('status', 'executing');
+    await writeAuditEvent({
+      tenantId: item.tenant_id, businessId: item.business_id,
+      userId: opts.userId, agentId: item.agent,
+      toolName: item.tool_name, action: 'approval.failed',
+      argumentsHash: item.arguments_hash, approvalId: item.id,
+      executionId, result: { error: message }, actorRole: opts.role, status: 'failed',
+    });
     return { ok: false, error: message };
   }
 }

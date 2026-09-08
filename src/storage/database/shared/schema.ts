@@ -293,18 +293,28 @@ export const emailSendTasks = pgTable(
     business_id: varchar("business_id", { length: 36 }).notNull().references(() => businesses.id),
     account_id: varchar("account_id", { length: 36 }).references(() => emailAccounts.id),
     content_id: varchar("content_id", { length: 36 }),
+    campaign_id: varchar("campaign_id", { length: 36 }),
+    approval_id: varchar("approval_id", { length: 36 }),
+    execution_id: varchar("execution_id", { length: 36 }),
     to_addr: varchar("to_addr", { length: 255 }).notNull(),
     subject: varchar("subject", { length: 500 }).notNull(),
     content: text("content").notNull(),
     status: varchar("status", { length: 20 }).notNull().default("queued"),
     scheduled_at: timestamp("scheduled_at", { withTimezone: true }),
     sent_at: timestamp("sent_at", { withTimezone: true }),
+    failed_at: timestamp("failed_at", { withTimezone: true }),
+    claimed_at: timestamp("claimed_at", { withTimezone: true }),
+    attempts: integer("attempts").notNull().default(0),
+    max_attempts: integer("max_attempts").notNull().default(3),
+    provider_message_id: varchar("provider_message_id", { length: 255 }),
     error: text("error"),
+    last_error: text("last_error"),
     created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     index("email_send_tasks_account_idx").on(table.account_id),
-    index("email_send_tasks_status_idx").on(table.status),
+    index("email_send_tasks_status_idx").on(table.status, table.scheduled_at),
+    index("email_send_tasks_campaign_idx").on(table.tenant_id, table.business_id, table.campaign_id, table.status),
     index("email_send_tasks_tenant_business_idx").on(table.tenant_id, table.business_id, table.created_at),
   ]
 );
@@ -423,6 +433,8 @@ export const marketingContents = pgTable(
     content: text("content").notNull(),
     status: varchar("status", { length: 20 }).notNull().default("draft"),
     send_stats: jsonb("send_stats").$type<{ total?: number; sent?: number; opened?: number }>(),
+    approval_id: varchar("approval_id", { length: 36 }),
+    sent_at: timestamp("sent_at", { withTimezone: true }),
     created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -802,6 +814,32 @@ export const agentApprovals = pgTable(
     index("agent_approvals_tenant_business_idx").on(table.tenant_id, table.business_id, table.status),
     index("agent_approvals_status_created_idx").on(table.status, table.created_at),
     uniqueIndex("agent_approvals_invocation_idx").on(table.tenant_id, table.business_id, table.invocation_id),
+  ]
+);
+
+// ---------- Production Audit Store（审批/工具执行的统一审计） ----------
+export const auditEvents = pgTable(
+  "audit_events",
+  {
+    id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+    tenant_id: varchar("tenant_id", { length: 36 }).notNull().references(() => tenants.id),
+    business_id: varchar("business_id", { length: 36 }).notNull().references(() => businesses.id),
+    user_id: varchar("user_id", { length: 36 }),
+    agent_id: varchar("agent_id", { length: 64 }),
+    tool_name: varchar("tool_name", { length: 128 }),
+    action: varchar("action", { length: 64 }).notNull(),
+    arguments_hash: varchar("arguments_hash", { length: 64 }),
+    approval_id: varchar("approval_id", { length: 36 }),
+    execution_id: varchar("execution_id", { length: 36 }),
+    result: jsonb("result").$type<unknown>(),
+    actor_role: varchar("actor_role", { length: 20 }),
+    status: varchar("status", { length: 24 }).notNull().default("ok"),
+    created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("audit_events_tenant_business_idx").on(table.tenant_id, table.business_id, table.created_at),
+    index("audit_events_approval_idx").on(table.tenant_id, table.business_id, table.approval_id),
+    index("audit_events_execution_idx").on(table.execution_id, table.action),
   ]
 );
 

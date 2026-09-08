@@ -12,6 +12,7 @@
     "start": "bash ./scripts/start.sh",
     "test": "tsx --test tests/*.test.ts",
     "test:python": "python -m unittest discover -s roveagent -t . -p *_test.py",
+    "e2e:recovery": "tsx scripts/e2e-recovery-campaign.mts",
     "ts-check": "tsc -p tsconfig.json --noEmit",
     "scan:secrets": "node scripts/production-scan.mjs secrets",
     "scan:brand": "node scripts/production-scan.mjs brand",

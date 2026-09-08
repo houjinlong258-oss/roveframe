@@ -7,6 +7,7 @@ import type { ChannelKey } from '@/lib/channels-presets';
 import { pollAndExecuteTasks } from '@/lib/agent/tasks/worker';
 import { dispatchNotificationOutbox } from '@/lib/notifications/outbox';
 import { syncImapAccount } from '@/lib/email/imap-sync';
+import { processEmailSendQueue } from '@/lib/email/outgoing';
 
 const DEFAULT_BRIEFING_TIME = '08:00';
 const TICK_SKIPPED_MSG =
@@ -248,8 +249,15 @@ export async function runScheduledJobs(): Promise<void> {
     } catch (taskErr) {
       console.error('[scheduler] durable task worker failed:', taskErr);
     }
-    // Delivery is opt-in until Web Push credentials and channel policy are configured.
-    if (process.env.ROVEFRAME_ENABLE_NOTIFICATION_DISPATCH === 'true') {
+    // 真实外发出件（召回活动/营销邮件）：队列 → SMTP → sent/failed。每 tick 必跑。
+    try {
+      await processEmailSendQueue();
+    } catch (emailOutErr) {
+      console.error('[scheduler] email send queue worker failed:', emailOutErr);
+    }
+
+    // Web Push 出件（默认开启；仅当显式设置 === 'false' 时关闭）。
+    if (process.env.ROVEFRAME_ENABLE_NOTIFICATION_DISPATCH !== 'false') {
       try {
         await dispatchNotificationOutbox();
       } catch (notificationErr) {

@@ -82,3 +82,115 @@ for _name, _description, _period in _TOOLS:
         handler=_handler(_name),
         emoji="📊",
     )
+
+
+# ---------------------------------------------------------------------------
+# Customer Recovery Campaign (真实高价值审批动作)
+#
+# analyze_churn_customers：只读分段（read_* 策略放行）。
+# send_customer_recovery_campaign：真实外发动作，门控策略 OWNER ——
+# CMO 起草后冻结调用并推送审批，老板批准后经 /api/agent/tool/resolve
+# 单次放行，由 RoveFrame 内部 API 真实 SMTP 出件。
+# ---------------------------------------------------------------------------
+
+def _churn_handler(args: dict[str, Any], **_kwargs: Any) -> str:
+    try:
+        adapter = _adapter()
+        result = adapter.analyze_churn_customers(
+            days_inactive=int(args.get("days_inactive", 60)),
+            min_total_spent=float(args.get("min_total_spent", 0)),
+            limit=int(args.get("limit", 100)),
+        )
+        return json.dumps(result, ensure_ascii=False, default=str)
+    except (RuntimeError, TypeError, ValueError) as error:
+        return tool_error(f"RoveFrame churn analysis unavailable: {error}")
+
+
+def _send_campaign_handler(args: dict[str, Any], **_kwargs: Any) -> str:
+    try:
+        adapter = _adapter()
+        result = adapter.send_recovery_campaign(
+            campaign_title=str(args.get("campaign_title", "")).strip(),
+            subject=str(args.get("subject", "")).strip(),
+            body=str(args.get("body", "")).strip(),
+            customer_ids=[str(cid) for cid in (args.get("customer_ids") or [])],
+            language=str(args.get("language", "en")),
+        )
+        return json.dumps(result, ensure_ascii=False, default=str)
+    except (RuntimeError, TypeError, ValueError) as error:
+        return tool_error(f"RoveFrame campaign send unavailable: {error}")
+
+
+registry.register(
+    name="analyze_churn_customers",
+    toolset="business",
+    schema={
+        "name": "analyze_churn_customers",
+        "description": (
+            "Analyze high-value customers who have not spent money in the "
+            "trailing window (churn-risk win-back segment). Returns customer "
+            "ids, contact points, spend history and days since last visit."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "days_inactive": {
+                    "type": "integer", "minimum": 7, "maximum": 365, "default": 60,
+                    "description": "Days without any spend that define the churn window.",
+                },
+                "min_total_spent": {
+                    "type": "number", "minimum": 0, "default": 0,
+                    "description": "Minimum lifetime spend that defines a high-value customer.",
+                },
+                "limit": {
+                    "type": "integer", "minimum": 1, "maximum": 200, "default": 100,
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    handler=_churn_handler,
+    emoji="🔍",
+)
+
+registry.register(
+    name="send_customer_recovery_campaign",
+    toolset="business",
+    schema={
+        "name": "send_customer_recovery_campaign",
+        "description": (
+            "Send a real win-back email campaign to a frozen list of customer "
+            "ids. REQUIRES OWNER APPROVAL: the call is frozen and pushed to "
+            "the owner approval UI; emails are only sent after approval."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "campaign_title": {
+                    "type": "string", "minLength": 1, "maxLength": 120,
+                    "description": "Short campaign name shown to the owner in the approval request.",
+                },
+                "subject": {
+                    "type": "string", "minLength": 1, "maxLength": 300,
+                    "description": "Email subject line for every recipient.",
+                },
+                "body": {
+                    "type": "string", "minLength": 1, "maxLength": 8000,
+                    "description": "Plain-text email body. May include {name} placeholder.",
+                },
+                "customer_ids": {
+                    "type": "array", "items": {"type": "string"},
+                    "minItems": 1, "maxItems": 500,
+                    "description": "Frozen list of recipient customer ids from analyze_churn_customers.",
+                },
+                "language": {
+                    "type": "string", "enum": ["en", "zh", "es"], "default": "en",
+                },
+            },
+            "required": ["campaign_title", "subject", "body", "customer_ids"],
+            "additionalProperties": False,
+        },
+    },
+    handler=_send_campaign_handler,
+    emoji="📧",
+)

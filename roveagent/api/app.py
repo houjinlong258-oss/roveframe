@@ -492,6 +492,7 @@ def create_app():
             request_id=req.request_id,
             task_id=req.task_id,
             agent_id=req.agent_id,
+            invocation_id=req.invocation_id,
         )
         try:
             with bind_tool_context(tool_context):

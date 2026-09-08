@@ -149,6 +149,56 @@ class BusinessDataLayer:
         data = self._call("read_business_profile")
         return dict(data) if isinstance(data, Mapping) else {}
 
+    # Customer recovery campaign (AI CMO) -----------------------------
+    def analyze_churn_customers(self, days_inactive: int = 60,
+                                min_total_spent: float = 0.0,
+                                limit: int = 100) -> list[dict[str, Any]]:
+        """High-value customers with no spend in the trailing window.
+
+        The canonical segment is computed server-side in RoveFrame; the
+        adapter only forwards the bounded criteria and normalizes rows.
+        """
+        data = self._call("analyze_churn_customers", {
+            "days_inactive": int(days_inactive),
+            "min_total_spent": float(min_total_spent),
+            "limit": int(limit),
+        })
+        rows = [dict(row) for row in data] if isinstance(data, list) else []
+        for row in rows:
+            row["total_spent"] = float(row.get("total_spent") or 0)
+            row["visit_count"] = int(row.get("visit_count") or 0)
+            row["last_visit"] = self._epoch(row.get("last_visit_at"))
+        return rows
+
+    def send_recovery_campaign(self, campaign_title: str, subject: str,
+                               body: str, customer_ids: list[str],
+                               language: str = "en") -> dict[str, Any]:
+        """Queue a real recovery email campaign for owner-approved send.
+
+        RoveFrame validates the recipient ids against the scoped customer
+        table, persists the campaign and queues real SMTP deliveries; the
+        adapter returns the queued summary. No emails are sent from Python.
+        The running tool context's invocation_id links the queued emails to
+        the exact approval/execution cycle.
+        """
+        invocation_id = ""
+        try:
+            from roveagent.enterprise.run_context import current_tool_context
+            context = current_tool_context()
+            if context is not None:
+                invocation_id = getattr(context, "invocation_id", "") or ""
+        except Exception:
+            invocation_id = ""
+        data = self._call("send_recovery_campaign", {
+            "campaign_title": campaign_title,
+            "subject": subject,
+            "body": body,
+            "customer_ids": [str(cid) for cid in (customer_ids or [])],
+            "language": language,
+            "invocation_id": invocation_id,
+        })
+        return dict(data) if isinstance(data, Mapping) else {}
+
     def read_snapshot(self) -> dict[str, Any]:
         data = self._call("read_snapshot")
         return dict(data) if isinstance(data, Mapping) else {}

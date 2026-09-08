@@ -53,6 +53,7 @@ describe('P0-5 business isolation contracts', () => {
       'src/app/api/settings/models/route.ts:model_configs',
       'src/lib/enterprise/memory.ts:knowledge_docs',
       'src/lib/notifications/outbox.ts:notification_outbox',
+      'src/lib/email/outgoing.ts:email_send_tasks',
       'src/lib/email/imap-sync.ts:emails',
     ]);
     const unexplained: string[] = [];

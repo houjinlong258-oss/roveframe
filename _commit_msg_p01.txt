@@ -1,0 +1,18 @@
+P0-1: real high-value approval action - AI CMO Customer Recovery Campaign
+
+- gate: send_customer_recovery_campaign -> HIGH/OWNER approval policy
+- python: register analyze_churn_customers + send_customer_recovery_campaign
+  tools in the business toolset; BusinessDataLayer forwards both ops to the
+  RoveFrame internal API with invocation linkage
+- TS: internal business-data route executes real churn segmentation and
+  queues real SMTP deliveries (email_send_tasks with campaign/approval/
+  execution linkage); new email outgoing processor (nodemailer, attempts/
+  backoff/failure logging, CAS claim) wired into the scheduler tick
+- campaign finalization writes marketing_contents.sent, approval
+  execution_result and business_memories
+- audit: audit_events table + lifecycle writes in approvals.ts
+- migration: scripts/migrate-pilot-ready.sql (email queue columns,
+  marketing approval linkage, audit_events)
+- tests: python recovery_campaign_test (freeze->approve->exactly-once,
+  rejection, tamper 409, RBAC), TS segmentation/personalization/contract
+  tests; live E2E script scripts/e2e-recovery-campaign.mts

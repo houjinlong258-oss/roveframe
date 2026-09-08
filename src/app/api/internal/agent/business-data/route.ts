@@ -2,6 +2,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { json } from '@/lib/api-helpers';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { analyzeChurnCustomers, executeRecoveryCampaign } from '@/lib/agent/recovery-campaign';
 
 const READ_OPERATIONS = [
   'read_sales',
@@ -13,6 +14,7 @@ const READ_OPERATIONS = [
   'read_payments',
   'read_business_profile',
   'read_snapshot',
+  'analyze_churn_customers',
 ] as const;
 
 const WRITE_OPERATIONS = [
@@ -20,6 +22,7 @@ const WRITE_OPERATIONS = [
   'upsert_product',
   'upsert_customer',
   'set_inventory',
+  'send_recovery_campaign',
 ] as const;
 
 const operationSchema = z.enum([...READ_OPERATIONS, ...WRITE_OPERATIONS]);
@@ -212,6 +215,18 @@ async function readOperation(
     case 'read_reviews': return readReviews(tenantId, businessId, params);
     case 'read_payments': return readPayments(tenantId, businessId, params);
     case 'read_business_profile': return readProfile(tenantId, businessId);
+    case 'analyze_churn_customers': {
+      const parsed = z.object({
+        days_inactive: z.coerce.number().int().min(7).max(365).default(60),
+        min_total_spent: z.coerce.number().finite().min(0).default(0),
+        limit: z.coerce.number().int().min(1).max(500).default(100),
+      }).strict().parse(params);
+      return analyzeChurnCustomers(tenantId, businessId, {
+        daysInactive: parsed.days_inactive,
+        minTotalSpent: parsed.min_total_spent,
+        limit: parsed.limit,
+      });
+    }
     case 'read_snapshot': {
       const [profile, sales, orders, customers, products, inventory, reviews, payments] = await Promise.all([
         readProfile(tenantId, businessId),
@@ -320,6 +335,45 @@ async function writeOperation(
     if (result.error) throw new Error(`inventory write failed: ${result.error.message}`);
     await auditConnectorWrite(tenantId, businessId, operation, id);
     return { id };
+  }
+  if (operation === 'send_recovery_campaign') {
+    const value = z.object({
+      campaign_title: z.string().trim().min(1).max(120),
+      subject: z.string().trim().min(1).max(300),
+      body: z.string().trim().min(1).max(8000),
+      customer_ids: z.array(z.string().trim().min(1)).min(1).max(500),
+      language: z.enum(['en', 'zh', 'es']).default('en'),
+      invocation_id: z.string().trim().max(128).optional(),
+    }).strict().parse(params);
+
+    // 关联本次审批执行周期（Python 侧 invocation 由门禁冻结时生成）。
+    let approvalId = '';
+    let executionId = '';
+    let agentId = 'roveagent';
+    let userId = '';
+    if (value.invocation_id) {
+      const { data: approval } = await client.from('agent_approvals')
+        .select('id, execution_id, agent, user_id')
+        .eq('tenant_id', tenantId)
+        .eq('business_id', businessId)
+        .eq('invocation_id', value.invocation_id)
+        .maybeSingle();
+      if (approval) {
+        approvalId = String((approval as { id: string }).id);
+        executionId = String((approval as { execution_id?: string | null }).execution_id ?? '');
+        agentId = String((approval as { agent?: string }).agent ?? 'roveagent');
+        userId = String((approval as { user_id?: string | null }).user_id ?? '');
+      }
+    }
+    const result = await executeRecoveryCampaign(tenantId, businessId, {
+      campaign_title: value.campaign_title,
+      subject: value.subject,
+      body: value.body,
+      customer_ids: value.customer_ids,
+      language: value.language,
+    }, { approvalId, executionId, agentId, userId });
+    await auditConnectorWrite(tenantId, businessId, operation, result.campaign_id);
+    return result;
   }
   throw new Error(`unsupported write operation: ${operation}`);
 }

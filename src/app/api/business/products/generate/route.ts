@@ -41,11 +41,26 @@ async function generateProduct(request: NextRequest) {
   try {
     const cleaned = raw.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(cleaned);
-    return NextResponse.json({ product: parsed });
+    return NextResponse.json({ product: parsed, source: 'model' });
   } catch {
-    // AI 未返回合法 JSON 时兜底
+    // 模型未返回合法 JSON。原实现在这里返回 HTTP 200 + 一个编造的商品
+    // （category 硬编码 '招牌菜'，name 缺省 '商品'），与成功响应无法区分。
+    // 现在只回填**用户自己提供**的信息，并显式标记 source='fallback'：
+    // 不推断分类、不生成关键词，缺什么由用户补。
     return NextResponse.json({
-      product: { name: (brief || '商品').slice(0, 40), description: brief || '', category: '招牌菜', seo_keywords: [], tags: [] },
+      product: {
+        name: brief.slice(0, 40),
+        description: brief,
+        category: '',
+        seo_keywords: [],
+        tags: [],
+      },
+      source: 'fallback',
+      warning: locale === 'zh'
+        ? 'AI 未返回合法 JSON，已回填你输入的描述。分类、SEO 关键词与标签需要手动填写。'
+        : locale === 'es'
+          ? 'La IA no devolvió JSON válido; se rellenó con tu descripción. La categoría, las palabras clave y las etiquetas deben completarse a mano.'
+          : 'The AI did not return valid JSON; your description was filled in as-is. Category, SEO keywords and tags must be completed manually.',
     });
   }
 }

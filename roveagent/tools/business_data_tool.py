@@ -85,6 +85,87 @@ for _name, _description, _period in _TOOLS:
 
 
 # ---------------------------------------------------------------------------
+# Knowledge base search (the tenant's OWN documents)
+#
+# Distinct from `search` / `web`: web_search reaches the public internet,
+# this reaches the rows this tenant uploaded. Without it an agent in the
+# runtime can research the outside world but cannot answer from the customer's
+# own handbook, price list, or policies — the knowledge base was reachable
+# only from the in-app assistant.
+#
+# Read-only and scope-bound: tenant/business ids come from the immutable run
+# context, never from tool arguments. Gate policy is an explicit row
+# (`search_knowledge`, knowledge:read, LOW, NONE) so it does NOT land on the
+# catch-all; see DEFAULT_POLICIES in tools/framework.py.
+# ---------------------------------------------------------------------------
+
+def _knowledge_handler(args: dict[str, Any], **_kwargs: Any) -> str:
+    try:
+        adapter = _adapter()
+        result = adapter.search_knowledge(
+            query=str(args.get("query", "")).strip(),
+            limit=int(args.get("limit", 5)),
+        )
+        if not result.get("chunks"):
+            return json.dumps(
+                {
+                    "query": result.get("query", ""),
+                    "retrieval": result.get("retrieval", "unknown"),
+                    "chunks": [],
+                    "note": (
+                        "No matching content in this business's knowledge base. "
+                        "Say so plainly rather than answering from general "
+                        "knowledge, and suggest uploading a source document."
+                    ),
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+        return json.dumps(result, ensure_ascii=False, default=str)
+    except (RuntimeError, TypeError, ValueError) as error:
+        return tool_error(f"RoveFrame knowledge search unavailable: {error}")
+
+
+registry.register(
+    name="search_knowledge",
+    toolset="knowledge",
+    schema={
+        "name": "search_knowledge",
+        "description": (
+            "Search this business's own knowledge base (uploaded documents, "
+            "policies, price lists, playbooks) and return the most relevant "
+            "passages with their source document titles. Use this before "
+            "answering any question about this specific business. This searches "
+            "internal documents only; use web_search for public internet "
+            "content. Retrieval only — no summarization, no model spend."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000,
+                    "description": "What to look up, phrased as a natural-language question or topic.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 20,
+                    "default": 5,
+                    "description": "Maximum number of passages to return.",
+                },
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    },
+    handler=_knowledge_handler,
+    emoji="📚",
+)
+
+
+# ---------------------------------------------------------------------------
 # Customer Recovery Campaign (真实高价值审批动作)
 #
 # analyze_churn_customers：只读分段（read_* 策略放行）。

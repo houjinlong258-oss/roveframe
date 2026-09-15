@@ -157,6 +157,26 @@ def _aux_probe_active() -> bool:
     return bool(getattr(_aux_probe_state, "active", False))
 
 
+def _offline_guard_active() -> bool:
+    """Phase 10 / Task 5 —— 外部调用闸门（CI 零消费）。
+
+    当 ``ROVEAGENT_OFFLINE=1`` 时，辅助通道一律**不可用**：
+      * 不解析 provider（不读凭据池、不探测 Nous Portal）
+      * 不构造 SDK 客户端（`_create_openai_client` 直接返回探针桩）
+
+    为什么需要它：实测 `python -m unittest discover` 会触发
+    `Auxiliary client: PAID lane engaged … may incur real spend`，即测试进程
+    会向 OpenRouter / Nous 发起真实付费请求。测试环境保护不能依赖「本机恰好
+    没有凭据」——仓库里的 `scripts/deploy.env` 与 `.env` 就提供了真实值。
+
+    与既有 `aux_probe_mode()` 的关系：`aux_probe_mode()` 是**调用方主动**要求的
+    「只探测可用性」，作用域限于 with 块内；本闸门是**环境级**的全局禁用，
+    供测试与 CI 设置。二者共用同一套短路点（客户端构造与 provider 解析），
+    不构成第二套机制。
+    """
+    return (os.environ.get("ROVEAGENT_OFFLINE") or "").strip().lower() in ("1", "true", "yes")
+
+
 @contextlib.contextmanager
 def aux_probe_mode():
     """Resolve provider availability without constructing real SDK clients."""
@@ -268,9 +288,12 @@ def _openai_http_client_kwargs(
     return {"http_client": client}
 
 def _create_openai_client(*, api_key: str, base_url: str, **kwargs: Any) -> Any:
-    if _aux_probe_active():
+    if _aux_probe_active() or _offline_guard_active():
         # Availability probe: credentials/base_url resolved — that is the
         # answer. Skip the openai import + httpx/SSL construction entirely.
+        # Phase 10 / Task 5：离线闸门复用同一条短路 —— 本函数是**所有** aux 客户端
+        # 构造的共享卡点（见下方注释「single shared chokepoint」），因此这里是
+        # 保证「测试进程不构造任何可发起网络请求的客户端」的唯一必要位置。
         return _AuxProbeClientStub(api_key=api_key, base_url=base_url)
     kwargs = {**_openai_http_client_kwargs(base_url), **kwargs}
     # OpenCode Zen free tier: the keyless placeholder must never reach the
@@ -3083,6 +3106,11 @@ def _warn_paid_lane_once(model: str) -> None:
 
 
 def _try_openrouter(explicit_api_key: str = None, model: str = None) -> Tuple[Optional[OpenAI], Optional[str]]:
+    if _offline_guard_active():
+        # Phase 10 / Task 5：离线时辅助通道整体不可用，不进入付费车道，
+        # 也就不会打印那条 PAID lane 告警（该告警是测试期真实消费的证据）。
+        logger.debug("Auxiliary client: offline guard active — skipping OpenRouter")
+        return None, None
     free_only, cfg_model = _aux_openrouter_settings()
     or_model = model or cfg_model
     if free_only and not _is_free_model(or_model):

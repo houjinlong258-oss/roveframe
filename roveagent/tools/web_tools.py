@@ -89,7 +89,12 @@ from roveagent.tools.tool_backend_helpers import (  # noqa: F401
     nous_tool_gateway_unavailable_message,
     prefers_gateway,
 )
-from roveagent.tools.url_safety import async_is_safe_url, normalize_url_for_request, sensitive_query_param_name
+from roveagent.tools.url_safety import (
+    async_classify_url_block,
+    async_is_safe_url,
+    normalize_url_for_request,
+    sensitive_query_param_name,
+)
 import sys
 
 logger = logging.getLogger(__name__)
@@ -1128,10 +1133,35 @@ async def web_extract_tool(
         ssrf_blocked: Dict[int, Dict[str, Any]] = {}
         for index, url in zip(normalized_indices, normalized_urls):
             if not await async_is_safe_url(url):
-                ssrf_blocked[index] = {
-                    "url": url, "title": "", "content": "",
-                    "error": "Blocked: URL targets a private or internal network address",
-                }
+                # Attribute the refusal instead of emitting one generic
+                # sentence. "private or internal network address" is accurate
+                # for a URL aimed at an internal service, but actively
+                # misleading when the host is public and the LOCAL RESOLVER
+                # answered with a synthetic fake-IP address — the operator
+                # then hunts a nonexistent SSRF bug in the URL. The verdict
+                # (blocked/not) is unchanged; only the explanation improves.
+                entry: Dict[str, Any] = {"url": url, "title": "", "content": ""}
+                try:
+                    reason = await async_classify_url_block(url)
+                    if reason.blocked:
+                        entry.update(reason.as_error_dict())
+                    else:
+                        # Guard and classifier disagree — a resolver answered
+                        # differently between the two lookups. Report the
+                        # refusal, keeping the original wording, and say so.
+                        entry["error"] = (
+                            "Blocked: URL targets a private or internal network address"
+                        )
+                        entry["note"] = (
+                            "The resolver returned a different answer on re-check; "
+                            "the URL was refused by the first verdict."
+                        )
+                except Exception as exc:  # noqa: BLE001 — never fail a URL on diagnostics
+                    logger.debug("SSRF attribution failed for %s: %s", url, exc)
+                    entry["error"] = (
+                        "Blocked: URL targets a private or internal network address"
+                    )
+                ssrf_blocked[index] = entry
             else:
                 safe_urls.append(url)
                 safe_indices.append(index)
@@ -1425,14 +1455,21 @@ async def web_extract_tool(
             else:
                 logger.info("%s (%d chars, whole)", url, len(clean))
 
-        # Trim output to minimal fields per entry: title, content, error
+        # Trim output to minimal fields per entry: title, content, error.
+        # SSRF-blocked entries additionally carry the attribution keys
+        # (code / hint / resolved) — they are short, they only exist on the
+        # refusal path, and without them the caller sees a bare sentence
+        # that may name the wrong cause entirely (a public host whose DNS
+        # was rewritten by a local fake-IP proxy reads as "private or
+        # internal network address").
+        _DIAGNOSTIC_KEYS = ("blocked_by_policy", "code", "hint", "resolved", "note")
         trimmed_results = [
             {
                 "url": r.get("url", ""),
                 "title": r.get("title", ""),
                 "content": r.get("content", ""),
                 "error": r.get("error"),
-                **({  "blocked_by_policy": r["blocked_by_policy"]} if "blocked_by_policy" in r else {}),
+                **{k: r[k] for k in _DIAGNOSTIC_KEYS if k in r},
             }
             for r in response.get("results", [])
         ]

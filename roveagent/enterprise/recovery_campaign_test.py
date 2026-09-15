@@ -32,10 +32,13 @@ class RecoveryCampaignTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.key = "recovery-test-key"
+        # 与 approval_flow_test 同理：签名密钥必须独立于调用密钥，
+        # 否则测试与被测代码会一起掩盖「持有 API key 即可签发审批」这一缺口。
+        self.approval_secret = "recovery-test-approval-secret"
         self.old_environment = dict(os.environ)
         os.environ["ROVEAGENT_ROOT"] = str(self.root)
         os.environ["ROVEAGENT_API_KEY"] = self.key
-        os.environ["ROVEAGENT_APPROVAL_SECRET"] = self.key
+        os.environ["ROVEAGENT_APPROVAL_SECRET"] = self.approval_secret
         os.environ["ROVEFRAME_INTERNAL_API_URL"] = "http://127.0.0.1:5000"
         uninstall_enterprise_gate()
         install_enterprise_gate(audit_sink=lambda _event: None)
@@ -112,7 +115,7 @@ class RecoveryCampaignTest(unittest.TestCase):
         }, ensure_ascii=False, separators=(",", ":"))
         timestamp = str(int(time.time()))
         signature = hmac.new(
-            self.key.encode(), f"{timestamp}.{body}".encode(), hashlib.sha256,
+            self.approval_secret.encode(), f"{timestamp}.{body}".encode(), hashlib.sha256,
         ).hexdigest()
         return {
             "Content-Type": "application/json", "X-RoveAgent-Key": self.key,
@@ -168,7 +171,7 @@ class RecoveryCampaignTest(unittest.TestCase):
             }, ensure_ascii=False, separators=(",", ":"))
             timestamp = str(int(time.time()))
             signature = hmac.new(
-                self.key.encode(), f"{timestamp}.{body_text}".encode(), hashlib.sha256,
+                self.approval_secret.encode(), f"{timestamp}.{body_text}".encode(), hashlib.sha256,
             ).hexdigest()
             headers = {
                 "Content-Type": "application/json", "X-RoveAgent-Key": self.key,
@@ -206,7 +209,7 @@ class RecoveryCampaignTest(unittest.TestCase):
             }, ensure_ascii=False, separators=(",", ":"))
             timestamp = str(int(time.time()))
             signature = hmac.new(
-                self.key.encode(), f"{timestamp}.{body_text}".encode(), hashlib.sha256,
+                self.approval_secret.encode(), f"{timestamp}.{body_text}".encode(), hashlib.sha256,
             ).hexdigest()
             headers = {
                 "Content-Type": "application/json", "X-RoveAgent-Key": self.key,
@@ -239,7 +242,7 @@ class RecoveryCampaignTest(unittest.TestCase):
         }, ensure_ascii=False, separators=(",", ":"))
         timestamp = str(int(time.time()))
         signature = hmac.new(
-            self.key.encode(), f"{timestamp}.{body_text}".encode(), hashlib.sha256,
+            self.approval_secret.encode(), f"{timestamp}.{body_text}".encode(), hashlib.sha256,
         ).hexdigest()
         headers = {
             "Content-Type": "application/json", "X-RoveAgent-Key": self.key,

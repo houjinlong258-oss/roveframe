@@ -240,38 +240,108 @@ async function pollTelegram(tenantId: string, businessId: string, cfg: Schedulin
 }
 
 // ---------- Square 定时同步（15 分钟节流；游标/水位由 square-sync 持久化） ----------
+// P0：失败绝不再推进水位。原实现在 catch 之后无条件 setCronState(last_sync_at)，
+// 于是「同步抛错」被记录成「刚刚同步成功」，15 分钟节流随即抑制重试 ——
+// 订单可能永远不再对账，而外部只能看到一个 error.name 的 console.warn。
+// 现在的语义：
+//   last_attempt_at  每次尝试都写（用于节流 + 失败退避）
+//   last_success_at  仅在成功时写（真正的水位）
+//   consecutive_failures  失败累加，成功清零
 async function maybeSyncSquare(tenantId: string, businessId: string): Promise<void> {
   const stateKey = `square_sync_throttle.${tenantId}.${businessId}`;
   const state = await getCronState(stateKey);
-  const lastSync = typeof state?.last_sync_at === 'string' ? new Date(state.last_sync_at).getTime() : 0;
-  if (Number.isFinite(lastSync) && Date.now() - lastSync < 15 * 60_000) return;
+  const failures = typeof state?.consecutive_failures === 'number' ? state.consecutive_failures : 0;
+  const lastAttempt = typeof state?.last_attempt_at === 'string' ? new Date(state.last_attempt_at).getTime() : 0;
+  // 基准 15 分钟保持原有节奏；连续失败按 2 次方退避，封顶 60 分钟。
+  const intervalMs = Math.min(60 * 60_000, 15 * 60_000 * 2 ** Math.min(failures, 2));
+  if (Number.isFinite(lastAttempt) && lastAttempt > 0 && Date.now() - lastAttempt < intervalMs) return;
+
+  const now = new Date().toISOString();
   try {
     await syncSquareBusiness(tenantId, businessId);
+    await setCronState(stateKey, {
+      last_attempt_at: now,
+      last_success_at: now,
+      consecutive_failures: 0,
+      last_error: null,
+    });
   } catch (syncError) {
-    console.warn('[scheduler] square sync failed for scoped business:', syncError instanceof Error ? syncError.message : String(syncError));
+    await setCronState(stateKey, {
+      last_attempt_at: now,
+      last_success_at: state?.last_success_at ?? null,
+      consecutive_failures: failures + 1,
+      last_error: syncError instanceof Error ? syncError.message : String(syncError),
+    });
+    console.warn(
+      `[scheduler] square sync failed (attempt ${failures + 1}, retry in ${Math.round(Math.min(60 * 60_000, 15 * 60_000 * 2 ** Math.min(failures + 1, 2)) / 60_000)}m):`,
+      syncError instanceof Error ? syncError.message : String(syncError),
+    );
   }
-  await setCronState(stateKey, { last_sync_at: new Date().toISOString() });
 }
 
 // ---------- IMAP inbound sync（5 分钟水位；邮件自身以 mailbox + Message-ID/UID 去重） ----------
+// P0：与 Square 同理 —— 失败不得推进水位。原实现在循环内吞掉每个账号的异常后
+// 仍然写 last_sync_at，于是「一封邮件都没导进来」被记成「刚刚同步成功」。
+// 现在只要本轮存在失败账号，就不写 last_success_at，并累加 consecutive_failures。
 async function maybeSyncInboundEmail(tenantId: string, businessId: string): Promise<void> {
   const stateKey = `imap_sync.${tenantId}.${businessId}`;
   const state = await getCronState(stateKey);
-  const lastSync = typeof state?.last_sync_at === 'string' ? new Date(state.last_sync_at).getTime() : 0;
-  if (Number.isFinite(lastSync) && Date.now() - lastSync < 5 * 60_000) return;
+  const failures = typeof state?.consecutive_failures === 'number' ? state.consecutive_failures : 0;
+  const lastAttempt = typeof state?.last_attempt_at === 'string' ? new Date(state.last_attempt_at).getTime() : 0;
+  // 基准 5 分钟保持原有节奏；连续失败退避封顶 30 分钟。
+  const intervalMs = Math.min(30 * 60_000, 5 * 60_000 * 2 ** Math.min(failures, 2));
+  if (Number.isFinite(lastAttempt) && lastAttempt > 0 && Date.now() - lastAttempt < intervalMs) return;
+
+  const now = new Date().toISOString();
   const { data, error } = await getSupabaseClient().from('email_accounts')
     .select('id, tenant_id, business_id, email, imap_host, imap_port, credentials_encrypted')
     .eq('tenant_id', tenantId).eq('business_id', businessId).eq('status', 'active')
     .not('imap_host', 'is', null).limit(5);
-  if (error) throw new Error(error.message);
+  if (error) {
+    await setCronState(stateKey, {
+      last_attempt_at: now,
+      last_success_at: state?.last_success_at ?? null,
+      consecutive_failures: failures + 1,
+      last_error: `email_accounts query failed: ${error.message}`,
+    });
+    throw new Error(error.message);
+  }
+
+  let failedAccounts = 0;
+  let lastError: string | null = null;
   for (const raw of data ?? []) {
     try {
       await syncImapAccount(raw as Parameters<typeof syncImapAccount>[0]);
     } catch (syncError) {
-      console.warn('[scheduler] IMAP sync failed for scoped account:', syncError instanceof Error ? syncError.name : 'unknown_error');
+      failedAccounts += 1;
+      lastError = syncError instanceof Error ? syncError.message : String(syncError);
+      console.warn('[scheduler] IMAP sync failed for scoped account:', lastError);
     }
   }
-  await setCronState(stateKey, { last_sync_at: new Date().toISOString() });
+
+  const accountCount = (data ?? []).length;
+  const allFailed = accountCount > 0 && failedAccounts === accountCount;
+  if (failedAccounts > 0) {
+    await setCronState(stateKey, {
+      last_attempt_at: now,
+      // 只要有一个账号失败就不推进成功水位：宁可下轮重复扫描（有去重兜底），
+      // 也不能把「全部失败」记成「已同步」。
+      last_success_at: state?.last_success_at ?? null,
+      consecutive_failures: failures + 1,
+      last_error: lastError,
+    });
+    if (allFailed) {
+      console.warn(`[scheduler] IMAP sync failed for all ${accountCount} scoped account(s); watermark NOT advanced`);
+    }
+    return;
+  }
+
+  await setCronState(stateKey, {
+    last_attempt_at: now,
+    last_success_at: now,
+    consecutive_failures: 0,
+    last_error: null,
+  });
 }
 
 // ---------- 对外入口：每一 tick（60s）调用一次 ----------

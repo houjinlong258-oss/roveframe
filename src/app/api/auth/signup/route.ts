@@ -9,6 +9,7 @@ import {
   createAuthUserWithTenant,
   createBusinessRow,
   createPublicUserRow,
+  isSecureRequest,
   sessionCookieHeader,
   createTenantRow,
   signInAndGetToken,
@@ -126,6 +127,6 @@ export async function POST(request: Request) {
     },
     201,
   );
-  response.headers.set('Set-Cookie', sessionCookieHeader(s.data.accessToken));
+  response.headers.set('Set-Cookie', sessionCookieHeader(s.data.accessToken, isSecureRequest(request)));
   return response;
 }

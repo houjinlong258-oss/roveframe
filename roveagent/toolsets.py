@@ -114,6 +114,69 @@ TOOLSETS = {
         "includes": []
     },
 
+    # ------------------------------------------------------------------
+    # Phase 1 新增：Agent Capability Router 引用的能力名
+    #
+    # 这些条目全部遵守「不新增工具」约束 —— 它们**不注册任何新工具**，
+    # 只是把已有工具按职责重新分组，使 agent 的能力画像可以按名引用。
+    #
+    # 注意 ``git`` / ``docker_read`` / ``monitoring`` 当前**没有任何已注册
+    # 工具**（registry 里不存在 git / docker / monitoring 工具）。
+    # 它们是「已声明的能力位」，解析结果会被 Agent Capability Router
+    # 标为 ``empty_toolsets`` 漂移，便于运维看到缺口而不是静默少工具。
+    # ------------------------------------------------------------------
+
+    "git": {
+        "description": (
+            "Version-control operations, performed through the terminal tool "
+            "(there is no standalone git tool in this runtime). Declared so the "
+            "Developer agent's capability profile can name the intent; the "
+            "actual command surface comes from `terminal`."
+        ),
+        "tools": [],
+        "includes": ["terminal"],
+    },
+
+    "docker_read": {
+        "description": (
+            "Container inspection (docker ps / logs / inspect). Executed through "
+            "the terminal tool; read-only subset. Production changes still "
+            "require approval via EnterpriseToolGate."
+        ),
+        "tools": [],
+        "includes": ["terminal"],
+    },
+
+    "monitoring": {
+        "description": (
+            "Service health / log inspection for the DevOps agent. Executed "
+            "through the terminal tool; read-only subset."
+        ),
+        "tools": [],
+        "includes": ["terminal"],
+    },
+
+    "media": {
+        "description": (
+            "Unified media generation surface (image / video / audio). Composes "
+            "the existing media toolsets -- no new tools are registered here."
+        ),
+        "tools": [],
+        "includes": ["image_gen", "video_gen", "tts", "vision"],
+    },
+
+    "social": {
+        "description": (
+            "Social publishing surface. There is no bundled social-publish tool "
+            "in this runtime; the intent is served by the platform adapters under "
+            "plugins/platforms/ plus web search for trend discovery. Declared so "
+            "the CMO capability profile can name the intent -- publishing must go "
+            "through approval."
+        ),
+        "tools": [],
+        "includes": ["web", "x_search"],
+    },
+
     "x_search": {
         "description": (
             "Search X (Twitter) posts and threads via xAI's built-in "
@@ -229,6 +292,18 @@ TOOLSETS = {
             "read_inventory", "read_reviews", "read_payments",
             "read_business_profile",
         ],
+        "includes": [],
+    },
+
+    "knowledge": {
+        "description": (
+            "Search this business's OWN documents (uploaded policies, price "
+            "lists, playbooks) through the scoped RoveFrame adapter. Distinct "
+            "from ``search``/``web``, which reach the public internet: an agent "
+            "answering a question about this specific business needs the "
+            "internal source, not a web result."
+        ),
+        "tools": ["search_knowledge"],
         "includes": [],
     },
 

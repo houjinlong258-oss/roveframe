@@ -14,7 +14,15 @@
     "brandBadge": "AI COO",
     "approvals": "Aprobaciones",
     "audit": "Auditoría",
-    "enterpriseApprovals": "Revisión"
+    "enterpriseApprovals": "Revisión",
+    "files": "Archivos",
+    "group": {
+      "workspace": "Espacio de trabajo",
+      "operations": "Operaciones",
+      "governance": "Gobernanza"
+    },
+    "collapseSidebar": "Contraer barra",
+    "expandSidebar": "Expandir barra"
   },
   "common": {
     "save": "Guardar",
@@ -164,6 +172,257 @@
         "dev": "Como mi Agente Desarrollador, revisa el sistema actual en busca de errores u oportunidades de mejora.",
         "devops": "Como mi Agente DevOps, verifica la salud del despliegue y sugiere mejoras de fiabilidad."
       }
+    },
+    "composer": {
+      "availableModels": "Modelos disponibles",
+      "searchModels": "Buscar modelos…",
+      "platformModel": "Modelo integrado de la plataforma",
+      "platformProvider": "Plataforma RoveFrame",
+      "autoFallback": "reserva automática",
+      "noProviders": "Aún no hay ningún proveedor externo conectado. Conéctalo en Ajustes → Proveedores de IA para elegirlo aquí.",
+      "healthLegend": "El estado proviene de pruebas de conexión e historial real de llamadas — nunca se estima.",
+      "reasoningCapable": "razonamiento",
+      "visionCapable": "visión",
+      "reasoningTitle": "Nivel de razonamiento",
+      "recommended": "recomendado",
+      "reasoning": {
+        "low": {
+          "label": "Bajo",
+          "description": "Respuestas rápidas y breves"
+        },
+        "medium": {
+          "label": "Medio",
+          "description": "Análisis operativo del día a día"
+        },
+        "high": {
+          "label": "Alto",
+          "description": "Estrategia y tareas complejas de varios pasos"
+        }
+      },
+      "tier": {
+        "high": "alta capacidad",
+        "medium": "equilibrado",
+        "low": "rápido / bajo coste"
+      },
+      "health": {
+        "online": "En línea",
+        "slow": "Lento",
+        "degraded": "Degradado",
+        "error": "Error",
+        "offline": "Sin conectar",
+        "unknown": "Sin datos aún"
+      },
+      "menu": "Añadir",
+      "menuUpload": "Subir archivo",
+      "menuReport": "Generar informe",
+      "menuTask": "Crear tarea",
+      "menuConnect": "Conectar datos",
+      "menuReportPrompt": "Genera un informe de rendimiento de esta semana y entrégalo como archivo descargable.",
+      "menuTaskPrompt": "Convierte mis problemas operativos abiertos en una lista de tareas priorizada para hoy.",
+      "menuConnectPrompt": "¿A qué fuentes de datos puedes conectarte y qué mejora cada una?",
+      "attach": "Adjuntar archivos",
+      "removeAttachment": "Quitar adjunto",
+      "uploading": "Subiendo…",
+      "dropHere": "Suelta los archivos para adjuntarlos",
+      "send": "Enviar",
+      "stop": "Detener",
+      "strength": {
+        "reasoning": "Razonamiento",
+        "coding": "Código",
+        "vision": "Visión",
+        "fast": "Rápido",
+        "general": "General"
+      },
+      "capability": {
+        "image": "imagen",
+        "video": "vídeo",
+        "audio": "audio",
+        "embedding": "embeddings",
+        "other": "otro",
+        "chat": "chat"
+      },
+      "notForChat": "No sirve para conversar",
+      "notForChatHint": "Este modelo es de imagen/vídeo/audio/embeddings y no puede conversar. Elige un modelo de chat arriba."
+    },
+    "artifact": {
+      "download": "Descargar",
+      "preview": "Vista previa",
+      "generated": "generado por IA",
+      "uploaded": "subido",
+      "closePreview": "Cerrar vista previa",
+      "loadingPreview": "Cargando vista previa…",
+      "emptyPreview": "(sin texto extraíble)",
+      "noPreview": "Este tipo de archivo no admite vista previa.",
+      "previewNote": "La vista previa se genera en el servidor a partir del archivo."
+    },
+    "status": {
+      "thinking": "Pensando…",
+      "analyzing": "Analizando datos del negocio…",
+      "calling_tool": "Llamando a {tool}…",
+      "callingTool": "Llamando a {tool}…",
+      "tool_done": "Herramienta finalizada",
+      "generating": "Generando respuesta…",
+      "creating_file": "Creando archivo…",
+      "creatingFile": "Creando {name}…"
+    },
+    "alert": {
+      "title": "Servicio de IA temporalmente no disponible",
+      "tried": "El sistema probó {count} proveedor(es).",
+      "retry": "Reintentar"
+    },
+    "runtime": {
+      "roveagent": "Runtime de RoveAgent",
+      "fallback": "Modo degradado · herramientas no disponibles",
+      "unavailable": "Runtime no disponible · tarea rechazada",
+      "reason": "Motivo",
+      "reconnect": "Reconectar",
+      "reconnecting": "Reconectando…",
+      "basicMode": "Continuar en modo básico",
+      "basicModeOn": "Modo básico activado",
+      "basicModeHint": "El modo básico solo permite conversación. Las tareas de código, archivos, terminal, despliegue, medios y plugins siguen rechazándose — no se simula nada.",
+      "basicModeBlocked": "El modo básico no puede ejecutar tareas de herramientas (código / archivos / terminal / despliegue / medios / plugins). Rechazado sin realizar cambios."
+    },
+    "missions": {
+      "label": "Misión de hoy",
+      "empty": "Aún no hay señales — lanza un análisis para generar tus misiones.",
+      "run": "Ejecutar",
+      "activeTasks": "Misiones programadas",
+      "kpi": {
+        "revenueToday": "Ingresos de hoy",
+        "revenue7d": "Media diaria 7 días",
+        "ordersToday": "Pedidos de hoy",
+        "pendingApprovals": "Pendiente de aprobación"
+      },
+      "items": {
+        "revenue_decline": {
+          "title": "Analizar la caída de ventas",
+          "detail": "Los ingresos de hoy están por debajo de la media de 7 días"
+        },
+        "revenue_surge": {
+          "title": "Proteger el impulso de hoy",
+          "detail": "Hoy supera la media de 7 días"
+        },
+        "revenue_ontrack": {
+          "title": "Ingresos en línea",
+          "detail": "Hoy está en línea con la media de 7 días"
+        },
+        "revenue_baseline": {
+          "title": "Definir una base de ingresos",
+          "detail": "Todavía no hay suficiente historial de pedidos"
+        },
+        "orders_today": {
+          "title": "Revisar los pedidos de hoy",
+          "detail": "Comprueba reembolsos, horarios raros o artículos inusuales"
+        },
+        "inventory_low": {
+          "title": "Reponer stock bajo",
+          "detail": "Hay artículos por debajo del stock de seguridad"
+        },
+        "inventory_ok": {
+          "title": "Inventario saludable",
+          "detail": "Nada por debajo del stock de seguridad"
+        },
+        "reservations_today": {
+          "title": "Preparar las reservas de hoy",
+          "detail": "Personal y preparación según las mesas reservadas"
+        },
+        "reservations_empty": {
+          "title": "Sin reservas hoy",
+          "detail": "Considera una promoción del mismo día"
+        },
+        "churn_risk": {
+          "title": "Identificar riesgo de clientes",
+          "detail": "Los clientes de alto riesgo necesitan retención"
+        },
+        "churn_ok": {
+          "title": "Sin riesgo de fuga",
+          "detail": "La salud de los clientes es estable"
+        },
+        "reviews_negative": {
+          "title": "Responder a reseñas negativas",
+          "detail": "Las valoraciones bajas recientes necesitan respuesta"
+        },
+        "reviews_pending": {
+          "title": "Vaciar la cola de reseñas",
+          "detail": "Hay reseñas esperando respuesta"
+        },
+        "reviews_ok": {
+          "title": "Reputación saludable",
+          "detail": "No hay reseñas negativas pendientes"
+        },
+        "payments_failed": {
+          "title": "Recuperar pagos fallidos",
+          "detail": "Cargos fallidos en los últimos 7 días"
+        },
+        "payments_pending": {
+          "title": "Perseguir pagos pendientes",
+          "detail": "Hay pagos sin liquidar"
+        },
+        "payments_ok": {
+          "title": "Pagos saludables",
+          "detail": "Sin pagos fallidos ni pendientes"
+        },
+        "approvals_pending": {
+          "title": "Despejar aprobaciones",
+          "detail": "Acciones del agente esperan una decisión humana"
+        },
+        "approvals_ok": {
+          "title": "Sin aprobaciones pendientes",
+          "detail": "Nada está bloqueado en ti"
+        },
+        "system_alerts": {
+          "title": "Clasificar alertas del sistema",
+          "detail": "Hay alertas de error sin leer"
+        },
+        "system_ok": {
+          "title": "Sistemas saludables",
+          "detail": "Sin alertas de error sin leer"
+        }
+      }
+    },
+    "workspace": {
+      "title": "Espacio de trabajo",
+      "filesHint": "Los informes generados y las subidas están en Archivos",
+      "memoryHint": "La memoria del negocio se reutiliza en todas las sesiones",
+      "approvalHint": "Las acciones de alto riesgo siguen requiriendo aprobación humana"
+    },
+    "approval": {
+      "label": "Requiere tu aprobación",
+      "approve": "Aprobar y ejecutar",
+      "reject": "Rechazar",
+      "modify": "Modificar plan",
+      "audit": "Detalles de auditoría",
+      "needsRole": "Requiere el rol {role} para aprobar",
+      "risk": {
+        "low": "Riesgo bajo",
+        "medium": "Riesgo medio",
+        "high": "Riesgo alto",
+        "critical": "Riesgo crítico"
+      },
+      "status": {
+        "pending": "Pendiente de tu decisión",
+        "approved": "Aprobado — iniciando",
+        "executing": "Ejecutando…",
+        "executed": "Completado",
+        "completed": "Completado",
+        "rejected": "Rechazado",
+        "failed": "Falló",
+        "expired": "Caducado"
+      },
+      "auditFields": {
+        "action": "Acción",
+        "id": "ID de aprobación",
+        "requiredRole": "Rol requerido",
+        "createdAt": "Creado"
+      },
+      "modifyPrompt": "Modifica el plan para \"{title}\": "
+    },
+    "notice": {
+      "technical": "Detalles técnicos",
+      "hideTechnical": "Ocultar detalles"
+    },
+    "artifactCard": {
+      "savePdf": "Guardar como PDF"
     }
   },
   "knowledge": {
@@ -879,11 +1138,19 @@
         "failed": "Fallida"
       },
       "type": {
-        "purchase.create_draft": "Borrador de compra",
-        "marketing.create_draft_campaign": "Campaña de marketing",
-        "reviews.reply": "Respuesta a reseña",
-        "roveagent.tool_call": "Llamada de herramienta RoveAgent",
-        "roveagent.task_step": "Tarea RoveAgent"
+        "purchase": {
+          "create_draft": "Borrador de compra"
+        },
+        "marketing": {
+          "create_draft_campaign": "Campaña de marketing"
+        },
+        "reviews": {
+          "reply": "Respuesta a reseña"
+        },
+        "roveagent": {
+          "tool_call": "Llamada de herramienta RoveAgent",
+          "task_step": "Tarea RoveAgent"
+        }
       },
       "request": "Solicitud",
       "agent": "Agente",
@@ -996,5 +1263,108 @@
     "light": "Claro",
     "dark": "Oscuro",
     "system": "Automático"
+  },
+  "files": {
+    "title": "Archivos del espacio de trabajo",
+    "subtitle": "Informes generados por tus empleados de IA y los documentos que subiste.",
+    "upload": "Subir",
+    "loading": "Cargando archivos…",
+    "search": "Buscar archivos…",
+    "summary": "{count} archivos · {size}",
+    "emptyTitle": "Todavía no hay archivos",
+    "emptyHint": "Pide un informe a un empleado de IA o sube una hoja de cálculo para empezar.",
+    "preview": "Vista previa",
+    "download": "Descargar",
+    "delete": "Eliminar",
+    "filter": {
+      "all": "Todos",
+      "agent": "Generado por IA",
+      "user": "Subido"
+    },
+    "source": {
+      "agent": "Generado por IA",
+      "user": "Subido"
+    },
+    "category": {
+      "all": "Todo",
+      "reports": "Informes",
+      "spreadsheets": "Hojas de cálculo",
+      "presentations": "Presentaciones",
+      "images": "Imágenes",
+      "documents": "Documentos",
+      "data": "Datos",
+      "other": "Otros"
+    }
+  },
+  "workspace": {
+    "modes": {
+      "chat": "Chat",
+      "tasks": "Tareas",
+      "files": "Archivos",
+      "insights": "Análisis",
+      "openNav": "Abrir navegación",
+      "openCommand": "Abrir centro de mando"
+    },
+    "searchConversations": "Buscar conversaciones…",
+    "noConversations": "Todavía no hay conversaciones",
+    "pin": "Fijar",
+    "unpin": "Soltar",
+    "delete": "Eliminar",
+    "closeDrawer": "Cerrar",
+    "hideConversations": "Ocultar conversaciones",
+    "showConversations": "Mostrar conversaciones",
+    "hideCommand": "Ocultar centro de mando",
+    "showCommand": "Mostrar centro de mando",
+    "command": {
+      "working": "Trabajando…",
+      "idle": "Listo",
+      "missions": "Misiones de hoy",
+      "retry": "Reintentar",
+      "loadFailed": "No se pudieron cargar las misiones. Reintenta o los datos no están disponibles.",
+      "empty": "Aún no hay señales — lanza un análisis para generar tus misiones.",
+      "kpi": {
+        "revenueToday": "Ingresos de hoy",
+        "ordersToday": "Pedidos de hoy"
+      },
+      "approvals": "Aprobaciones",
+      "noApprovals": "Nada pendiente",
+      "decideInChat": "Decidir en el chat",
+      "recommendations": "Recomendaciones de IA",
+      "noRecommendations": "No hay acciones pendientes.",
+      "scheduled": "Programadas"
+    },
+    "tasks": {
+      "title": "Ejecuciones del agente",
+      "subtitle": "Lo que tu equipo de IA hizo realmente: herramientas, archivos y aprobaciones.",
+      "empty": "Aún no hay ejecuciones en esta conversación.",
+      "waitingApproval": "Esperando tu aprobación",
+      "decideInChat": "Revisar en el chat",
+      "running": "En curso — {done}/{total} pasos",
+      "done": "{total} pasos completados",
+      "scheduled": "Misiones programadas"
+    },
+    "files": {
+      "title": "Artefactos",
+      "subtitle": "Informes, hojas de cálculo e imágenes generadas aquí.",
+      "openCenter": "Abrir centro de archivos",
+      "empty": "Aún no hay artefactos. Pide un informe y aparecerá aquí."
+    },
+    "insights": {
+      "title": "Análisis del negocio",
+      "subtitle": "Agregado de tus datos reales de negocio.",
+      "openDashboard": "Panel completo",
+      "empty": "Todavía no hay datos de negocio.",
+      "vs7d": "Media 7 días {value}",
+      "pendingReviews": "{count} sin responder",
+      "derived": "Hallazgos derivados",
+      "cards": {
+        "revenueToday": "Ingresos de hoy",
+        "ordersToday": "Pedidos de hoy",
+        "lowStock": "Stock bajo",
+        "churnRisk": "Riesgo de fuga",
+        "negativeReviews": "Reseñas negativas",
+        "pendingApprovals": "Aprobaciones pendientes"
+      }
+    }
   }
 }

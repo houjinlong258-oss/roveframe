@@ -419,7 +419,51 @@ MINIMUM_CONTEXT_LENGTH = 64_000
 # values are (result, monotonic_timestamp). Not persisted to disk — cross-
 # restart freshness is handled by the reconcile logic re-probing after expiry.
 _LOCAL_CTX_PROBE_TTL_SECONDS = 30.0
+# Phase 11 / Task 3 (measured, not assumed): agent construction re-probed an
+# unreachable local endpoint on EVERY init. Each probe issues up to four
+# synchronous HTTP calls bounded by a 3 s timeout, so a loopback/local
+# base_url that is not actually serving paid ~3.2 s per AIAgent build —
+# 49% of the measured 6.53 s agent_build. The original "positive-only"
+# policy is why: a failure was never memoized, so nothing absorbed the
+# repeat cost.
+#
+# Failures ARE now memoized, but on a deliberately much shorter horizon than
+# successes. The original concern (a probe that fails during the startup race
+# must be retried once the server comes up) is preserved: the window is
+# seconds, and the degraded state is benign — RoveAgent falls back to a
+# default context length for that window and re-probes immediately after.
+# Self-healing, no persistence, no semantic change to any resolved value.
+_LOCAL_CTX_PROBE_NEGATIVE_TTL_SECONDS = 15.0
 _LOCAL_CTX_PROBE_CACHE: Dict[tuple, tuple] = {}
+
+# Sentinel distinguishing "no fresh cache entry" from "cached negative result".
+_CTX_PROBE_CACHE_MISS = object()
+
+
+def _local_ctx_probe_cache_get(cache_key: tuple):
+    """Return a fresh cached probe value, or ``_CTX_PROBE_CACHE_MISS``.
+
+    A falsy cached value (the probe failed) is served for
+    ``_LOCAL_CTX_PROBE_NEGATIVE_TTL_SECONDS``; a truthy one for
+    ``_LOCAL_CTX_PROBE_TTL_SECONDS``.  Phase 11 / Task 3.
+    """
+    import time as _time
+
+    cached = _LOCAL_CTX_PROBE_CACHE.get(cache_key)
+    if cached is None:
+        return _CTX_PROBE_CACHE_MISS
+    value, timestamp = cached
+    ttl = _LOCAL_CTX_PROBE_TTL_SECONDS if value else _LOCAL_CTX_PROBE_NEGATIVE_TTL_SECONDS
+    if (_time.monotonic() - timestamp) < ttl:
+        return value
+    return _CTX_PROBE_CACHE_MISS
+
+
+def _local_ctx_probe_cache_put(cache_key: tuple, value) -> None:
+    """Memoize a probe result (positive or negative) with its timestamp."""
+    import time as _time
+
+    _LOCAL_CTX_PROBE_CACHE[cache_key] = (value, _time.monotonic())
 
 # Thin fallback defaults — only broad model family patterns.
 # These fire only when provider is unknown AND models.dev/OpenRouter/Anthropic
@@ -2118,14 +2162,14 @@ def _query_ollama_api_show(model: str, base_url: str, api_key: str = "") -> Opti
     # _query_local_context_length but never collides with its (model, url)
     # keys — the two probes can return different values for the same pair.
     cache_key = ("ollama_show", _strip_provider_prefix(model), base_url.rstrip("/"))
-    now = _time.monotonic()
-    cached = _LOCAL_CTX_PROBE_CACHE.get(cache_key)
-    if cached is not None and (now - cached[1]) < _LOCAL_CTX_PROBE_TTL_SECONDS:
-        return cached[0]
+    cached = _local_ctx_probe_cache_get(cache_key)
+    if cached is not _CTX_PROBE_CACHE_MISS:
+        return cached
 
     result = _query_ollama_api_show_uncached(model, base_url, api_key=api_key)
-    if result:  # positive-only — never memoize a failed probe
-        _LOCAL_CTX_PROBE_CACHE[cache_key] = (result, now)
+    # Phase 11 / Task 3: negatives are memoized on the short horizon too — a
+    # non-Ollama / unreachable host was previously re-POSTed on every build.
+    _local_ctx_probe_cache_put(cache_key, result)
     return result
 
 
@@ -2286,20 +2330,16 @@ def _query_local_context_length(model: str, base_url: str, api_key: str = "") ->
     import time as _time
 
     cache_key = (_strip_provider_prefix(model), base_url.rstrip("/"))
-    now = _time.monotonic()
-    cached = _LOCAL_CTX_PROBE_CACHE.get(cache_key)
-    if cached is not None and (now - cached[1]) < _LOCAL_CTX_PROBE_TTL_SECONDS:
-        return cached[0]
+    cached = _local_ctx_probe_cache_get(cache_key)
+    if cached is not _CTX_PROBE_CACHE_MISS:
+        return cached
 
     result = _query_local_context_length_uncached(model, base_url, api_key=api_key)
-    # Cache only positive results. A None/failure (server not up yet,
-    # connection refused, timeout) must NOT be memoized — otherwise a probe
-    # that fails during a startup race would suppress a legit retry seconds
-    # later once the server is reachable. Positive-only caching still fully
-    # bounds the hot-path probe rate (a reachable server returns a value and
-    # gets cached); an unreachable one simply re-probes on the next call.
-    if result:
-        _LOCAL_CTX_PROBE_CACHE[cache_key] = (result, now)
+    # Phase 11 / Task 3: positives AND negatives are memoized now, on different
+    # horizons (30 s vs 15 s) — see _LOCAL_CTX_PROBE_NEGATIVE_TTL_SECONDS. The
+    # old positive-only policy meant an unreachable local endpoint re-probed on
+    # every AIAgent build; measured at 3.19 s/init, 49% of agent_build.
+    _local_ctx_probe_cache_put(cache_key, result)
     return result
 
 

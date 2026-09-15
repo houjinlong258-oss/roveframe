@@ -29,7 +29,29 @@ if (process.env.RF_E2E_DEMO === '1' && process.env.COZE_PROJECT_ENV !== 'PROD') 
 let _dbMode: boolean | null = null;
 let _lastProbe = 0;
 
+/**
+ * 存储模式显式覆盖（RF_CODING_AGENT_STORE = auto | db | memory）。
+ *
+ * 为什么需要它：原实现只能靠「探测 Supabase 是否可达」来决定模式，
+ * 结果测试结果随网络环境漂移 —— 本地无 DB 时内存回退用例全绿，
+ * 一旦环境里存在可连的库（例如 scripts/deploy.env 提供了真实凭据），
+ * 同一批用例立刻变红。这不是被测代码的问题，是缺少确定性接缝。
+ *
+ * 生产用途同样真实：单租户演示实例与灾备演练需要在无 DB 前提下
+ * 明确以内存模式运行，而不是依赖探测结果。
+ */
+function forcedStoreMode(): 'memory' | 'db' | null {
+  const raw = (process.env.RF_CODING_AGENT_STORE ?? '').trim().toLowerCase();
+  if (raw === 'memory') return 'memory';
+  if (raw === 'db') return 'db';
+  return null;
+}
+
 async function isDbMode(): Promise<boolean> {
+  const forced = forcedStoreMode();
+  if (forced === 'memory') return false;
+  if (forced === 'db') return true;
+
   const now = Date.now();
   if (_dbMode !== null && now - _lastProbe < PROBE_INTERVAL_MS) return _dbMode;
   _lastProbe = now;

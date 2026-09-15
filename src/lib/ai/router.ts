@@ -2,6 +2,7 @@ import { LLMClient, Config } from "coze-coding-dev-sdk";
 import { getSupabaseClient } from "@/storage/database/supabase-client";
 import { decrypt } from "@/lib/crypto";
 import { AUTO_ROUTE, PROVIDER_PRESETS, type Capability } from "@/lib/ai/providers";
+import { REASONING_LEVELS, isNativeReasoningModel, type ModelPreference, type ReasoningLevel } from "@/lib/ai/model-registry";
 import { getCatalogEntry, runtimeProtocolOf } from "@/lib/ai/provider-catalog";
 import { AIError, classifyHTTPError } from "@/lib/ai/errors";
 import { joinEndpoint, checkBaseUrl } from "@/lib/ai/url-utils";
@@ -76,6 +77,11 @@ export interface AICallOptions {
   maxRetries?: number;
   /** 用量账本中的 agent 标记（如 ceo/operations/scheduler/daily-brief） */
   agent?: string;
+  /**
+   * 推理强度（Composer 的「思考强度」）。只影响 max_tokens / temperature /
+   * reasoning_effort，绝不为不支持的服务商伪造私有参数。
+   */
+  reasoning?: ReasoningLevel;
 }
 
 /** 每次路由决策的诊断信息：实际 provider/model、是否 fallback、原因、request id */
@@ -109,6 +115,8 @@ const PROVIDER_ALIAS: Record<string, string> = {
 };
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+// 流式生成（agent 多轮工具 + 长回复）远超 60s，绝对超时只作为无限挂起的兜底
+const STREAM_TIMEOUT_MS = 300_000;
 const DEFAULT_MAX_RETRIES = 2;
 
 /** 把多模态 content 降级为纯文本（提取 text 块），用于平台内置模型的兜底 */
@@ -178,12 +186,12 @@ interface ModelConfigRow {
 const MODEL_CONFIG_COLUMNS =
   'provider, api_key_encrypted, base_url, default_model, is_enabled, timeout_ms, max_retries';
 
-interface Resolution {
+export interface ModelResolution {
   resolved: ResolvedModel;
   diagnostics: AIRouteDiagnostics;
 }
 
-function platformResolution(capability: Capability, requestId: string, usedFallback: boolean, fallbackReason: string | null): Resolution {
+function platformResolution(capability: Capability, requestId: string, usedFallback: boolean, fallbackReason: string | null): ModelResolution {
   const auto = AUTO_ROUTE[capability];
   return {
     resolved: {
@@ -207,12 +215,108 @@ function platformResolution(capability: Capability, requestId: string, usedFallb
 }
 
 /**
+ * 解析「指定 provider:model」的真实配置。
+ * 服务商未接入（未启用 / 无 Key / 不在 Catalog）时返回 null，
+ * 让故障切换链据此**跳过**该候选，而不是抛错中断整条链。
+ */
+export async function resolveExternalModel(
+  rawProvider: string,
+  model: string,
+  capability: Capability,
+  scope: AIRequestScope | null = null,
+): Promise<ModelResolution | null> {
+  const scopeCheck = validateModelResolutionScope(scope);
+  if (!scopeCheck.ok) return null;
+  const provider = PROVIDER_ALIAS[rawProvider] ?? rawProvider;
+  if (!getCatalogEntry(provider) && !PROVIDER_PRESETS[provider]) return null;
+  return resolveConfiguredProvider(
+    provider,
+    model,
+    capability,
+    scopeCheck.tenantId,
+    scopeCheck.businessId,
+    scope?.requestId ?? crypto.randomUUID(),
+  );
+}
+
+/** 外部服务商的配置解析内核（不含「选哪个服务商」的决策）。 */
+async function resolveConfiguredProvider(
+  provider: string,
+  model: string,
+  capability: Capability,
+  tenantId: string,
+  businessId: string,
+  requestId: string,
+): Promise<ModelResolution | null> {
+  const client = getSupabaseClient();
+  const catalog = getCatalogEntry(provider);
+
+  const { data: cfgRows, error: cErr } = await client
+    .from("model_configs")
+    .select(MODEL_CONFIG_COLUMNS)
+    .eq("provider", provider)
+    .eq("is_enabled", true)
+    .eq("tenant_id", tenantId)
+    .eq("business_id", businessId);
+  if (cErr) throw new Error(`读取模型配置失败: ${cErr.message}`);
+
+  const rows = (cfgRows ?? []) as ModelConfigRow[];
+  const cfg = rows[0];
+
+  const needsKey = catalog ? catalog.authType === "api_key" || catalog.authType === "oauth" : true;
+  if (!cfg || (needsKey && !cfg.api_key_encrypted)) return null;
+
+  const baseUrl = cfg.base_url || catalog?.defaultBaseUrl || PROVIDER_PRESETS[provider]?.baseUrl || "";
+  const allowLocal = catalog?.category === "local" || catalog?.authType === "local";
+  const urlCheck = checkBaseUrl(baseUrl, { allowLocal });
+  if (!urlCheck.ok) {
+    throw new AIError(
+      { code: "ssrf_blocked", provider, model: model ?? undefined, requestId, retryable: false },
+      `base URL 未通过安全校验 (${urlCheck.reason})`,
+    );
+  }
+
+  const protocol = catalog ? runtimeProtocolOf(catalog) : (PROVIDER_PRESETS[provider]?.protocol ?? "openai");
+  if (!protocol) {
+    // 协议已建模但 adapter 未完成真实验收：结构化错误，绝不静默切换
+    throw new AIError(
+      { code: "provider_unavailable", provider, model: model ?? undefined, requestId, retryable: false },
+      `provider ${provider} 的 adapter 已声明但尚未通过验收，拒绝静默降级`,
+    );
+  }
+
+  return {
+    resolved: {
+      kind: "external",
+      model: model || cfg.default_model || catalog?.models[0]?.id || PROVIDER_PRESETS[provider]?.models[0] || "",
+      temperature: AUTO_ROUTE[capability].temperature,
+      provider,
+      apiKey: cfg.api_key_encrypted ? decrypt(cfg.api_key_encrypted) : undefined,
+      baseUrl,
+      protocol,
+      timeoutMs: cfg.timeout_ms ?? DEFAULT_TIMEOUT_MS,
+      maxRetries: cfg.max_retries ?? DEFAULT_MAX_RETRIES,
+      allowLocal,
+    },
+    diagnostics: {
+      requestId,
+      capability,
+      kind: "external",
+      provider,
+      model: model || cfg.default_model || "",
+      usedFallback: false,
+      fallbackReason: null,
+    },
+  };
+}
+
+/**
  * 解析某能力应使用的模型。
  * 选择顺序：business 显式配置 → tenant 默认配置 → 平台内置（可见 fallback）。
  * 配置存在但不可用（SSRF 拒绝、adapter 未验收）时抛结构化错误，
  * 不静默切换到平台模型。
  */
-async function resolveModelDetailed(capability: Capability, scope: AIRequestScope | null = null): Promise<Resolution> {
+async function resolveModelDetailed(capability: Capability, scope: AIRequestScope | null = null): Promise<ModelResolution> {
   const requestId = scope?.requestId ?? crypto.randomUUID();
   const scopeCheck = validateModelResolutionScope(scope);
   if (!scopeCheck.ok) {
@@ -241,69 +345,19 @@ async function resolveModelDetailed(capability: Capability, scope: AIRequestScop
   }
 
   const [rawProvider, model] = target.split(":");
-  const provider = PROVIDER_ALIAS[rawProvider] ?? rawProvider;
-  const catalog = getCatalogEntry(provider);
-
-  const { data: cfgRows, error: cErr } = await client
-    .from("model_configs")
-    .select(MODEL_CONFIG_COLUMNS)
-    .eq("provider", provider)
-    .eq("is_enabled", true)
-    .eq("tenant_id", tenantId)
-    .eq("business_id", businessId);
-  if (cErr) throw new Error(`读取模型配置失败: ${cErr.message}`);
-
-  const rows = (cfgRows ?? []) as ModelConfigRow[];
-  const cfg = rows[0];
-
-  const needsKey = catalog ? catalog.authType === "api_key" || catalog.authType === "oauth" : true;
-  if (!cfg || (needsKey && !cfg.api_key_encrypted)) {
+  const configured = await resolveConfiguredProvider(
+    PROVIDER_ALIAS[rawProvider] ?? rawProvider,
+    model,
+    capability,
+    tenantId,
+    businessId,
+    requestId,
+  );
+  if (!configured) {
     // 配置了分配但服务商未接入 → 可见地回落平台内置
     return platformResolution(capability, requestId, true, "provider_not_configured");
   }
-
-  const baseUrl = cfg.base_url || catalog?.defaultBaseUrl || PROVIDER_PRESETS[rawProvider]?.baseUrl || "";
-  const allowLocal = catalog?.category === "local" || catalog?.authType === "local";
-  const urlCheck = checkBaseUrl(baseUrl, { allowLocal });
-  if (!urlCheck.ok) {
-    throw new AIError(
-      { code: "ssrf_blocked", provider, model: model ?? undefined, requestId, retryable: false },
-      `base URL 未通过安全校验 (${urlCheck.reason})`,
-    );
-  }
-
-  const protocol = catalog ? runtimeProtocolOf(catalog) : (PROVIDER_PRESETS[rawProvider]?.protocol ?? "openai");
-  if (!protocol) {
-    // 协议已建模但 adapter 未完成真实验收：结构化错误，绝不静默切换
-    throw new AIError(
-      { code: "provider_unavailable", provider, model: model ?? undefined, requestId, retryable: false },
-      `provider ${provider} 的 adapter 已声明但尚未通过验收，拒绝静默降级`,
-    );
-  }
-
-  return {
-    resolved: {
-      kind: "external",
-      model: model || cfg.default_model || catalog?.models[0]?.id || PROVIDER_PRESETS[rawProvider]?.models[0] || "",
-      temperature: AUTO_ROUTE[capability].temperature,
-      provider,
-      apiKey: cfg.api_key_encrypted ? decrypt(cfg.api_key_encrypted) : undefined,
-      baseUrl,
-      protocol,
-      timeoutMs: cfg.timeout_ms ?? DEFAULT_TIMEOUT_MS,
-      maxRetries: cfg.max_retries ?? DEFAULT_MAX_RETRIES,
-      allowLocal,
-    },
-    diagnostics: {
-      requestId,
-      capability,
-      kind: "external",
-      provider,
-      model: model || cfg.default_model || "",
-      usedFallback: false,
-      fallbackReason: null,
-    },
-  };
+  return configured;
 }
 
 /** 组合超时与调用方取消信号 */
@@ -389,7 +443,14 @@ interface UsageCapture {
   outputTokens: number | null;
 }
 
-async function trackUsage(
+/** 导出供故障切换链复用同一记账口径 */
+export type { UsageCapture };
+
+/**
+ * 写一次用量账本。导出给故障切换链，保证「平台路径」与「切换路径」
+ * 的记账字段完全一致（否则 Model Status Dashboard 的延迟/失败率会失真）。
+ */
+export async function trackUsage(
   diagnostics: AIRouteDiagnostics,
   scope: AIRequestScope | null,
   opts: AICallOptions | undefined,
@@ -419,6 +480,39 @@ async function trackUsage(
   }
 }
 
+/** 平台内置模型的解析结果（故障切换链的最后一级兜底）。 */
+export function resolvePlatformModel(
+  capability: Capability,
+  requestId?: string,
+): ModelResolution {
+  return platformResolution(capability, requestId ?? crypto.randomUUID(), false, null);
+}
+
+/**
+ * 已解析模型上的流式内核。抽出来供故障切换链复用，
+ * 避免「解析一次、按候选逐个重试」时重复解析与重复记账。
+ */
+export async function* streamResolvedModel(
+  resolved: ResolvedModel,
+  messages: ChatMessage[],
+  forwardHeaders: Record<string, string> | undefined,
+  requestId: string,
+  usage: UsageCapture,
+  opts?: AICallOptions,
+): AsyncGenerator<string> {
+  if (resolved.kind === "platform") {
+    // 平台内置模型：降级为纯文本（视觉能力走接入的外部服务商）
+    const client = new LLMClient(new Config(), forwardHeaders);
+    const textMessages = messages.map((m) => ({ role: m.role, content: textOf(m.content) }));
+    const stream = client.stream(textMessages, { model: resolved.model, temperature: resolved.temperature });
+    for await (const chunk of stream) {
+      if (chunk.content) yield chunk.content.toString();
+    }
+    return;
+  }
+  yield* streamExternal(resolved, messages, requestId, usage, opts);
+}
+
 /** 流式对话：平台内置走 LLMClient，外部服务商按协议直连，统一产出文本增量 */
 export async function* streamChat(
   capability: Capability,
@@ -434,17 +528,7 @@ export async function* streamChat(
   let errorCode: string | null = null;
 
   try {
-    if (resolved.kind === "platform") {
-      // 平台内置模型：降级为纯文本（视觉能力走接入的外部服务商）
-      const client = new LLMClient(new Config(), forwardHeaders);
-      const textMessages = messages.map((m) => ({ role: m.role, content: textOf(m.content) }));
-      const stream = client.stream(textMessages, { model: resolved.model, temperature: resolved.temperature });
-      for await (const chunk of stream) {
-        if (chunk.content) yield chunk.content.toString();
-      }
-      return;
-    }
-    yield* streamExternal(resolved, messages, diagnostics.requestId, usage, opts);
+    yield* streamResolvedModel(resolved, messages, forwardHeaders, diagnostics.requestId, usage, opts);
   } catch (err) {
     status = "error";
     errorCode = err instanceof AIError ? err.code : "stream_error";
@@ -487,10 +571,23 @@ export async function invokeToolDecision(
   _forwardHeaders?: Record<string, string>,
   scope: AIRequestScope | null = null,
   opts?: AICallOptions,
+  preference?: ModelPreference | null,
 ): Promise<AIToolDecision> {
   if (tools.length === 0) return { supported: true, text: '', toolCalls: [] };
   const startedAt = Date.now();
-  const { resolved, diagnostics } = await resolveModelDetailed(capability, scope);
+  // Composer 里显式选择的模型同样用于「工具决策」，否则会出现
+  // 「用 A 模型规划、用 B 模型作答」的角色错配。
+  let resolution: ModelResolution | null = null;
+  if (preference?.provider && preference.provider !== 'platform') {
+    resolution = await resolveExternalModel(
+      preference.provider,
+      preference.model ?? '',
+      capability,
+      scope,
+    );
+  }
+  resolution ??= await resolveModelDetailed(capability, scope);
+  const { resolved, diagnostics } = resolution;
   if (resolved.kind === 'platform') return { supported: false };
   const usage: UsageCapture = { inputTokens: null, outputTokens: null };
   try {
@@ -692,6 +789,47 @@ export function* parseSSEDataLines(
   }
 }
 
+/**
+ * 推理强度 → 请求体参数。
+ *
+ * 安全边界（踩过的坑）：向不支持的服务商发送 `reasoning_effort` 或对
+ * o 系列发送 `temperature` / `max_tokens` 会直接 400，而 400 在故障切换链里
+ * 会被误判成「该服务商挂了」并切走。因此这里只对**明确支持**的组合下发原生参数：
+ * - `reasoning_effort`：仅 openai 官方（其 o/gpt-5 系列）；
+ * - o/gpt-5 系列改用 `max_completion_tokens` 并省略 `temperature`；
+ * - 其余服务商只调整通用 max_tokens/temperature。
+ */
+const REASONING_EFFORT_PROVIDERS: ReadonlySet<string> = new Set(['openai']);
+
+export function reasoningParams(
+  resolved: ResolvedModel,
+  opts?: AICallOptions,
+): Record<string, unknown> {
+  const profile = REASONING_LEVELS[opts?.reasoning ?? 'medium'];
+  const isOpenAIReasoning = resolved.provider === 'openai' && isNativeReasoningModel(resolved.model);
+  if (isOpenAIReasoning) {
+    return {
+      max_completion_tokens: profile.maxTokens,
+      temperature: undefined,
+      reasoning_effort: REASONING_EFFORT_PROVIDERS.has(resolved.provider ?? '')
+        ? profile.level
+        : undefined,
+      __omitTemperature: true,
+    };
+  }
+  return { max_tokens: profile.maxTokens, temperature: resolved.temperature, __omitTemperature: false };
+}
+
+/** 去掉 undefined 与内部标记，得到可直接展开进请求体的对象。 */
+function cleanReasoningParams(params: Record<string, unknown>): Record<string, unknown> {
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (key.startsWith('__') || value === undefined) continue;
+    cleaned[key] = value;
+  }
+  return cleaned;
+}
+
 async function* streamOpenAICompatible(
   resolved: ResolvedModel,
   messages: ChatMessage[],
@@ -699,6 +837,7 @@ async function* streamOpenAICompatible(
   usage: UsageCapture,
   opts?: AICallOptions,
 ): AsyncGenerator<string> {
+  const streamOpts: AICallOptions = { ...opts, timeoutMs: Math.max(opts?.timeoutMs ?? 0, STREAM_TIMEOUT_MS) };
   const resp = await fetchWithResilience(
     joinEndpoint(resolved.baseUrl ?? '', 'chat/completions'),
     {
@@ -707,14 +846,14 @@ async function* streamOpenAICompatible(
       body: JSON.stringify({
         model: resolved.model,
         messages,
-        temperature: resolved.temperature,
         stream: true,
         stream_options: { include_usage: true },
+        ...cleanReasoningParams(reasoningParams(resolved, opts)),
       }),
     },
     resolved,
     requestId,
-    opts,
+    streamOpts,
   );
   if (!resp.body) {
     throw new AIError(
@@ -764,6 +903,7 @@ async function* streamAnthropic(
     turns.push({ role: m.role, content: await toAnthropicContent(m.content) });
   }
 
+  const anthropicStreamOpts: AICallOptions = { ...opts, timeoutMs: Math.max(opts?.timeoutMs ?? 0, STREAM_TIMEOUT_MS) };
   const resp = await fetchWithResilience(
     joinEndpoint(resolved.baseUrl ?? '', 'v1/messages'),
     {
@@ -775,7 +915,7 @@ async function* streamAnthropic(
       },
       body: JSON.stringify({
         model: resolved.model,
-        max_tokens: 4096,
+        max_tokens: REASONING_LEVELS[opts?.reasoning ?? 'medium'].maxTokens,
         system: system || undefined,
         messages: turns,
         temperature: resolved.temperature,
@@ -784,7 +924,7 @@ async function* streamAnthropic(
     },
     resolved,
     requestId,
-    opts,
+    anthropicStreamOpts,
   );
   if (!resp.body) {
     throw new AIError(

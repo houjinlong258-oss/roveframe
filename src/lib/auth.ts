@@ -11,7 +11,7 @@
  * 不抛异常是因为 Next.js Route Handler 里把异常当 500 处理，需要精细状态码。
  */
 
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { getSupabaseClient, getCleanServiceClient, getFreshServiceClient } from '@/storage/database/supabase-client';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -56,15 +56,26 @@ export function getRequestAccessToken(request: Request): string | null {
   );
 }
 
-export function sessionCookieHeader(accessToken: string): string {
-  // Secure 仅生产环境启用：本地 http://localhost 开发时浏览器会拒绝存储 Secure cookie
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  return `${SESSION_COOKIE_NAME}=${encodeURIComponent(accessToken)}; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}; HttpOnly${secure}; SameSite=Lax`;
+/** TLS 终止可能在边缘代理完成：以 x-forwarded-proto 为准，回退请求自身协议。 */
+export function isSecureRequest(request: Request): boolean {
+  const forwarded = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim();
+  if (forwarded) return forwarded === 'https';
+  try {
+    return new URL(request.url).protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
-export function clearSessionCookieHeader(): string {
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  return `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly${secure}; SameSite=Lax`;
+export function sessionCookieHeader(accessToken: string, secure: boolean): string {
+  // Secure 仅在 https 请求下启用：http 页面浏览器会拒绝存储 Secure cookie，导致会话静默丢失
+  const securePart = secure ? '; Secure' : '';
+  return `${SESSION_COOKIE_NAME}=${encodeURIComponent(accessToken)}; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}; HttpOnly${securePart}; SameSite=Lax`;
+}
+
+export function clearSessionCookieHeader(secure: boolean): string {
+  const securePart = secure ? '; Secure' : '';
+  return `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly${securePart}; SameSite=Lax`;
 }
 
 /** 从 name 生成 url-safe slug；fallback 到时间戳 */
@@ -177,7 +188,7 @@ export async function signInAndGetToken(opts: {
   email: string;
   password: string;
 }): Promise<Result<{ accessToken: string; userId: string }>> {
-  const client = getSupabaseClient();
+  const client = getFreshServiceClient();
   const { data, error } = await client.auth.signInWithPassword({
     email: opts.email,
     password: opts.password,
@@ -208,7 +219,7 @@ export async function resolveUserByToken(token: string): Promise<
   if (!appMeta.tenant_id) {
     return { ok: false, error: 'token has no tenant_id in app_metadata' };
   }
-  const { data: pubUser, error: pubErr } = await client
+  const { data: pubUser, error: pubErr } = await getCleanServiceClient()
     .from('users')
     .select('id, tenant_id, business_id, email, name, role')
     .eq('id', authUser.id)

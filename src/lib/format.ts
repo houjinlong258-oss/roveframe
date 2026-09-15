@@ -41,3 +41,12 @@ export function maskEmail(email: string): string {
   if (!domain) return email;
   return `${user.slice(0, 2)}***@${domain}`;
 }
+
+/** 文件体积显示（Artifact 卡片 / 文件中心共用） */
+export function fmtBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / 1024 ** index;
+  return `${value >= 10 || index === 0 ? Math.round(value) : value.toFixed(1)} ${units[index]}`;
+}

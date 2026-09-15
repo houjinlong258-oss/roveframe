@@ -70,6 +70,10 @@
 
 ## 数据层（Supabase）
 
+- **当前库为用户自有 Supabase 项目**（ref `omoyrubbsjquadopbjoo`，region us-east-1）：API 凭据在 `.env`（`COZE_SUPABASE_URL/ANON_KEY/SERVICE_ROLE_KEY/JWT_SECRET`，已被 gitignore，不进 git）
+- **DDL 通道**：PostgREST/API key 无 DDL 权限；直连 `db.omoyrubbsjquadopbjoo.supabase.co:5432` 是 IPv6-only（沙箱不可达），需走 Session pooler：`aws-0-us-east-1.pooler.supabase.com:5432`，user `postgres.omoyrubbsjquadopbjoo`，数据库密码由用户提供（不落库不写文件）。psycopg2 可用（无 psql）
+- **schema 已于 2026-09-08 与 `schema.ts` 对齐**（历史补丁 `scripts/patch-schema-sync.sql` 留档）：补 3 表（audit_events/health_check/integration_events）、补 52 列（business_id 多租户列为主）、agent_approvals 补 15 列；并修复两类历史脏数据——①列已存在但未回填（orders.business_id 全 NULL）②tenant_id 误填 business id（000...001 → 正确 000...000 Default tenant，含测试遗留 tenant_phase8 等）
+- 归属锚点：唯一 tenant=`00000000-0000-0000-0000-000000000000`（Default），唯一 business=`00000000-0000-0000-0000-000000000001`（四川人家）；新表/新数据沿用
 - 客户端：`getSupabaseClient()`（**同步导出**，service_role_key，无 Auth 场景），来自 `@/storage/database/supabase-client`
 - 19 张表；**易错字段**：`orders.total`（非 total_amount）、`items` 元素用 `qty`（非 quantity）；`settings` 是**单行 jsonb**（business/locale/ai_prefs/model_assign），不是 key-value
 - RAG：`match_doc_chunks(query_embedding vector(1024), match_count int)` RPC，余弦距离
@@ -77,6 +81,12 @@
 - seed 数据约定：邮件分类 inquiry/business/complaint/supplier/other；预约状态 pending/confirmed/arrived/cancelled/completed；桌位 A1-A4 包间、B1-B8 大厅（与 store_qr_codes 一一对应）
 - **扫码点餐**：`api/store/menu`（公开，商品含 image_url/video_url，带 ?table= 时累计桌码 scan_count）、`api/store/orders`（服务端按商品表计价，source='qr'，orders.table_no/notes）、`api/store/qr-codes`（一桌一码 upsert）；H5 商城 `[locale]/store` 由 AppShell 正则旁路后台框架
 - **媒体上传**：`api/upload`（multipart）→ Supabase Storage 公共桶 `product-media`（首次上传自动建桶），图片 ≤5MB、视频 ≤50MB；二维码图用 `qrcode` 包前端转 dataURL
+- **连接真相（2026-09-09 修复注册全挂）**：`loadEnv()` 见进程环境已有 `COZE_SUPABASE_*`（平台注入，指向平台默认库）就直接跳过 `.env`——服务曾一直连平台库而非用户库。修复双层：① `scripts/dev.sh`/`start.sh` 启动前 `set -a; source .env(deploy.env); set +a`；② **代码级兜底**（关键）：`supabase-client.ts` 的 `loadEnv()` 最先调 `loadDeployEnvFile()`——存在 `scripts/deploy.env` 就 `dotenv.config({ override: true })` 强制覆盖进程环境，并打日志 `[supabase-client] credentials loaded from scripts/deploy.env -> <host>`。不依赖启动脚本和 cwd，任何启动方式（含部署平台绕过 start.sh 的重启）都生效。改完必须重启服务，并用"直查用户库 auth.users/新增行"验证真实落库，curl 200 不足以证明连对库
+- **运行模式**：`COZE_PROJECT_ENV` 由脚本强制（dev.sh=DEV、start.sh=PROD），`.env` 里不要再写该变量（曾导致 dev server 走生产模式崩在缺 `.next`）
+- **注册限流**：`src/lib/rate-limit.ts` 内存 Map（每邮箱 5 次/15min、每 IP 10 次/15min，失败指数退避）——重启服务即清零；用户侧报 `too_many_requests` 时优先怀疑注册本身先失败后反复重试累积
+- **部署注意**：`.env` 不进 git；部署实例凭据走 `scripts/deploy.env`（进 git，含同一套用户库 COZE_SUPABASE_* 四变量）。加载有双保险：`start.sh` 优先 source 它 + `supabase-client.ts` 代码级 `loadDeployEnvFile()`（override 平台注入，见"连接真相"）。轮换密钥时 `.env` 与 `scripts/deploy.env` 两个文件都要改
+- **初始管理员账号（2026-09-09 预置）**：`houjinlong258@gmail.com` / `Rove@2026`，owner 角色，挂 Default tenant（000...000）+ 四川人家 business（000...001），登录即见全部 seed 数据。由 `scripts/ensure-initial-user.ts` 幂等创建（已存在则重置密码）；该脚本跑在**本地凭据上下文**（tsx + supabase admin API），与部署实例无关，账号在用户库里全局有效
+- **启动脚本环境加载（防回归）**：`scripts/dev.sh`/`start.sh` 均先 `set -a; source <env>; set +a` 再启动——脚本级 export 会覆盖平台注入的 `COZE_SUPABASE_*`（否则 `loadEnv()` 见进程有值就跳过 `.env`，服务会静默连平台库）；`COZE_PROJECT_ENV` 由脚本强制（dev.sh=DEV、start.sh=PROD），`.env` 里不要写该变量
 
 ## AI 路由层
 
@@ -93,8 +103,17 @@
 3. **invokeChat 返回 string**，不是 `{ text }`
 4. **React Compiler lint**：渲染期不能重赋值累积变量（如环形图 gradient stops），用 reduce 前缀和
 5. **i18n 键**：改页面后跑 `messages/*.json` 与源码 t() 比对（见 git 历史中的扫描脚本模式），杜绝 MISSING_MESSAGE
-6. **Next.js 路由里 fire-and-forget Promise 会被丢弃**（void promise.then() 不执行）——副作用写库（扫码计数、销量累计）必须 await
+6. **next-intl 翻译键不能含点号**（客户端 NextIntlClientProvider 校验抛 INVALID_KEY 直接崩渲染）：动态键如 `t(\`biz.type.${action_type}\`)`（action_type=`purchase.create_draft` 等）必须把 messages 写成**嵌套对象**（`"purchase": {"create_draft": ...}`），不能写成含点号的平铺键；三语文件同步改
+12. **列默认值也会漂移**（2026-09-09 修复 AI 对话建会话报错）：schema.ts 定义了 `.default()` 的列，用户库里可能没有对应 DEFAULT（如 chat_sessions.summary NOT NULL 无默认 → 插入省略该字段即撞约束 `null value in column "summary"`）。已全库对齐（defaults-patch：chat_sessions 2 列 + email_send_tasks 2 列）；新增带 default 的列时部署后要核对库结构
+13. **Next.js 路由里 fire-and-forget Promise 会被丢弃**（void promise.then() 不执行）——副作用写库（扫码计数、销量累计）必须 await
 7. **api-helpers 导出**是 `json/jsonError/getErrorMessage/sseResponse`，不是 ok/err
+8. **supabase-js 共享单例会被登录 session 污染**（2026-09-09 修复 signup RLS 全挂）：`persistSession: false` 只跳过 storage，`signInWithPassword` 仍会把用户 session 存进 client **内存态**；之后共享单例的所有 REST 请求 `Authorization` 被用户 JWT 覆盖（role=authenticated），service_role 失效、撞 RLS（42501）。修复：`signInAndGetToken` 用 `getFreshServiceClient()`（每次全新实例）；任何会调 auth 登录态方法的代码不得用 `getSupabaseClient()` 共享单例
+9. **改 supabase-client / auth 等底层模块后 HMR 可能不生效**：Next dev 的旧模块实例持有旧 client 缓存（症状：tsx 脚本同代码正常、dev server 行为异常）。改底层模块后必须重启 dev server 再验证，不要依赖热更新
+10. **会话 cookie 的 Secure 属性按请求协议自适应，不能只看 NODE_ENV**（2026-09-09 修复"登录成功后被弹回登录页"）：生产模式 cookie 若固定带 `Secure`，通过 http 访问部署站时浏览器会**静默拒绝存储**该 cookie → 登录 200 但会话丢失 → AppShell 守卫 `/api/auth/me` 401 → 弹回登录。修复：`isSecureRequest(request)` 以 `x-forwarded-proto` 头（回退 request.url protocol）判定，login/signup/logout 三路由的 Set-Cookie 均按实际协议决定是否加 Secure
+11. **本地验证登录态全链路用 cookie jar**：`curl -c c.txt login` → `curl -b c.txt /api/auth/me`，别只测 login 200
+
+14. **AI 流式调用的 60s 绝对超时会掐断长回复**（2026-09-09 修复部署站 AI 对话报 "The operation was aborted due to timeout"）：`fetchWithResilience` 的 `AbortSignal.timeout` 从请求发起起算、覆盖整个 SSE 读取期；`streamOpenAICompatible`/`streamAnthropic` 已用 `STREAM_TIMEOUT_MS=300_000` 覆盖（`composeSignal` 优先取 `opts.timeoutMs`），工具决策等非流式调用保持 60s。调 AI 超时不要只改 `DEFAULT_TIMEOUT_MS`
+15. **model_configs 表实际名为 `model_configs`**（provider/display_name/base_url/default_model/is_enabled/last_test_ok/timeout_ms 等列），排查 AI 配置问题直查此表（`settings` 表的 model_assign 决定各能力分流到哪个 provider:model）
 
 ## 包管理规范
 
@@ -134,7 +153,10 @@
 - **预览方式**：`bash scripts/prepare.sh` (build) → `bash scripts/dev.sh` (run)
 - **端口**：从 `.preview` 读取 `expose_port`，默认 5000
 - **预览类型**：web，支持 HMR 热更新
-- **`.coze` 配置**：`sub_id = "e679bddf"`，`project_type = "web"`
+- **`.coze` 配置**（工作区根 `/workspace/projects/.coze`，单层结构 `[subprojects].path=["."]`）：`sub_id = "e679bddf"`，`project_type = "web"`，`requires = ["nodejs-24"]`，`preview_enable = "enabled"`
+  - `[dev] build = bash scripts/prepare.sh`，`[dev] run = bash scripts/dev.sh`（端口从 `.preview` 读，fallback 5000）
+  - `[deploy] build = bash scripts/build.sh`，`[deploy] run = bash scripts/start.sh`；`[deploy.profile] kind = "service", flavor = "web"`（对外 5000，读 `DEPLOY_RUN_PORT`/`PORT`）
+  - 源码位于工作区根（生成物：预览 `prepare.sh`+`dev.sh`；生产 `build.sh` 产出 `dist/server.js`，`start.sh` 生产启动）
 
 ## 用户偏好与长期约束
 

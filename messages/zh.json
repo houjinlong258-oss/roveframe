@@ -14,7 +14,15 @@
     "brandBadge": "AI COO",
     "approvals": "变更审批",
     "audit": "审计记录",
-    "enterpriseApprovals": "变更审批"
+    "enterpriseApprovals": "变更审批",
+    "files": "文件中心",
+    "group": {
+      "workspace": "工作台",
+      "operations": "经营",
+      "governance": "治理"
+    },
+    "collapseSidebar": "收起侧栏",
+    "expandSidebar": "展开侧栏"
   },
   "common": {
     "save": "保存",
@@ -164,6 +172,257 @@
         "dev": "作为我的开发 Agent，请检查当前系统是否存在 bug 或改进机会。",
         "devops": "作为我的运维 Agent，请检查部署健康状态并给出稳定性建议。"
       }
+    },
+    "composer": {
+      "availableModels": "可用模型",
+      "searchModels": "搜索模型…",
+      "platformModel": "平台内置模型",
+      "platformProvider": "RoveFrame 平台",
+      "autoFallback": "自动兜底",
+      "noProviders": "还没有接入任何外部服务商。到「设置 → AI 服务商」接入后即可在这里选择。",
+      "healthLegend": "状态来自连接测试与真实调用记录，不做估算。",
+      "reasoningCapable": "支持推理",
+      "visionCapable": "支持视觉",
+      "reasoningTitle": "思考强度",
+      "recommended": "推荐",
+      "reasoning": {
+        "low": {
+          "label": "轻量",
+          "description": "简单问答，回复简短"
+        },
+        "medium": {
+          "label": "平衡",
+          "description": "日常经营分析"
+        },
+        "high": {
+          "label": "高强度",
+          "description": "战略分析与复杂多步任务"
+        }
+      },
+      "tier": {
+        "high": "高能力",
+        "medium": "均衡",
+        "low": "快 / 低成本"
+      },
+      "health": {
+        "online": "在线",
+        "slow": "较慢",
+        "degraded": "不稳定",
+        "error": "异常",
+        "offline": "未接入",
+        "unknown": "暂无数据"
+      },
+      "menu": "添加",
+      "menuUpload": "上传文件",
+      "menuReport": "生成报告",
+      "menuTask": "创建任务",
+      "menuConnect": "接入数据",
+      "menuReportPrompt": "生成本周经营报告，并输出成可下载的文件。",
+      "menuTaskPrompt": "把我现在待处理的经营问题整理成今天可以执行的任务清单。",
+      "menuConnectPrompt": "你能接入哪些数据源？每一个分别能改善什么？",
+      "attach": "添加附件",
+      "removeAttachment": "移除附件",
+      "uploading": "上传中…",
+      "dropHere": "松开鼠标即可添加附件",
+      "send": "发送",
+      "stop": "停止",
+      "strength": {
+        "reasoning": "推理",
+        "coding": "编码",
+        "vision": "视觉",
+        "fast": "快速",
+        "general": "通用"
+      },
+      "capability": {
+        "image": "图像",
+        "video": "视频",
+        "audio": "音频",
+        "embedding": "向量",
+        "other": "其他",
+        "chat": "对话"
+      },
+      "notForChat": "不可用于对话",
+      "notForChatHint": "这是图像/视频/音频/向量模型，不能用来对话；请在上方选择对话模型。"
+    },
+    "artifact": {
+      "download": "下载",
+      "preview": "预览",
+      "generated": "AI 生成",
+      "uploaded": "用户上传",
+      "closePreview": "关闭预览",
+      "loadingPreview": "正在加载预览…",
+      "emptyPreview": "（没有可提取的文本）",
+      "noPreview": "该类型暂不支持在线预览。",
+      "previewNote": "预览内容由服务端从文件本身提取。"
+    },
+    "status": {
+      "thinking": "思考中…",
+      "analyzing": "正在分析经营数据…",
+      "calling_tool": "正在调用 {tool}…",
+      "callingTool": "正在调用 {tool}…",
+      "tool_done": "工具执行完成",
+      "generating": "正在生成回答…",
+      "creating_file": "正在生成文件…",
+      "creatingFile": "正在生成 {name}…"
+    },
+    "alert": {
+      "title": "AI 服务暂时不可用",
+      "tried": "系统已尝试 {count} 个服务商。",
+      "retry": "重试"
+    },
+    "runtime": {
+      "roveagent": "RoveAgent 运行时",
+      "fallback": "降级模式 · 工具能力不可用",
+      "unavailable": "运行时不可用 · 工具任务已拒绝",
+      "reason": "原因",
+      "reconnect": "重新连接",
+      "reconnecting": "正在重新连接…",
+      "basicMode": "基础模式继续",
+      "basicModeOn": "基础模式已开启",
+      "basicModeHint": "基础模式只进行普通对话。代码、文件、终端、部署、媒体与插件类任务仍会被拒绝 —— 不会假装执行。",
+      "basicModeBlocked": "基础模式下无法执行工具任务（代码 / 文件 / 终端 / 部署 / 媒体 / 插件）。已拒绝，未做任何改动。"
+    },
+    "missions": {
+      "label": "今日任务",
+      "empty": "暂时没有可判断的信号，先发起一次分析。",
+      "run": "执行",
+      "activeTasks": "已排期任务",
+      "kpi": {
+        "revenueToday": "今日营收",
+        "revenue7d": "7 日均值/天",
+        "ordersToday": "今日订单",
+        "pendingApprovals": "待审批"
+      },
+      "items": {
+        "revenue_decline": {
+          "title": "分析营收下滑",
+          "detail": "今日营收低于 7 日均值"
+        },
+        "revenue_surge": {
+          "title": "守住增长势头",
+          "detail": "今日营收高于 7 日均值"
+        },
+        "revenue_ontrack": {
+          "title": "营收达标",
+          "detail": "今日营收与 7 日均值持平"
+        },
+        "revenue_baseline": {
+          "title": "建立营收基线",
+          "detail": "订单历史还不足以判断趋势"
+        },
+        "orders_today": {
+          "title": "复盘今日订单",
+          "detail": "检查退款、异常时段或异常商品"
+        },
+        "inventory_low": {
+          "title": "补货低库存商品",
+          "detail": "有商品低于安全库存，需要采购决策"
+        },
+        "inventory_ok": {
+          "title": "库存健康",
+          "detail": "没有低于安全库存的商品"
+        },
+        "reservations_today": {
+          "title": "准备今日预约",
+          "detail": "按预订桌数安排人力与备货"
+        },
+        "reservations_empty": {
+          "title": "今日暂无预约",
+          "detail": "可以考虑做一次当日促销"
+        },
+        "churn_risk": {
+          "title": "识别客户流失风险",
+          "detail": "高风险客户需要一次挽留触达"
+        },
+        "churn_ok": {
+          "title": "未发现流失风险",
+          "detail": "客户健康度稳定"
+        },
+        "reviews_negative": {
+          "title": "处理差评",
+          "detail": "近期低分评价需要回复与整改"
+        },
+        "reviews_pending": {
+          "title": "清理待回复评论",
+          "detail": "有评论还在等待回复"
+        },
+        "reviews_ok": {
+          "title": "口碑健康",
+          "detail": "没有待处理的差评"
+        },
+        "payments_failed": {
+          "title": "挽回支付失败订单",
+          "detail": "近 7 天有支付失败"
+        },
+        "payments_pending": {
+          "title": "跟进待支付",
+          "detail": "仍有支付未结清"
+        },
+        "payments_ok": {
+          "title": "支付健康",
+          "detail": "没有失败或挂起的支付"
+        },
+        "approvals_pending": {
+          "title": "处理待审批动作",
+          "detail": "Agent 动作在等待人工决策"
+        },
+        "approvals_ok": {
+          "title": "没有待审批",
+          "detail": "当前没有阻塞在你这里的动作"
+        },
+        "system_alerts": {
+          "title": "处理系统告警",
+          "detail": "有未读的 error 级告警"
+        },
+        "system_ok": {
+          "title": "系统健康",
+          "detail": "没有未读的错误告警"
+        }
+      }
+    },
+    "workspace": {
+      "title": "工作台",
+      "filesHint": "生成的报告与上传的资料都在「文件中心」",
+      "memoryHint": "企业记忆会在所有会话间复用",
+      "approvalHint": "高风险动作仍需人工审批"
+    },
+    "approval": {
+      "label": "需要你审批",
+      "approve": "批准执行",
+      "reject": "拒绝",
+      "modify": "修改方案",
+      "audit": "审计信息",
+      "needsRole": "需要 {role} 角色审批",
+      "risk": {
+        "low": "低风险",
+        "medium": "中风险",
+        "high": "高风险",
+        "critical": "严重风险"
+      },
+      "status": {
+        "pending": "等待你的决定",
+        "approved": "已批准 — 开始执行",
+        "executing": "正在执行…",
+        "executed": "已完成",
+        "completed": "已完成",
+        "rejected": "已拒绝",
+        "failed": "执行失败",
+        "expired": "已过期"
+      },
+      "auditFields": {
+        "action": "动作类型",
+        "id": "审批 ID",
+        "requiredRole": "所需角色",
+        "createdAt": "创建时间"
+      },
+      "modifyPrompt": "针对「{title}」，请修改方案："
+    },
+    "notice": {
+      "technical": "技术详情",
+      "hideTechnical": "收起详情"
+    },
+    "artifactCard": {
+      "savePdf": "另存为 PDF"
     }
   },
   "knowledge": {
@@ -879,11 +1138,19 @@
         "failed": "执行失败"
       },
       "type": {
-        "purchase.create_draft": "采购草稿",
-        "marketing.create_draft_campaign": "营销活动",
-        "reviews.reply": "评论回复",
-        "roveagent.tool_call": "RoveAgent 工具调用",
-        "roveagent.task_step": "RoveAgent 任务"
+        "purchase": {
+          "create_draft": "采购草稿"
+        },
+        "marketing": {
+          "create_draft_campaign": "营销活动"
+        },
+        "reviews": {
+          "reply": "评论回复"
+        },
+        "roveagent": {
+          "tool_call": "RoveAgent 工具调用",
+          "task_step": "RoveAgent 任务"
+        }
       },
       "request": "请求",
       "agent": "Agent",
@@ -996,5 +1263,108 @@
     "light": "浅色",
     "dark": "深色",
     "system": "跟随时间"
+  },
+  "files": {
+    "title": "文件中心",
+    "subtitle": "AI 员工生成的报告，以及你上传的资料，都集中在这里。",
+    "upload": "上传",
+    "loading": "正在加载文件…",
+    "search": "搜索文件…",
+    "summary": "共 {count} 个文件 · {size}",
+    "emptyTitle": "还没有文件",
+    "emptyHint": "让 AI 员工生成一份报告，或上传一份表格开始使用。",
+    "preview": "预览",
+    "download": "下载",
+    "delete": "删除",
+    "filter": {
+      "all": "全部",
+      "agent": "AI 生成",
+      "user": "用户上传"
+    },
+    "source": {
+      "agent": "AI 生成",
+      "user": "用户上传"
+    },
+    "category": {
+      "all": "全部",
+      "reports": "报告",
+      "spreadsheets": "表格",
+      "presentations": "演示",
+      "images": "图片",
+      "documents": "文档",
+      "data": "数据",
+      "other": "其他"
+    }
+  },
+  "workspace": {
+    "modes": {
+      "chat": "对话",
+      "tasks": "任务",
+      "files": "文件",
+      "insights": "洞察",
+      "openNav": "打开导航",
+      "openCommand": "打开指挥中心"
+    },
+    "searchConversations": "搜索会话…",
+    "noConversations": "还没有会话",
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "delete": "删除",
+    "closeDrawer": "关闭",
+    "hideConversations": "隐藏会话栏",
+    "showConversations": "显示会话栏",
+    "hideCommand": "隐藏指挥中心",
+    "showCommand": "显示指挥中心",
+    "command": {
+      "working": "正在工作…",
+      "idle": "待命",
+      "missions": "今日任务",
+      "retry": "重试",
+      "loadFailed": "任务加载失败。可重试，或数据暂时不可用。",
+      "empty": "暂时没有可判断的信号，先发起一次分析。",
+      "kpi": {
+        "revenueToday": "今日营收",
+        "ordersToday": "今日订单"
+      },
+      "approvals": "待审批",
+      "noApprovals": "没有待办",
+      "decideInChat": "在对话里处理",
+      "recommendations": "AI 建议",
+      "noRecommendations": "当前没有需要处理的事项。",
+      "scheduled": "已排期"
+    },
+    "tasks": {
+      "title": "Agent 执行记录",
+      "subtitle": "你的 AI 团队实际做了什么 —— 工具调用、生成文件、审批。",
+      "empty": "这个会话还没有执行记录。提一个问题，步骤就会出现在这里。",
+      "waitingApproval": "等待你审批",
+      "decideInChat": "去对话里处理",
+      "running": "执行中 — {done}/{total} 步",
+      "done": "共 {total} 步",
+      "scheduled": "已排期任务"
+    },
+    "files": {
+      "title": "本次产物",
+      "subtitle": "在这个工作区生成的报告、表格与图片。",
+      "openCenter": "打开文件中心",
+      "empty": "还没有产物。让 AI 生成一份报告就会出现。"
+    },
+    "insights": {
+      "title": "经营洞察",
+      "subtitle": "基于你的真实经营数据实时聚合。",
+      "openDashboard": "完整仪表盘",
+      "empty": "暂时没有可用的经营数据。",
+      "vs7d": "7 日均值 {value}",
+      "pendingReviews": "{count} 条待回复",
+      "derived": "推导结论",
+      "cards": {
+        "revenueToday": "今日营收",
+        "ordersToday": "今日订单",
+        "lowStock": "低库存",
+        "churnRisk": "流失风险",
+        "negativeReviews": "差评",
+        "pendingApprovals": "待审批"
+      }
+    }
   }
 }

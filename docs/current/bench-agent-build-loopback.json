@@ -1,0 +1,83 @@
+{
+  "env": {
+    "python": "3.13.2",
+    "offline": "1"
+  },
+  "import_runtime_ms": 1089.19,
+  "agent_build_ms": {
+    "iterations": 5,
+    "min": 6469.25,
+    "p50": 6527.58,
+    "mean": 6553.41,
+    "max": 6696.11,
+    "all": [
+      6558.06,
+      6516.03,
+      6527.58,
+      6469.25,
+      6696.11
+    ]
+  },
+  "warmup_first_ms": 17278.89,
+  "attribution": [
+    {
+      "label": "get_tool_definitions (schema 生成)",
+      "calls": 5,
+      "total_ms": 4.09,
+      "max_ms": 0.96,
+      "per_call_ms": 0.818,
+      "pct_of_wall": 0.0
+    },
+    {
+      "label": "ssl_guard.verify_ca_bundle (CA 校验)",
+      "calls": 5,
+      "total_ms": 3772.22,
+      "max_ms": 778.63,
+      "per_call_ms": 754.444,
+      "pct_of_wall": 11.5
+    },
+    {
+      "label": "ssl_guard._validate_bundle_path (单个 bundle 解析)",
+      "calls": 10,
+      "total_ms": 3772.06,
+      "max_ms": 418.91,
+      "per_call_ms": 377.206,
+      "pct_of_wall": 11.5
+    },
+    {
+      "label": "model_metadata._query_local_context_length (本地端点探测)",
+      "calls": 5,
+      "total_ms": 15970.51,
+      "max_ms": 3275.41,
+      "per_call_ms": 3194.102,
+      "pct_of_wall": 48.7
+    },
+    {
+      "label": "  .._query_local_context_length_uncached (真实探测)",
+      "calls": 5,
+      "total_ms": 15970.47,
+      "max_ms": 3275.39,
+      "per_call_ms": 3194.094,
+      "pct_of_wall": 48.7
+    },
+    {
+      "label": "  ..model_metadata.detect_local_server_type",
+      "calls": 10,
+      "total_ms": 0.08,
+      "max_ms": 0.01,
+      "per_call_ms": 0.008,
+      "pct_of_wall": 0.0
+    },
+    {
+      "label": "  ..model_metadata._query_ollama_api_show",
+      "calls": 5,
+      "total_ms": 11022.6,
+      "max_ms": 2232.61,
+      "per_call_ms": 2204.52,
+      "pct_of_wall": 33.6
+    }
+  ],
+  "total_wall_ms": 32767.03,
+  "cprofile_top": [],
+  "cprofile_raw": "         1 function calls in 0.000 seconds\n\n   Ordered by: cumulative time\n\n   ncalls  tottime  percall  cumtime  percall filename:lineno(function)\n        1    0.000    0.000    0.000    0.000 {method 'disable' of '_lsprof.Profiler' objects}\n\n\n"
+}

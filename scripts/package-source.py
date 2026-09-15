@@ -45,17 +45,22 @@ BLOCKED_PARTS = {
     ".roveagent",
     ".worktrees",
     "__pycache__",
-    "artifacts",
     "coverage",
     "dist",
     "node_modules",
     "tmp",
 }
+# 只在仓库根目录被排除的条目。必须与 BLOCKED_PARTS 分开：
+# `artifacts/` 是根目录的构建产物，但 `src/lib/artifacts/`、`src/app/api/artifacts/`
+# 是真实源码 —— 曾经因为按任意层级匹配，整块源码被静默排除，打出的包编译不过。
+BLOCKED_ROOT_PARTS = {"artifacts"}
 BLOCKED_SUFFIXES = (".log", ".pyc", ".pyo", ".tar", ".tar.gz", ".tgz", ".zip")
 
 
 def is_allowed(path: Path) -> bool:
     relative_path = path.relative_to(ROOT)
+    if relative_path.parts and relative_path.parts[0] in BLOCKED_ROOT_PARTS:
+        return False
     if any(part in BLOCKED_PARTS for part in relative_path.parts):
         return False
     if path.name.startswith(".env") and path.name != ".env.example":

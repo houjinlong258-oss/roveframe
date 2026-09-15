@@ -1,0 +1,35 @@
+{
+  "env": {
+    "python": "3.13.2",
+    "offline": "1"
+  },
+  "import_runtime_ms": 1121.98,
+  "agent_build_ms": {
+    "iterations": 5,
+    "min": 6444.47,
+    "p50": 6530.34,
+    "mean": 6508.28,
+    "max": 6541.72,
+    "all": [
+      6530.34,
+      6533.99,
+      6490.89,
+      6444.47,
+      6541.72
+    ]
+  },
+  "warmup_first_ms": 17348.71,
+  "attribution": [
+    {
+      "label": "get_tool_definitions (schema 生成)",
+      "calls": 5,
+      "total_ms": 3.8,
+      "max_ms": 0.84,
+      "per_call_ms": 0.76,
+      "pct_of_wall": 0.0
+    }
+  ],
+  "total_wall_ms": 32541.4,
+  "cprofile_top": [],
+  "cprofile_raw": "         414571 function calls (339333 primitive calls) in 13.209 seconds\n\n   Ordered by: cumulative time\n   List reduced from 887 to 30 due to restriction <30>\n\n   ncalls  tottime  percall  cumtime  percall filename:lineno(function)\n        6    0.000    0.000   10.755    1.793 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\logging\\handlers.py:1546(handle)\n    12/10    0.000    0.000   10.753    1.075 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\logging\\__init__.py:1010(handle)\n        2    0.000    0.000   10.753    5.376 D:\\RoveFrame AI Business OS\\RoveFrame AI Business OS\\roveframe-src-latest\\roveagent\\core\\subdirectory_hints.py:85(__init__)\n        2    0.000    0.000   10.753    5.376 D:\\RoveFrame AI Business OS\\RoveFrame AI Business OS\\roveframe-src-latest\\roveagent\\core\\subdirectory_hints.py:95(_seed_working_dir_digest)\n       18    6.920    0.384    6.920    0.384 {method 'load_verify_locations' of '_ssl._SSLContext' objects}\n        2    0.004    0.002    6.354    3.177 D:\\RoveFrame AI Business OS\\RoveFrame AI Business OS\\roveframe-src-latest\\roveagent\\core\\model_metadata.py:2272(_query_local_context_length)\n        2    0.000    0.000    6.350    3.175 D:\\RoveFrame AI Business OS\\RoveFrame AI Business OS\\roveframe-src-latest\\roveagent\\core\\model_metadata.py:2306(_query_local_context_length_uncached)\n        6    0.000    0.000    6.043    1.007 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpx\\_client.py:783(request)\n        6    0.000    0.000    6.041    1.007 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpx\\_client.py:891(send)\n        6    0.000    0.000    6.039    1.006 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpx\\_client.py:942(_send_handling_auth)\n        6    0.000    0.000    6.039    1.006 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpx\\_client.py:976(_send_handling_redirects)\n        6    0.000    0.000    6.038    1.006 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpx\\_client.py:1013(_send_single_request)\n        6    0.000    0.000    6.037    1.006 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpx\\_transports\\default.py:217(handle_request)\n        6    0.000    0.000    6.037    1.006 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpcore\\_sync\\connection_pool.py:199(handle_request)\n        6    0.000    0.000    6.036    1.006 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpcore\\_sync\\http_proxy.py:191(handle_request)\n        6    0.000    0.000    6.036    1.006 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpcore\\_sync\\connection.py:69(handle_request)\n        6    0.000    0.000    6.031    1.005 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpcore\\_sync\\http11.py:65(handle_request)\n       12    0.000    0.000    6.029    0.502 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpcore\\_sync\\http11.py:209(_receive_event)\n        6    0.000    0.000    6.029    1.005 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpcore\\_sync\\http11.py:170(_receive_response_headers)\n       47    0.000    0.000    6.026    0.128 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpcore\\_backends\\sync.py:124(read)\n       47    6.025    0.128    6.025    0.128 {method 'recv' of '_socket.socket' objects}\n        6    0.000    0.000    4.694    0.782 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpx\\_client.py:628(__init__)\n       22    0.000    0.000    4.689    0.213 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpx\\_transports\\default.py:125(__init__)\n       22    0.000    0.000    4.688    0.213 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpx\\_config.py:49(create_ssl_context)\n       22    0.000    0.000    4.688    0.213 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpx\\_config.py:67(__init__)\n       22    0.000    0.000    4.688    0.213 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpx\\_config.py:81(load_ssl_context)\n       22    0.000    0.000    4.687    0.213 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpx\\_config.py:104(load_ssl_context_verify)\n        2    0.004    0.002    4.390    2.195 D:\\RoveFrame AI Business OS\\RoveFrame AI Business OS\\roveframe-src-latest\\roveagent\\core\\model_metadata.py:2090(_query_ollama_api_show)\n        2    0.000    0.000    4.386    2.193 D:\\RoveFrame AI Business OS\\RoveFrame AI Business OS\\roveframe-src-latest\\roveagent\\core\\model_metadata.py:2132(_query_ollama_api_show_uncached)\n        4    0.000    0.000    4.029    1.007 C:\\Users\\24749\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\httpx\\_client.py:1049(get)\n\n\n"
+}

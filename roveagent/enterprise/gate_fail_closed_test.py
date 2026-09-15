@@ -41,10 +41,19 @@ class GateFailClosedTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("not registered", decision.reason)
 
-    def test_registered_fallback_tool_stays_allowed(self) -> None:
+    def test_registered_tool_without_explicit_policy_is_denied(self) -> None:
+        """Phase 9：default deny。
+
+        旧契约（本用例原名 test_registered_fallback_tool_stays_allowed）：
+        已注册工具即使没有显式策略行，命中兜底也放行。
+        实测后果：101 个已注册工具中 82 个落在这条路径上，等于「已注册 = 免权限、
+        免审批直执」，其中含 execute_code / computer_use / browser_exec /
+        browser_cdp / setup_mcp。新契约：未显式登记的工具一律拒绝。
+        """
         _register_tool("some_runtime_tool_xyz")
         decision = self.gate.authorize(self.ctx, "some_runtime_tool_xyz", {})
-        self.assertTrue(decision.allowed, decision.reason)
+        self.assertFalse(decision.allowed, "无显式策略行的已注册工具必须被拒绝")
+        self.assertIn("no explicit policy row", decision.reason)
         registry.deregister("some_runtime_tool_xyz")
 
     def test_explicit_policy_tools_need_no_registry_lookup(self) -> None:
@@ -53,9 +62,14 @@ class GateFailClosedTest(unittest.TestCase):
         self.assertTrue(decision.allowed, decision.reason)
 
     def test_write_file_requires_manager_approval(self) -> None:
+        """Phase 9：write_file 已升为 HIGH 风险 → 任何角色都不得自动跳过审批。
+
+        旧契约：经理直执需审批，业主凭层级语义免审批。
+        新契约：HIGH/CRITICAL 一律产生审批单，owner 也不能自行放行。
+        """
         policy = self.gate.policy_for("write_file")
         self.assertEqual(policy.approval, "manager")
-        # 经理本人直执 → 需要更高层审批；业主直执 → 免审批（层级语义）
+        self.assertEqual(policy.risk.name, "HIGH")
         manager_ctx = ToolContext(
             tenant_id="t-1", business_id="b-1", user_id="u-1", role="manager",
             permissions=frozenset({"files:write"}), request_id="r1", task_id="t1",
@@ -64,7 +78,11 @@ class GateFailClosedTest(unittest.TestCase):
         self.assertTrue(decision.requires_approval)
         self.assertFalse(decision.allowed)
         owner_decision = self.gate.authorize(self.ctx, "write_file", {})
-        self.assertTrue(owner_decision.allowed, owner_decision.reason)
+        self.assertTrue(
+            owner_decision.requires_approval,
+            "HIGH 风险动作必须对 owner 也生成审批单",
+        )
+        self.assertFalse(owner_decision.allowed)
 
     def test_security_middleware_crash_terminates_chain(self) -> None:
         def security_mw(**kwargs):

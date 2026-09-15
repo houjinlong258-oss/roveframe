@@ -1,30 +1,24 @@
 [project]
 sub_id = "e679bddf"
 name = "roveframe-ai-business-os"
-requires = [ "nodejs-24" ]
+requires = ["nodejs-24"]
 project_type = "web"
-template = "nextjs"
 version = "0.0.35"
-appliedPatches = [ ]
-entrypoint = "dist/server.js"
 
 [preview]
 preview_enable = "enabled"
 
-[subprojects]
-path = ["."]
-
 [dev]
-build = [ "bash", "./scripts/prepare.sh" ]
-run = [ "bash", "./scripts/dev.sh" ]
-validate = [ "bash", "./scripts/validate.sh" ]
-deps = [ "git" ]
+build = ["bash", "scripts/prepare.sh"]
+run = ["bash", "scripts/dev.sh"]
 
 [deploy]
-build = [ "bash", "./scripts/build.sh" ]
-run = [ "bash", "./scripts/start.sh" ]
-deps = [ "git" ]
+build = ["bash", "scripts/build.sh"]
+run = ["bash", "scripts/start.sh"]
 
 [deploy.profile]
 kind = "service"
 flavor = "web"
+
+[subprojects]
+path = ["."]

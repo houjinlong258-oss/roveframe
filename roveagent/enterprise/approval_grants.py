@@ -186,3 +186,54 @@ def find_grant(
                 and now - float(grant.get("created_at", 0)) <= GRANT_TTL_S):
             return grant
     return None
+
+
+def inspect_grant(
+    invocation_id: str, execution_id: str, *, root: Optional[Path] = None,
+) -> Optional[dict[str, Any]]:
+    """Read-only snapshot of one grant, for DIAGNOSIS ONLY.
+
+    ``find_grant`` answers "is there a usable grant?" and collapses every
+    unusable case — absent, rejected, expired, already consumed — into a single
+    ``None``. Callers that must explain a refusal to a human need to tell those
+    apart, because the right remedy differs completely: a rejection needs a new
+    decision, an expiry needs a re-freeze, a consumed grant is a replay attempt.
+
+    This function holds the lock, reads, and returns a copy. It never mutates,
+    never claims, and must never be used to decide whether execution may
+    proceed — ``consume_grant`` remains the sole authority for that. Kept
+    deliberately separate so no caller can mistake diagnosis for enforcement.
+    """
+    with _lock:
+        grants = _load(_path(root))
+    for index in range(len(grants) - 1, -1, -1):
+        grant = grants[index]
+        if (grant.get("invocation_id") == invocation_id
+                and grant.get("execution_id") == execution_id):
+            return dict(grant)
+    return None
+
+
+def classify_grant(
+    invocation_id: str, execution_id: str, *, root: Optional[Path] = None,
+) -> str:
+    """Diagnostic label for one grant: ``ready``/``rejected``/``consumed``/
+    ``claimed``/``expired``/``missing``.
+
+    Reporting only. ``consume_grant`` decides; this explains. Unknown extra
+    states fall through to ``consumed`` rather than ``ready`` so a caller can
+    never be told a doubtful grant is fine.
+    """
+    grant = inspect_grant(invocation_id, execution_id, root=root)
+    if grant is None:
+        return "missing"
+    if not grant.get("approved"):
+        return "rejected"
+    if grant.get("consumed_at") is not None:
+        return "consumed"
+    if grant.get("callback_claimed_at") is not None:
+        return "claimed"
+    age = time.time() - float(grant.get("created_at", 0) or 0)
+    if age > GRANT_TTL_S:
+        return "expired"
+    return "ready"

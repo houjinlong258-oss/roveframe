@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "description": "Phase 9 / Task 2 —— Approval Decision 跨语言共享契约。同一组样例必须同时被 Python gate 与 TS approvals 判定通过，任何一侧语义漂移都会让两侧测试同时变红。",
+  "rule": [
+    "required_role == null                → approval_required = false",
+    "risk ∈ {high, critical}              → approval_required = true（任何角色都不得自动跳过，含 owner/admin）",
+    "required_role == 'admin'             → approval_required = true（平台控制面动作，商户域无人可批）",
+    "其余（medium / low）                  → approval_required = rank(role) < rank(required_role) + 1"
+  ],
+  "rank": { "staff": 1, "manager": 2, "owner": 3, "admin": 4 },
+  "decide_cases": [
+    {
+      "name": "no policy → no approval",
+      "role": "staff",
+      "required_role": null,
+      "risk": "low",
+      "approval_required": false
+    },
+    {
+      "name": "low + manager, manager itself must ask",
+      "role": "manager",
+      "required_role": "manager",
+      "risk": "low",
+      "approval_required": true
+    },
+    {
+      "name": "low + manager, owner skips (senior-role exemption preserved)",
+      "role": "owner",
+      "required_role": "manager",
+      "risk": "low",
+      "approval_required": false
+    },
+    {
+      "name": "medium + manager, manager must ask",
+      "role": "manager",
+      "required_role": "manager",
+      "risk": "medium",
+      "approval_required": true
+    },
+    {
+      "name": "medium + manager, owner skips (exemption NOT widened to high)",
+      "role": "owner",
+      "required_role": "manager",
+      "risk": "medium",
+      "approval_required": false
+    },
+    {
+      "name": "medium + manager, admin skips",
+      "role": "admin",
+      "required_role": "manager",
+      "risk": "medium",
+      "approval_required": false
+    },
+    {
+      "name": "HIGH + manager, owner CANNOT skip (Task 1/2 core tightening)",
+      "role": "owner",
+      "required_role": "manager",
+      "risk": "high",
+      "approval_required": true
+    },
+    {
+      "name": "HIGH + manager, admin CANNOT skip",
+      "role": "admin",
+      "required_role": "manager",
+      "risk": "high",
+      "approval_required": true
+    },
+    {
+      "name": "HIGH + manager, manager cannot skip",
+      "role": "manager",
+      "required_role": "manager",
+      "risk": "high",
+      "approval_required": true
+    },
+    {
+      "name": "CRITICAL + manager, owner CANNOT skip",
+      "role": "owner",
+      "required_role": "manager",
+      "risk": "critical",
+      "approval_required": true
+    },
+    {
+      "name": "HIGH + owner policy, owner itself must ask",
+      "role": "owner",
+      "required_role": "owner",
+      "risk": "high",
+      "approval_required": true
+    },
+    {
+      "name": "medium + owner policy, owner itself must ask",
+      "role": "owner",
+      "required_role": "owner",
+      "risk": "medium",
+      "approval_required": true
+    },
+    {
+      "name": "medium + owner policy, admin skips",
+      "role": "admin",
+      "required_role": "owner",
+      "risk": "medium",
+      "approval_required": false
+    },
+    {
+      "name": "HIGH + admin policy, owner must ask",
+      "role": "owner",
+      "required_role": "admin",
+      "risk": "high",
+      "approval_required": true
+    },
+    {
+      "name": "LOW + admin policy, even admin must ask (merchant domain cannot self-approve platform actions)",
+      "role": "admin",
+      "required_role": "admin",
+      "risk": "low",
+      "approval_required": true
+    }
+  ],
+  "can_approve_cases": [
+    { "name": "owner approves owner-level", "role": "owner", "required_role": "owner", "can_approve": true },
+    { "name": "manager cannot approve owner-level", "role": "manager", "required_role": "owner", "can_approve": false },
+    { "name": "owner approves manager-level", "role": "owner", "required_role": "manager", "can_approve": true },
+    { "name": "staff cannot approve manager-level", "role": "staff", "required_role": "manager", "can_approve": false },
+    { "name": "admin-level is outside the merchant domain", "role": "owner", "required_role": "admin", "can_approve": false },
+    { "name": "platform admin is also refused by the merchant helper", "role": "admin", "required_role": "admin", "can_approve": false }
+  ]
+}

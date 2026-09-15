@@ -20,16 +20,74 @@ describe('production safety boundaries', () => {
 
   test('production encryption refuses a missing secret', () => {
     const previousSecret = process.env.ENCRYPTION_SECRET;
+    const previousServiceKey = process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
     const previousEnv = process.env.COZE_PROJECT_ENV;
     delete process.env.ENCRYPTION_SECRET;
+    // 必须同时清掉 service_role_key：getKey() 在 ENCRYPTION_SECRET 缺失时会回落到它。
+    // 原用例只删 ENCRYPTION_SECRET，在 service_role_key 存在时不会抛错 —— 它此前
+    // 之所以是绿的，只是因为那个进程恰好没有加载 scripts/deploy.env。属于偶然通过。
+    delete process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
     process.env.COZE_PROJECT_ENV = 'PROD';
     try {
       assert.throws(() => encrypt('must not use a default key'), /ENCRYPTION_SECRET is required/);
     } finally {
       if (previousSecret === undefined) delete process.env.ENCRYPTION_SECRET;
       else process.env.ENCRYPTION_SECRET = previousSecret;
+      if (previousServiceKey === undefined) delete process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
+      else process.env.COZE_SUPABASE_SERVICE_ROLE_KEY = previousServiceKey;
       if (previousEnv === undefined) delete process.env.COZE_PROJECT_ENV;
       else process.env.COZE_PROJECT_ENV = previousEnv;
+    }
+  });
+
+  // 锁定「不得静默回落」这一契约，并记录已知有害但暂时保留的兼容行为
+  // （技术债登记 P1-15：数据库超级凭据被复用为加密密钥，轮换即导致
+  // 全部已落库凭据永久不可解密）。彻底修复需部署侧先提供 ENCRYPTION_SECRET。
+  test('missing ENCRYPTION_SECRET falls back to the service key and warns', () => {
+    const previousSecret = process.env.ENCRYPTION_SECRET;
+    const previousServiceKey = process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
+    delete process.env.ENCRYPTION_SECRET;
+    process.env.COZE_SUPABASE_SERVICE_ROLE_KEY = 'service-role-key-as-encryption-key';
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      const payload = encrypt('tenant credential');
+
+      // 1) 功能仍然可用（非破坏性改动）
+      assert.equal(decrypt(payload), 'tenant credential');
+
+      // 2) 密钥确实派生自 service_role_key，而不是开发默认值
+      const expectedKey = crypto
+        .createHash('sha256')
+        .update('service-role-key-as-encryption-key')
+        .digest();
+      const [ivB64, tagB64, dataB64] = payload.split('.');
+      const decipher = crypto.createDecipheriv(
+        'aes-256-gcm',
+        expectedKey,
+        Buffer.from(ivB64, 'base64'),
+      );
+      decipher.setAuthTag(Buffer.from(tagB64, 'base64'));
+      const plain = Buffer.concat([
+        decipher.update(Buffer.from(dataB64, 'base64')),
+        decipher.final(),
+      ]).toString('utf8');
+      assert.equal(plain, 'tenant credential');
+
+      // 3) 必须打印告警 —— 静默回落是不可接受的
+      assert.ok(
+        warnings.some((line) => line.includes('COZE_SUPABASE_SERVICE_ROLE_KEY')),
+        '回落到数据库超级凭据时必须打印告警',
+      );
+    } finally {
+      console.warn = originalWarn;
+      if (previousSecret === undefined) delete process.env.ENCRYPTION_SECRET;
+      else process.env.ENCRYPTION_SECRET = previousSecret;
+      if (previousServiceKey === undefined) delete process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
+      else process.env.COZE_SUPABASE_SERVICE_ROLE_KEY = previousServiceKey;
     }
   });
 

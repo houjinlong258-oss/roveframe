@@ -1,7 +1,16 @@
 .git
 .github
+# Phase 11 / Task 2: `scripts/deploy.env` carries a real Supabase service_role
+# key + JWT secret. `.env.*` does NOT match `deploy.env`, so without this line
+# those credentials are COPYed into an image layer. Worse, because
+# src/storage/database/supabase-client.ts loads it with dotenv `override: true`,
+# a baked copy would silently win over the container's injected environment —
+# so key rotation would require an image rebuild, not a restart.
 .env
 .env.*
+scripts/deploy.env
+scripts/*.env
+*.env
 !.env.example
 .next
 .cache

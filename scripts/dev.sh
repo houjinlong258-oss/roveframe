@@ -26,6 +26,10 @@ done
 
 cd "${COZE_WORKSPACE_PATH}"
 
+# 项目 .env 优先于平台注入的同名变量（用户自有 Supabase 接入）
+if [ -f .env ]; then set -a; source .env; set +a; fi
+export COZE_PROJECT_ENV=DEV
+
 kill_port_if_listening() {
     local pids
     pids=$(ss -H -lntp 2>/dev/null | awk -v port="${DEPLOY_RUN_PORT}" '$4 ~ ":"port"$"' | grep -o 'pid=[0-9]*' | cut -d= -f2 | paste -sd' ' - || true)

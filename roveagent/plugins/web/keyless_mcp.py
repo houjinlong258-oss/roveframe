@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import time
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -61,6 +63,87 @@ def _is_rate_limitish(message: str) -> bool:
     """Heuristic: does an error message look like free-tier throttling?"""
     lowered = (message or "").lower()
     return any(marker in lowered for marker in _RATE_LIMIT_MARKERS)
+
+
+# Vendor-level unavailability: "THIS VENDOR cannot serve", independent of the
+# query. Distinct from throttling (which recovers in seconds) only in how long
+# the vendor is parked; both must make the ring walk on.
+#
+# Observed origin of the auth members: Firecrawl withdrew its anonymous public
+# tier, so api.firecrawl.dev/v2/search now answers "403 Forbidden" to every
+# keyless request (verified 2026-09-12). Before this classifier existed the
+# 403 was mistaken for a query-shaped error, the walk stopped, and web_search
+# failed outright whenever the round-robin cursor happened to land there.
+_VENDOR_UNAVAILABLE_MARKERS = (
+    # auth / entitlement — the vendor's free tier is gone or never existed
+    "401", "unauthorized",
+    "403", "forbidden",
+    "invalid api key", "missing api key", "api key is required", "no api key",
+    "api key not set", "not authorized",
+    # billing — paid tier exhausted
+    "402", "payment required", "insufficient credit", "quota exceeded",
+    "out of credits", "billing",
+    # outage / transport — the vendor is unreachable right now
+    "500", "502", "503", "504",
+    "internal server error", "bad gateway", "service unavailable",
+    "gateway timeout", "connection refused", "connection reset",
+    "connection aborted", "temporarily unavailable", "name resolution",
+)
+
+# Query-shaped failures: every vendor would reject an identical request, so
+# walking the ring only multiplies latency before surfacing the same error.
+_QUERY_SHAPED_MARKERS = (
+    "400", "bad request", "invalid query", "query is required",
+    "missing parameter", "validation error", "unsupported parameter",
+)
+
+
+def _is_query_shaped(message: str) -> bool:
+    """Heuristic: would every vendor reject this request identically?
+
+    Query-shaped failures are properties of the REQUEST, not of the vendor —
+    a malformed query, a missing required parameter, a validation error. The
+    ring must not walk on these.
+    """
+    lowered = (message or "").lower()
+    return any(marker in lowered for marker in _QUERY_SHAPED_MARKERS)
+
+
+def _is_vendor_unavailable(message: str) -> bool:
+    """Heuristic: does an error mean this VENDOR cannot serve, any query?
+
+    True for auth/entitlement/outage failures — statements about the vendor
+    that the next ring vendor may not share, so the ring must walk on.
+    Explicitly False for query-shaped failures, so a message carrying both
+    markers is read as query-shaped.
+    """
+    if _is_query_shaped(message):
+        return False
+    lowered = (message or "").lower()
+    return any(marker in lowered for marker in _VENDOR_UNAVAILABLE_MARKERS)
+
+
+def _should_failover(message: str) -> bool:
+    """Should the keyless ring advance past the vendor that produced *message*?
+
+    Precedence is deliberate and load-bearing: a QUERY-SHAPED failure is
+    checked FIRST and stops the walk even when the same message also carries a
+    throttling marker ("400 Bad Request: rate limit exceeded"). The question
+    this answers is "would the next vendor do better?", and for a malformed
+    request the answer is no — walking would only multiply latency and then
+    report some *other* vendor's error, burying the real "your query is bad"
+    signal.
+
+    Throttling and vendor-level failures then return True, and anything
+    unrecognised returns False so the walk stops and the real error surfaces.
+    The pre-existing fail-closed contract is preserved; only the two confirmed
+    vendor-level classes join the failover set.
+    """
+    if _is_query_shaped(message):
+        return False
+    if _is_rate_limitish(message):
+        return True
+    return _is_vendor_unavailable(message)
 
 
 def keyless_enabled() -> bool:
@@ -644,6 +727,81 @@ _KEYLESS_EXTRACTORS = {
 _ring_lock = __import__("threading").Lock()
 _ring_cursor = int(_SESSION_ID, 16) % len(_KEYLESS_RING)
 
+# --- Vendor health memory -------------------------------------------------
+# A vendor that answers "your free tier no longer exists" will answer the same
+# way to the next request, so retrying it on every rotation is pure latency
+# (and, before _should_failover existed, a hard failure). Failures are parked
+# per vendor with a class-dependent cooldown:
+#
+#   auth/entitlement/outage -> long park; the condition does not self-heal on
+#                              a request timescale (Firecrawl's 403 has held
+#                              for the whole session).
+#   throttling               -> short park; free tiers recover in seconds.
+#
+# Process-local and advisory only: a cooled-down vendor is skipped, never
+# disabled, and the ring falls back to the full order rather than refusing to
+# serve when every vendor is parked. Set ROVEAGENT_KEYLESS_VENDOR_COOLDOWN=0
+# to disable the memory entirely (useful when probing vendor health).
+_VENDOR_COOLDOWN_SECONDS = 1800.0
+_RATE_LIMIT_COOLDOWN_SECONDS = 45.0
+_vendor_until: Dict[str, float] = {}
+
+
+def _cooldown_disabled() -> bool:
+    try:
+        return os.getenv("ROVEAGENT_KEYLESS_VENDOR_COOLDOWN", "").strip() == "0"
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _mark_vendor_failure(name: str, message: str) -> None:
+    """Park *name* for a class-appropriate cooldown after a vendor failure."""
+    if _cooldown_disabled():
+        return
+    if _is_rate_limitish(message):
+        seconds = _RATE_LIMIT_COOLDOWN_SECONDS
+    elif _is_vendor_unavailable(message):
+        seconds = _VENDOR_COOLDOWN_SECONDS
+    else:
+        return
+    with _ring_lock:
+        _vendor_until[name] = time.monotonic() + seconds
+    logger.info(
+        "keyless vendor %s parked for %.0fs after failure: %s",
+        name, seconds, (message or "")[:160],
+    )
+
+
+def _mark_vendor_healthy(name: str) -> None:
+    """Clear any cooldown for *name* after it serves successfully."""
+    with _ring_lock:
+        _vendor_until.pop(name, None)
+
+
+def _vendor_cooling_down(name: str) -> bool:
+    """True while *name* is parked after a recent vendor-level failure."""
+    if _cooldown_disabled():
+        return False
+    with _ring_lock:
+        until = _vendor_until.get(name)
+        if until is None:
+            return False
+        if time.monotonic() >= until:
+            _vendor_until.pop(name, None)
+            return False
+    return True
+
+
+def _vendor_health_snapshot() -> Dict[str, float]:
+    """Remaining cooldown seconds per parked vendor (0 when healthy)."""
+    now = time.monotonic()
+    with _ring_lock:
+        return {
+            name: max(0.0, until - now)
+            for name, until in _vendor_until.items()
+            if until > now
+        }
+
 
 def _vendor_pinned(name: str) -> bool:
     """True when config explicitly routes web traffic to *name*.
@@ -656,8 +814,12 @@ def _vendor_pinned(name: str) -> bool:
     if provider_tier(name) == "free":
         return True
     try:
-        import roveagent.tools.web_tools
-        from roveagent import tools as tools
+        # Bind the module locally. This body previously read a bare ``_wt``
+        # that was never bound here, so every call raised NameError, the
+        # ``except`` below swallowed it into ``return False``, and an explicit
+        # ``web.backend: <vendor>`` pin was silently ignored — the ring
+        # round-robined instead of honouring the user's choice.
+        from roveagent.tools import web_tools as _wt
 
         web_cfg = _wt._load_web_config()
         return any(
@@ -677,6 +839,11 @@ def _ring_order(name: str) -> List[str]:
     cursor position, advancing the cursor per request. Vendors whose tier
     is pinned ``paid`` are excluded entirely (an explicit paid selection
     opts that vendor's free endpoint out).
+
+    Vendors parked after a recent vendor-level failure are demoted to the
+    BACK of the walk rather than dropped: the walk still ends with them, so
+    a vendor that quietly recovered is retried once the healthy ones have
+    been tried, and the ring can never be emptied by cooldown bookkeeping.
     """
     global _ring_cursor
     if _vendor_pinned(name):
@@ -689,17 +856,27 @@ def _ring_order(name: str) -> List[str]:
         _KEYLESS_RING[(start + i) % len(_KEYLESS_RING)]
         for i in range(len(_KEYLESS_RING))
     ]
-    return [v for v in ordered if provider_tier(v) != "paid"]
+    eligible = [v for v in ordered if provider_tier(v) != "paid"]
+    healthy = [v for v in eligible if not _vendor_cooling_down(v)]
+    parked = [v for v in eligible if _vendor_cooling_down(v)]
+    if not healthy:
+        # Everything is parked — try the full order rather than refuse. A
+        # vendor-level condition may have lifted, and a hard "no providers"
+        # error would be strictly worse than one wasted attempt.
+        return eligible
+    return healthy + parked
 
 
 def search_with_failover(name: str, query: str, limit: int = 5) -> Dict[str, Any]:
     """Keyless search across the vendor ring with next-in-line failover.
 
     Starts at *name* when the user pinned it, otherwise at the round-robin
-    cursor. Rate-limit-shaped errors advance to the next ring vendor;
-    non-throttle errors stop the walk (a malformed query fails everywhere).
-    The result notes the serving vendor via ``data.served_by`` whenever it
-    differs from *name*.
+    cursor. VENDOR-LEVEL failures advance to the next ring vendor — that
+    includes throttling AND the auth/entitlement/outage class, because both
+    are statements about the vendor rather than about the query (see
+    :func:`_should_failover`). Query-shaped errors stop the walk, since every
+    vendor would reject the same request. The result notes the serving vendor
+    via ``data.served_by`` whenever it differs from *name*.
     """
     order = _ring_order(name)
     if not order:
@@ -711,19 +888,23 @@ def search_with_failover(name: str, query: str, limit: int = 5) -> Dict[str, Any
     for i, vendor in enumerate(order):
         result = _KEYLESS_SEARCHERS[vendor](query, limit)
         if result.get("success"):
+            _mark_vendor_healthy(vendor)
             if vendor != name:
                 result.setdefault("data", {})["served_by"] = vendor
             return result
         last = result
-        if not _is_rate_limitish(result.get("error", "")):
+        message = result.get("error", "")
+        _mark_vendor_failure(vendor, message)
+        if not _should_failover(message):
             return result
         nxt = order[i + 1] if i + 1 < len(order) else None
         if nxt:
             logger.info(
-                "keyless %s search throttled; failing over to %s", vendor, nxt
+                "keyless %s search unavailable (%s); failing over to %s",
+                vendor, message[:80] or "no message", nxt,
             )
     last["error"] = (
-        f"{last.get('error', '')} (all keyless vendors throttled: "
+        f"{last.get('error', '')} (all keyless vendors unavailable: "
         f"{', '.join(order)})"
     )
     return last
@@ -732,9 +913,11 @@ def search_with_failover(name: str, query: str, limit: int = 5) -> Dict[str, Any
 def extract_with_failover(name: str, urls: List[str]) -> List[Dict[str, Any]]:
     """Keyless extract across the vendor ring, failing over per-batch.
 
-    Advances to the next ring vendor only when EVERY url in a batch comes
-    back with a rate-limit-shaped error — partial failures are page
-    problems, not throttling, and return as-is.
+    Advances to the next ring vendor when EVERY url in a batch comes back
+    with a vendor-level error (throttling, withdrawn free tier, outage) —
+    partial failures are page problems, not vendor problems, and return
+    as-is. Mirrors :func:`search_with_failover` so the two capabilities
+    cannot drift apart on which failures are worth walking past.
     """
     order = _ring_order(name)
     if not order:
@@ -747,15 +930,19 @@ def extract_with_failover(name: str, urls: List[str]) -> List[Dict[str, Any]]:
     for i, vendor in enumerate(order):
         results = _KEYLESS_EXTRACTORS[vendor](list(urls))
         errors = [r.get("error", "") for r in results]
-        all_throttled = bool(results) and all(
-            e and _is_rate_limitish(e) for e in errors
+        all_vendor_level = bool(results) and all(
+            e and _should_failover(e) for e in errors
         )
-        if not all_throttled:
+        if not all_vendor_level:
+            if results and not any(errors):
+                _mark_vendor_healthy(vendor)
             return results
+        _mark_vendor_failure(vendor, errors[0])
         last = results
         nxt = order[i + 1] if i + 1 < len(order) else None
         if nxt:
             logger.info(
-                "keyless %s extract throttled; failing over to %s", vendor, nxt
+                "keyless %s extract unavailable (%s); failing over to %s",
+                vendor, (errors[0] or "")[:80], nxt,
             )
     return last

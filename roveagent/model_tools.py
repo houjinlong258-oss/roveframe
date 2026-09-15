@@ -1469,43 +1469,70 @@ def handle_function_call(
         # ACP/Zed edit approval runs before any file mutation.  The requester
         # is bound via ContextVar only for ACP sessions, so CLI/gateway paths
         # are unaffected when it is unset.
+        #
+        # 修复（Phase 2b）：``acp_adapter`` 是**外部可选模块**
+        # （ACP/Zed 集成，本仓并不包含）。原先的写法把它的
+        # ``ModuleNotFoundError`` 也当成「守卫失败」，于是在**没有装 ACP 适配器
+        # 的部署里，每一次 write_file / patch 都被 fail-closed 拒绝**：
+        #
+        #     "Edit approval denied: approval guard failed"
+        #
+        # 实测后果：agent 循环里写文件全部失败（文件不落盘），
+        # 而直接调用 registry handler 却成功 —— 极难定位。这使
+        # Developer Agent 的写路径**完全不可用**。
+        #
+        # 修正后的边界：
+        #   - 模块**不存在** → 守卫不适用，跳过（非 ACP 会话本就不该被它管）
+        #   - 模块存在但调用/超时失败 → 仍然 fail-closed（真正的安全语义不变）
+        _edit_guard = None
         try:
-            from acp_adapter.edit_approval import maybe_require_edit_approval
+            from acp_adapter.edit_approval import maybe_require_edit_approval as _edit_guard
+        except ImportError as _acp_missing:
+            logger.debug("ACP edit approval adapter not installed; guard skipped: %s", _acp_missing)
 
-            edit_block_message = maybe_require_edit_approval(function_name, function_args)
-            if edit_block_message is not None:
-                _emit_post_tool_call_hook(
-                    function_name=function_name,
-                    function_args=function_args,
-                    result=edit_block_message,
-                    task_id=task_id,
-                    session_id=session_id,
-                    tool_call_id=tool_call_id,
-                    turn_id=turn_id,
-                    api_request_id=api_request_id,
-                    status="blocked",
-                    error_type="edit_approval_denied",
-                    middleware_trace=list(_tool_middleware_trace),
+        if _edit_guard is not None:
+            try:
+                edit_block_message = _edit_guard(function_name, function_args)
+                if edit_block_message is not None:
+                    _emit_post_tool_call_hook(
+                        function_name=function_name,
+                        function_args=function_args,
+                        result=edit_block_message,
+                        task_id=task_id,
+                        session_id=session_id,
+                        tool_call_id=tool_call_id,
+                        turn_id=turn_id,
+                        api_request_id=api_request_id,
+                        status="blocked",
+                        error_type="edit_approval_denied",
+                        middleware_trace=list(_tool_middleware_trace),
+                    )
+                    return edit_block_message
+            except Exception as _edit_approval_err:
+                # R14（Phase 2c）：真正的守卫失败是安全事件，必须可见。
+                # 原先记在 debug —— Phase 2b 排查「所有写操作都失败」时，
+                # 默认日志级别下没有任何线索。补齐 tool/task/session/reason 四元组。
+                logger.warning(
+                    "ACP edit approval guard FAILED (failing closed) tool=%s "
+                    "task=%s session=%s reason=%s",
+                    function_name, task_id or "-", session_id or "-", _edit_approval_err,
                 )
-                return edit_block_message
-        except Exception as _edit_approval_err:
-            logger.debug("ACP edit approval guard error: %s", _edit_approval_err)
-            if function_name in {"write_file", "patch"}:
-                result = tool_error("Edit approval denied: approval guard failed")
-                _emit_post_tool_call_hook(
-                    function_name=function_name,
-                    function_args=function_args,
-                    result=result,
-                    task_id=task_id,
-                    session_id=session_id,
-                    tool_call_id=tool_call_id,
-                    turn_id=turn_id,
-                    api_request_id=api_request_id,
-                    status="blocked",
-                    error_type="edit_approval_error",
-                    middleware_trace=list(_tool_middleware_trace),
-                )
-                return result
+                if function_name in {"write_file", "patch"}:
+                    result = tool_error("Edit approval denied: approval guard failed")
+                    _emit_post_tool_call_hook(
+                        function_name=function_name,
+                        function_args=function_args,
+                        result=result,
+                        task_id=task_id,
+                        session_id=session_id,
+                        tool_call_id=tool_call_id,
+                        turn_id=turn_id,
+                        api_request_id=api_request_id,
+                        status="blocked",
+                        error_type="edit_approval_error",
+                        middleware_trace=list(_tool_middleware_trace),
+                    )
+                    return result
 
         # Notify the read-loop tracker when a non-read/search tool runs,
         # so the *consecutive* counter resets (reads after other work are fine).

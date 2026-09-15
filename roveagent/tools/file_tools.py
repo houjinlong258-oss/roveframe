@@ -840,6 +840,33 @@ def _protected_instruction_reason(filepath: str, task_id: str = "default",
     return None
 
 
+def _approval_module():
+    """Lazily resolve :mod:`roveagent.tools.approval`.
+
+    修复（Phase 2b）：本文件多处使用 ``_approval.<name>``
+    （``get_current_session_key`` / ``_gateway_notify_cbs`` /
+    ``_await_gateway_decision`` / ``prompt_dangerous_approval`` /
+    ``_run_approval_gate``），而函数体内的
+    ``import roveagent.tools.approval`` **只绑定顶层包名 ``roveagent``**，
+    从不绑定 ``_approval`` —— 于是任何走到这些分支的调用都会抛
+    ``NameError: name '_approval' is not defined``。
+
+    实测触发路径：向 **受审批保护的文件**（如 ``~/.ssh/config``，
+    由 ``core/file_safety.is_write_approval_required`` 判定）写入时，
+    ``_check_approval_required_write`` → ``_request_protected_instruction_approval``
+    → ``NameError``。即「写 SSH 配置需要审批」这条守卫**实际上是崩的**，
+    不是生效的。
+
+    为什么用惰性访问而不是顶层 ``import ... as _approval``：
+    ``tools/approval`` 与 ``tools/file_tools`` 之间存在既有循环引用风险
+    （见本文件其它惰性 import 的注释），惰性取值在首次调用时解析，
+    此时两个模块都已完成初始化。
+    """
+    import roveagent.tools.approval as _module
+
+    return _module
+
+
 def _request_protected_instruction_approval(
         reasons: list[str], task_id: str = "default") -> str | None:
     """Ask the human to approve a write to protected instruction file(s).
@@ -874,11 +901,11 @@ def _request_protected_instruction_approval(
     # Gateway surface: block on the button round-trip when a notify callback
     # is registered for this session (Telegram/Discord/Slack). One-operation
     # only — no session/permanent buttons are offered.
-    session_key = _approval.get_current_session_key()
+    session_key = _approval_module().get_current_session_key()
     notify_cb = None
     try:
-        with _approval._lock:
-            notify_cb = _approval._gateway_notify_cbs.get(session_key)
+        with _approval_module()._lock:
+            notify_cb = _approval_module()._gateway_notify_cbs.get(session_key)
     except Exception:
         notify_cb = None
 
@@ -891,7 +918,7 @@ def _request_protected_instruction_approval(
             "allow_permanent": False,
             "allow_session": False,
         }
-        decision = _approval._await_gateway_decision(
+        decision = _approval_module()._await_gateway_decision(
             session_key, notify_cb, approval_data, surface="gateway",
         )
         if decision.get("notify_failed"):
@@ -918,7 +945,7 @@ def _request_protected_instruction_approval(
         callback = None
 
     if callback is not None:
-        choice = _approval.prompt_dangerous_approval(
+        choice = _approval_module().prompt_dangerous_approval(
             display, description,
             allow_permanent=False,
             allow_session=False,
@@ -1009,7 +1036,7 @@ def _check_approval_required_write(paths: list[str],
         return blocked.format(why="requires approval but the approval "
                                   "subsystem is unavailable.")
 
-    result = _approval._run_approval_gate(
+    result = _approval_module()._run_approval_gate(
         pattern_key="ssh_config_write",
         description=description,
         display_target=f"<write to {display_targets}>",

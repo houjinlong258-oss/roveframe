@@ -29,10 +29,14 @@ class ApprovalFlowTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.key = "approval-test-key"
+        # 审批签名密钥必须与调用密钥不同 —— 这本身就是被测契约的一部分。
+        # 旧用例把两者设成同一个值，等于把「密钥塌缩」这一缺陷编码进了测试：
+        # 生产代码的回落语义与之一致，于是这条缺口永远不会被任何测试检出。
+        self.approval_secret = "approval-test-secret"
         self.old_environment = dict(os.environ)
         os.environ["ROVEAGENT_ROOT"] = str(self.root)
         os.environ["ROVEAGENT_API_KEY"] = self.key
-        os.environ["ROVEAGENT_APPROVAL_SECRET"] = self.key
+        os.environ["ROVEAGENT_APPROVAL_SECRET"] = self.approval_secret
         uninstall_enterprise_gate()
         install_enterprise_gate(
             policies=[ToolPolicy(
@@ -120,7 +124,7 @@ class ApprovalFlowTest(unittest.TestCase):
     def _signed_headers(self, body: str, timestamp: int | None = None) -> dict[str, str]:
         timestamp_text = str(timestamp if timestamp is not None else int(time.time()))
         signature = hmac.new(
-            self.key.encode(), f"{timestamp_text}.{body}".encode(), hashlib.sha256,
+            self.approval_secret.encode(), f"{timestamp_text}.{body}".encode(), hashlib.sha256,
         ).hexdigest()
         return {
             "Content-Type": "application/json",

@@ -6,7 +6,7 @@
  * apply 引擎路径复检、持久化存储的内存回退。
  */
 
-import { test, describe, beforeEach } from 'node:test';
+import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
@@ -229,9 +229,19 @@ describe('Apply Engine: revalidateChanges', () => {
 // ---------------------------------------------------------------------------
 
 describe('Persistent stores: memory fallback without DB', () => {
+  // 确定性接缝：显式声明内存模式，而不是依赖「这台机器上没有可连的库」。
+  // 原用例没有这个接缝，一旦环境里存在可连的 Supabase（例如 scripts/deploy.env
+  // 提供了真实凭据），store 会切到 DB 模式，本组用例全部变红 —— 环境相关的红/绿
+  // 不是有效信号。
+  const previousStore = process.env.RF_CODING_AGENT_STORE;
   beforeEach(() => {
+    process.env.RF_CODING_AGENT_STORE = 'memory';
     clearProposalStore();
     clearErrorBuffer();
+  });
+  afterEach(() => {
+    if (previousStore === undefined) delete process.env.RF_CODING_AGENT_STORE;
+    else process.env.RF_CODING_AGENT_STORE = previousStore;
   });
 
   test('proposal save/get roundtrip works without database', async () => {

@@ -61,6 +61,32 @@ logger = logging.getLogger(__name__)
 _FIRECRAWL_CLOUD_API_URL = "https://api.firecrawl.dev"
 
 
+def _web_tools():
+    """Lazily resolve :mod:`roveagent.tools.web_tools`.
+
+    修复（P0）：本模块通篇访问 ``tools.web_tools`` 的内部符号
+    （``_load_web_config`` / ``_is_tool_gateway_ready`` /
+    ``managed_nous_tools_enabled`` / ``_firecrawl_client`` …），
+    但那个模块别名**从未被绑定** —— 任何走到这些分支的调用都会抛
+    ``NameError: name '_wt' is not defined``。
+
+    实测后果（本机出厂态）：``check_web_api_key()`` 在遍历
+    ``_LEGACY_WEB_BACKENDS`` 时命中 firecrawl 分支 → NameError →
+    ``check_fn`` 被 registry 记为 "raised" → ``web_search`` /
+    ``web_extract`` 被判不可用 → 连带 ``web`` / ``search`` / ``safe`` /
+    ``coding`` 四个 toolset 全部不可用。也就是「AI 不能联网搜索」的根因。
+
+    为什么用惰性访问而不是顶层 ``import roveagent.tools.web_tools as ...``：
+    ``tools/web_tools.py:52`` 在**模块级**从本模块导入
+    ``Firecrawl`` / ``check_firecrawl_api_key`` 等符号，而本模块又被
+    ``_ensure_web_plugins_loaded()`` 在运行时加载 —— 顶层互相 import 会形成循环。
+    惰性取值在首次调用时才解析，此时 ``web_tools`` 必然已完成初始化。
+    """
+    import roveagent.tools.web_tools as _module
+
+    return _module
+
+
 # ---------------------------------------------------------------------------
 # Lazy Firecrawl SDK proxy
 # ---------------------------------------------------------------------------
@@ -161,7 +187,7 @@ def _is_explicit_firecrawl_selection() -> bool:
     import roveagent.tools.web_tools
     from roveagent import tools as tools
 
-    cfg = _wt._load_web_config()
+    cfg = _web_tools()._load_web_config()
     return any(
         (cfg.get(key) or "").lower().strip() == "firecrawl"
         for key in ("backend", "search_backend", "extract_backend")
@@ -192,7 +218,7 @@ def _use_keyless_ring() -> bool:
     except Exception:  # noqa: BLE001 — selection helpers optional
         pass
     try:
-        if _wt._is_tool_gateway_ready() and not _is_explicit_firecrawl_selection():
+        if _web_tools()._is_tool_gateway_ready() and not _is_explicit_firecrawl_selection():
             return False
     except Exception:  # noqa: BLE001 — probe optional
         pass
@@ -234,7 +260,7 @@ def _get_firecrawl_gateway_url() -> str:
     import roveagent.tools.web_tools
     from roveagent import tools as tools
 
-    return _wt.build_vendor_gateway_url("firecrawl")
+    return _web_tools().build_vendor_gateway_url("firecrawl")
 
 
 def _is_tool_gateway_ready() -> bool:
@@ -249,8 +275,8 @@ def _is_tool_gateway_ready() -> bool:
     import roveagent.tools.web_tools
     from roveagent import tools as tools
 
-    return _wt.resolve_managed_tool_gateway(
-        "firecrawl", token_reader=_wt._peek_nous_access_token
+    return _web_tools().resolve_managed_tool_gateway(
+        "firecrawl", token_reader=_web_tools()._peek_nous_access_token
     ) is not None
 
 
@@ -284,7 +310,7 @@ def _firecrawl_backend_help_suffix() -> str:
     import roveagent.tools.web_tools
     from roveagent import tools as tools
 
-    if not _wt.managed_nous_tools_enabled():
+    if not _web_tools().managed_nous_tools_enabled():
         return ""
     return (
         ", or use the Nous Tool Gateway via your subscription "
@@ -302,13 +328,13 @@ def _raise_web_backend_configuration_error() -> "NoReturn":
         "Set FIRECRAWL_API_KEY for cloud Firecrawl or set FIRECRAWL_API_URL "
         "for a self-hosted Firecrawl instance."
     )
-    if _wt.managed_nous_tools_enabled():
+    if _web_tools().managed_nous_tools_enabled():
         message += (
             " With your Nous subscription you can also use the Tool Gateway. "
             "run `roveagent tools` and select Nous Subscription as the web provider."
         )
     else:
-        message += " " + _wt.nous_tool_gateway_unavailable_message(
+        message += " " + _web_tools().nous_tool_gateway_unavailable_message(
             "managed Firecrawl web tools",
         )
     raise ValueError(message)
@@ -351,8 +377,8 @@ def _get_firecrawl_client() -> Any:
     direct_config = _get_direct_firecrawl_config()
 
     def _managed_kwargs():
-        managed_gateway = _wt.resolve_managed_tool_gateway(
-            "firecrawl", token_reader=_wt._read_nous_access_token
+        managed_gateway = _web_tools().resolve_managed_tool_gateway(
+            "firecrawl", token_reader=_web_tools()._read_nous_access_token
         )
         if managed_gateway is None:
             return None
@@ -411,19 +437,19 @@ def _get_firecrawl_client() -> Any:
         kwargs, client_config = managed
         client_mode = "sdk"
 
-    cached = getattr(_wt, "_firecrawl_client", None)
-    cached_config = getattr(_wt, "_firecrawl_client_config", None)
+    cached = getattr(_web_tools(), "_firecrawl_client", None)
+    cached_config = getattr(_web_tools(), "_firecrawl_client_config", None)
     if cached is not None and cached_config == client_config:
         return cached
 
     # Construct via the re-exported Firecrawl proxy on tools.web_tools so
     # unit tests patching ``tools.web_tools.Firecrawl`` see their mock.
     if client_mode == "keyless":
-        _wt._firecrawl_client = _KeylessFirecrawlClient(api_url=kwargs["api_url"])
+        _web_tools()._firecrawl_client = _KeylessFirecrawlClient(api_url=kwargs["api_url"])
     else:
-        _wt._firecrawl_client = _wt.Firecrawl(**kwargs)
-    _wt._firecrawl_client_config = client_config
-    return _wt._firecrawl_client
+        _web_tools()._firecrawl_client = _web_tools().Firecrawl(**kwargs)
+    _web_tools()._firecrawl_client_config = client_config
+    return _web_tools()._firecrawl_client
 
 
 def _reset_client_for_tests() -> None:
@@ -435,8 +461,8 @@ def _reset_client_for_tests() -> None:
     import roveagent.tools.web_tools
     from roveagent import tools as tools
 
-    _wt._firecrawl_client = None
-    _wt._firecrawl_client_config = None
+    _web_tools()._firecrawl_client = None
+    _web_tools()._firecrawl_client_config = None
 
 
 # ---------------------------------------------------------------------------

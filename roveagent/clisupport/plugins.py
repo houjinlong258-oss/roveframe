@@ -630,6 +630,51 @@ def _env_enabled(name: str) -> bool:
     return env_var_enabled(name)
 
 
+def _trust_gate_denial(manifest: "PluginManifest") -> str:
+    """Phase 3.5 two-track trust gate. "" = may be imported in-process.
+
+    Policy lives in ``api.plugin_trust``; this wrapper exists so the discovery
+    loop can consult it without importing that module (and its dependencies)
+    unconditionally, and so a broken policy module degrades in a defined way
+    rather than taking plugin discovery down with it.
+
+    Failure handling is asymmetric ON PURPOSE:
+
+      * bundled  -> "" (allow). The product must boot even if the policy module
+        is broken; bundled code is the product.
+      * anything else -> refuse. An untrusted plugin must not be imported merely
+        because the check that would have refused it could not run.
+    """
+    try:
+        from roveagent.api.plugin_trust import in_process_denial
+    except Exception as exc:  # noqa: BLE001 — policy module unavailable
+        if getattr(manifest, "source", "") == "bundled":
+            logger.debug(
+                "trust policy unavailable (%s); allowing bundled plugin '%s'",
+                exc, getattr(manifest, "name", "?"),
+            )
+            return ""
+        return (
+            "refused in-process load: the plugin trust policy is unavailable "
+            "(%s: %s), so provenance could not be established"
+            % (type(exc).__name__, exc)
+        )
+    try:
+        return in_process_denial(
+            getattr(manifest, "name", "") or "",
+            source=getattr(manifest, "source", "") or "",
+            manifest=manifest,
+        )
+    except Exception as exc:  # noqa: BLE001 — a policy bug must not be a bypass
+        if getattr(manifest, "source", "") == "bundled":
+            logger.debug("trust assessment failed for bundled plugin: %s", exc)
+            return ""
+        return (
+            "refused in-process load: trust assessment failed (%s: %s)"
+            % (type(exc).__name__, exc)
+        )
+
+
 def _get_disabled_plugins() -> set:
     """Read the disabled plugins list from config.yaml.
 
@@ -4404,6 +4449,32 @@ class PluginManager:
                 logger.debug("Skipping disabled plugin '%s'", lookup_key)
                 continue
 
+            # Phase 3.5 trust gate — the two-track model.
+            #
+            # Official (bundled) plugins load in-process exactly as before.
+            # Community (third-party) plugins must NOT be imported into the host
+            # process: they run under the MCP boundary + sandbox instead, via
+            # api.plugin_isolation. Unknown provenance is refused.
+            #
+            # The policy itself lives in api.plugin_trust so it has one
+            # definition and this discovery loop stays a discovery loop; the
+            # skip-and-record shape is the one already used directly above.
+            #
+            # A failure to EVALUATE the policy refuses community and unknown
+            # plugins (fail closed) but lets bundled ones through (fail open):
+            # if the trust module itself is broken, the product must still boot,
+            # while untrusted code must not slip in unevaluated.
+            trust_denial = _trust_gate_denial(manifest)
+            if trust_denial:
+                loaded = LoadedPlugin(manifest=manifest, enabled=False)
+                loaded.error = trust_denial
+                self._plugins[lookup_key] = loaded
+                logger.warning(
+                    "Refusing to load plugin '%s' in-process: %s",
+                    lookup_key, trust_denial,
+                )
+                continue
+
             # Exclusive plugins (memory providers) have their own
             # discovery/activation path. The general loader records the
             # manifest for introspection but does not load the module.
@@ -7034,7 +7105,48 @@ def _ensure_plugins_discovered(force: bool = False) -> PluginManager:
     """
     manager = get_plugin_manager()
     manager.discover_and_load(force=force)
+    _load_community_plugins_into_sandbox(manager)
     return manager
+
+
+def _load_community_plugins_into_sandbox(manager: PluginManager) -> None:
+    """Phase 8.1 / R41 closure: run the refused community plugins in the sandbox.
+
+    Phase 3.5 made the discovery loop refuse to import a community plugin. That
+    was the safe half; the other half — actually running it under the MCP
+    boundary + sandbox — had no caller, so such a plugin was refused and then
+    nothing happened.
+
+    This is that caller, placed here because every plugin-discovery path in the
+    tree goes through :func:`_ensure_plugins_discovered`.
+
+    Failure is contained: a broken sandbox loader must not stop plugin
+    discovery, which the host needs in order to start at all. The loader itself
+    records per-plugin failures instead of raising, so the only thing handled
+    here is the loader being unavailable — in which case the plugin stays
+    "refused", which is the pre-existing, safe state.
+    """
+    try:
+        from roveagent.api.plugin_tools import load_community_plugins
+    except Exception as exc:  # noqa: BLE001 — sandbox loader optional
+        logger.debug("sandbox plugin loader unavailable: %s", exc)
+        return
+    try:
+        result = load_community_plugins(manager)
+    except Exception as exc:  # noqa: BLE001 — never block discovery
+        logger.warning("sandbox plugin loading failed: %s", exc)
+        return
+    if result.get("candidates"):
+        logger.info(
+            "sandbox plugin loading: %d candidate(s), %d loaded, %d failed",
+            result["candidates"], result["loaded"], result["failed"],
+        )
+        for record in result.get("plugins", []):
+            if not record.get("loaded"):
+                logger.warning(
+                    "community plugin '%s' not sandbox-loaded: %s",
+                    record.get("plugin_name"), record.get("reason"),
+                )
 
 
 def get_plugin_context_engine():

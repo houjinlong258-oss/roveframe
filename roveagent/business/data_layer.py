@@ -164,6 +164,42 @@ class BusinessDataLayer:
         data = self._call("read_business_profile")
         return dict(data) if isinstance(data, Mapping) else {}
 
+    # Knowledge base (tenant's own documents) -------------------------
+    def search_knowledge(self, query: str, limit: int = 5) -> dict[str, Any]:
+        """Vector-search the tenant's own knowledge base.
+
+        Retrieval only — no LLM summarization. RoveFrame embeds the query and
+        runs the same scoped RPC as the in-app knowledge assistant; the
+        caller's own model does any synthesis. Keeping summarization out of
+        this call means a service-to-service request never silently spends
+        the tenant's model budget.
+
+        Scope is enforced twice as everywhere else: the tenant/business ids
+        come from the immutable run context (never from tool arguments), and
+        the response envelope is re-validated by :meth:`_call`.
+        """
+        text = str(query or "").strip()
+        if not text:
+            raise ValueError("search_knowledge requires a non-empty query")
+        # Distinguish "not supplied" from "supplied as 0". `limit or 5` would
+        # collapse the two and turn an explicit 0 into the default 5; the tool
+        # schema declares minimum 1, so an explicit 0 is clamped to the floor
+        # instead. Sending 0 upstream would trip the RoveFrame-side zod
+        # `.min(1)` and fail the whole request, which is strictly worse.
+        if limit is None:
+            bounded = 5
+        else:
+            bounded = max(1, min(int(limit), 20))
+        data = self._call("search_knowledge", {"query": text, "limit": bounded})
+        if not isinstance(data, Mapping):
+            return {"query": text, "retrieval": "unknown", "chunks": []}
+        chunks = data.get("chunks")
+        return {
+            "query": str(data.get("query") or text),
+            "retrieval": str(data.get("retrieval") or "unknown"),
+            "chunks": [dict(c) for c in chunks] if isinstance(chunks, list) else [],
+        }
+
     # Customer recovery campaign (AI CMO) -----------------------------
     def analyze_churn_customers(self, days_inactive: int = 60,
                                 min_total_spent: float = 0.0,

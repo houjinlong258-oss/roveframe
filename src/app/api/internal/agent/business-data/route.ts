@@ -5,6 +5,7 @@ import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { analyzeChurnCustomers, executeRecoveryCampaign } from '@/lib/agent/recovery-campaign';
 import { verifyRoveAgentPayload } from '@/lib/roveagent/signature';
 import { hashApprovalArguments } from '@/lib/agent/approvals';
+import { embedText } from '@/lib/embedding';
 
 const READ_OPERATIONS = [
   'read_sales',
@@ -17,6 +18,9 @@ const READ_OPERATIONS = [
   'read_business_profile',
   'read_snapshot',
   'analyze_churn_customers',
+  // 知识库检索：让 RoveAgent 运行时能查到租户自己的文档，而不只是外部网页。
+  // 与 /api/knowledge/ask 共用同一条 RPC 与同一套租户作用域。
+  'search_knowledge',
 ] as const;
 
 const WRITE_OPERATIONS = [
@@ -276,6 +280,80 @@ async function readSales(tenantId: string, businessId: string, params: Record<st
   };
 }
 
+/**
+ * 知识库检索（租户自有文档）。
+ *
+ * 复用 /api/knowledge/ask 的同一套检索路径与同一套作用域：
+ * ① 问题向量化；② match_doc_chunks 必须携带 filter_tenant_id /
+ * filter_business_id —— 漏传即跨租户串味；③ 回查标题用于来源标注。
+ * RPC 缺失时退回「当前租户最近分块」的确定性降级，与 ask 路由一致。
+ *
+ * 与 ask 路由的差别：这里只返回检索结果，不做 LLM 归纳 —— 归纳由
+ * RoveAgent 运行时用自己的模型完成，避免服务间调用偷偷产生模型费用。
+ */
+async function readKnowledge(tenantId: string, businessId: string, params: Record<string, unknown>) {
+  const parsed = z.object({
+    query: z.string().trim().min(1).max(2000),
+    limit: z.coerce.number().int().min(1).max(20).default(5),
+  }).strict().parse(params);
+
+  const client = getSupabaseClient();
+  const queryEmbedding = await embedText(parsed.query);
+
+  const { data: chunks, error } = await client.rpc('match_doc_chunks', {
+    query_embedding: JSON.stringify(queryEmbedding),
+    match_count: parsed.limit,
+    filter_tenant_id: tenantId,
+    filter_business_id: businessId,
+  });
+
+  type ChunkRow = { doc_id: string; content: string; similarity?: number | null };
+  let rows: ChunkRow[] = [];
+  let retrieval = 'vector';
+
+  if (!error && chunks && (chunks as unknown[]).length > 0) {
+    rows = chunks as ChunkRow[];
+  } else {
+    // RPC 不存在或向量库为空 —— 退回当前租户最近文档分块（作用域仍然生效）。
+    const fallbackRes = await client
+      .from('doc_chunks')
+      .select('doc_id, content')
+      .eq('tenant_id', tenantId)
+      .eq('business_id', businessId)
+      .order('chunk_index', { ascending: true })
+      .limit(parsed.limit);
+    if (fallbackRes.error) throw new Error(`knowledge fallback query failed: ${fallbackRes.error.message}`);
+    rows = (fallbackRes.data ?? []) as ChunkRow[];
+    retrieval = 'recent_chunks_fallback';
+  }
+
+  const docIds = Array.from(new Set(rows.map((r) => r.doc_id).filter(Boolean)));
+  let titles: Record<string, string> = {};
+  if (docIds.length > 0) {
+    const docsRes = await client
+      .from('knowledge_docs')
+      .select('id, title')
+      .eq('tenant_id', tenantId)
+      .eq('business_id', businessId)
+      .in('id', docIds);
+    if (docsRes.error) throw new Error(`knowledge title lookup failed: ${docsRes.error.message}`);
+    titles = Object.fromEntries(
+      ((docsRes.data ?? []) as { id: string; title: string | null }[]).map((d) => [d.id, d.title ?? '']),
+    );
+  }
+
+  return {
+    query: parsed.query,
+    retrieval,
+    chunks: rows.map((r) => ({
+      doc_id: r.doc_id,
+      title: titles[r.doc_id] ?? '',
+      content: r.content,
+      similarity: typeof r.similarity === 'number' ? r.similarity : null,
+    })),
+  };
+}
+
 async function readOperation(
   operation: BusinessDataOperation,
   tenantId: string,
@@ -291,6 +369,7 @@ async function readOperation(
     case 'read_reviews': return readReviews(tenantId, businessId, params);
     case 'read_payments': return readPayments(tenantId, businessId, params);
     case 'read_business_profile': return readProfile(tenantId, businessId);
+    case 'search_knowledge': return readKnowledge(tenantId, businessId, params);
     case 'analyze_churn_customers': {
       const parsed = z.object({
         days_inactive: z.coerce.number().int().min(7).max(365).default(60),

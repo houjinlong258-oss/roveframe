@@ -25,8 +25,81 @@ export class RoveAgentUnavailable extends Error {
   }
 }
 
+/**
+ * 是否已配置 RoveAgent Runtime 连接。
+ *
+ * 契约（Step 1 修正）：**必须同时**提供 `ROVEAGENT_API_URL` 与 `ROVEAGENT_API_KEY`。
+ *
+ * 原实现用 `||`，只给其中一个就算「已配置」——那必然导致每个请求都去打一个
+ * 注定失败的连接（缺 Key 会 401，缺 URL 会打默认本地端口），用户看到的只是
+ * 变慢，看不到原因。改为 `&&` 后，「未配置」成为确定的快速判定。
+ */
 export function roveAgentConfigured(): boolean {
-  return Boolean(process.env.ROVEAGENT_API_URL || process.env.ROVEAGENT_API_KEY);
+  return Boolean(process.env.ROVEAGENT_API_URL && process.env.ROVEAGENT_API_KEY);
+}
+
+/** 已配置的 URL / Key 各缺哪个（用于诊断提示，返回值不含密钥本身）。 */
+export function roveAgentConfigGaps(): string[] {
+  const gaps: string[] = [];
+  if (!process.env.ROVEAGENT_API_URL) gaps.push('ROVEAGENT_API_URL');
+  if (!process.env.ROVEAGENT_API_KEY) gaps.push('ROVEAGENT_API_KEY');
+  return gaps;
+}
+
+/** 健康检查结果。Runtime 可达性探针，不抛错。 */
+export interface RoveAgentHealth {
+  ok: boolean;
+  /** 人类可读状态：ok | unreachable | unauthorized | error | unconfigured */
+  status: 'ok' | 'unreachable' | 'unauthorized' | 'error' | 'unconfigured';
+  latencyMs: number | null;
+  detail: string;
+}
+
+/**
+ * 探测 Runtime 可达性（`GET /api/health`）。
+ *
+ * 与 `call()` 的区别：这里**吞掉异常**并返回结构化结果 —— 它服务于
+ * 「Runtime 状态必须透明」，调用方需要一个确定的布尔值而不是抛错。
+ * 超时故意设短（默认 2s），避免把状态探测变成新的延迟来源。
+ */
+export async function roveAgentHealth(timeoutMs = 2_000): Promise<RoveAgentHealth> {
+  const gaps = roveAgentConfigGaps();
+  if (gaps.length > 0) {
+    return {
+      ok: false,
+      status: 'unconfigured',
+      latencyMs: null,
+      detail: `missing ${gaps.join(', ')}`,
+    };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const startedAt = Date.now();
+  try {
+    const res = await fetch(`${baseUrl()}/api/health`, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: { 'X-RoveAgent-Key': process.env.ROVEAGENT_API_KEY ?? '' },
+    });
+    const latencyMs = Date.now() - startedAt;
+    if (res.ok) {
+      return { ok: true, status: 'ok', latencyMs, detail: 'runtime reachable' };
+    }
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, status: 'unauthorized', latencyMs, detail: `runtime rejected key (${res.status})` };
+    }
+    return { ok: false, status: 'error', latencyMs, detail: `runtime returned ${res.status}` };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 'unreachable',
+      latencyMs: Date.now() - startedAt,
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function baseUrl(): string {
@@ -116,6 +189,107 @@ export function roveAgentChat(input: RoveAgentChatInput): Promise<RoveAgentChatR
       business_context: input.businessContext,
     }),
   });
+}
+
+/** 一条已解析的 SSE 事件。payload 的形状由前端 `AgentSseEvent` 契约决定。 */
+export interface RoveAgentStreamEvent {
+  data: string;
+  payload: Record<string, unknown> | null;
+}
+
+/**
+ * 流式对话（Step 2）—— `POST /api/agent/chat/stream`。
+ *
+ * 与 `roveAgentChat()` 的关系：**并列**，不替代。非流式端点、HMAC 签名流程、
+ * 审批回放、任务执行全部保持不变。
+ *
+ * 返回一个异步迭代器；调用方逐个消费事件。实现与 `call()` 相同的：
+ * `X-RoveAgent-Key` 鉴权、AbortController 超时（这里放宽，因为一轮工具循环
+ * 可能远超 30s）、以及把所有失败统一包成 `RoveAgentUnavailable`。
+ */
+export async function* roveAgentChatStream(
+  input: RoveAgentChatInput,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {},
+): AsyncGenerator<RoveAgentStreamEvent, void, unknown> {
+  if (!roveAgentConfigured()) {
+    const gaps = roveAgentConfigGaps();
+    throw new RoveAgentUnavailable(`runtime not configured (missing ${gaps.join(', ')})`);
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs ?? 600_000; // 10 分钟：工具循环可能很长
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // 外部取消（用户点停止）与内部超时合并
+  const onExternalAbort = () => controller.abort();
+  options.signal?.addEventListener('abort', onExternalAbort, { once: true });
+
+  try {
+    const res = await fetch(`${baseUrl()}/api/agent/chat/stream`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RoveAgent-Key': process.env.ROVEAGENT_API_KEY ?? '',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({
+        tenant_id: input.tenantId,
+        business_id: input.businessId,
+        user_id: input.userId,
+        message: input.message,
+        agent: input.agent ?? 'ceo',
+        role: input.role,
+        permissions: input.permissions,
+        request_id: input.requestId,
+        task_id: input.taskId,
+        session_id: input.sessionId,
+        industry: input.industry,
+        business_context: input.businessContext,
+      }),
+    });
+
+    if (!res.ok || !res.body) {
+      const text = await res.text().catch(() => '');
+      throw new RoveAgentUnavailable(
+        `roveagent /api/agent/chat/stream -> ${res.status}: ${text.slice(0, 300)}`,
+      );
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (!raw || raw === '[DONE]') continue;
+        let payload: Record<string, unknown> | null = null;
+        try {
+          const parsed = JSON.parse(raw) as unknown;
+          if (parsed && typeof parsed === 'object') {
+            payload = parsed as Record<string, unknown>;
+          }
+        } catch {
+          // 不完整片段：当作纯文本，不丢内容
+        }
+        yield { data: raw, payload };
+      }
+    }
+  } catch (error) {
+    if (error instanceof RoveAgentUnavailable) throw error;
+    if ((error as Error).name === 'AbortError') {
+      throw new RoveAgentUnavailable('roveagent stream aborted (client cancelled or timed out)');
+    }
+    throw new RoveAgentUnavailable(error instanceof Error ? error.message : String(error));
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener('abort', onExternalAbort);
+  }
 }
 
 export interface RoveAgentTaskStep {

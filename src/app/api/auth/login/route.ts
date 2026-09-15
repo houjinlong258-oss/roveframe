@@ -5,7 +5,7 @@
  * 返回: { access_token, user_id, tenant_id, business_id, role }
  */
 import { json, jsonError } from '@/lib/api-helpers';
-import { resolveUserByToken, sessionCookieHeader, signInAndGetToken } from '@/lib/auth';
+import { isSecureRequest, resolveUserByToken, sessionCookieHeader, signInAndGetToken } from '@/lib/auth';
 import {
   checkFixedWindow,
   getClientIp,
@@ -65,6 +65,6 @@ export async function POST(request: Request) {
     email: u.data.email,
     name: u.data.name,
   });
-  response.headers.set('Set-Cookie', sessionCookieHeader(s.data.accessToken));
+  response.headers.set('Set-Cookie', sessionCookieHeader(s.data.accessToken, isSecureRequest(request)));
   return response;
 }

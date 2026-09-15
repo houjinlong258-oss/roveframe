@@ -25,6 +25,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -3471,20 +3472,58 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
     # Check plugin hooks for a block or approval directive before executing.
     block_message: Optional[str] = None
     if not pre_tool_block_checked:
+        # R15（Phase 3）：区分三种情况，**绝不静默丢失 block**。
+        #
+        # 插件 hook 可以返回 block 指令来阻止工具执行。原实现把 import 失败与
+        # hook 执行失败一律 `except Exception: block_message = None` —— 即
+        # 插件阻断能力静默失效，且默认日志级别下没有任何线索。
+        #
+        # 现在的语义：
+        #   1. 插件子系统**不可用/未安装**（ImportError）→ 忽略（不是错误）
+        #   2. 插件存在但 **hook 执行失败** → warning（可见），并**fail-closed**：
+        #      如果内置 hook 是有意用来阻断危险的，静默放行比阻断更危险。
+        #      但由于无法区分「hook 本想阻断」与「hook 只是坏了」，
+        #      这里选择**放行 + warning**，同时记录明确事件供审计；
+        #      需要强制 fail-closed 的部署可设
+        #      ROVEAGENT_PLUGIN_HOOK_FAIL_CLOSED=1。
+        #   3. hook 明确返回 block → 阻止执行（既有逻辑，不变）
         try:
             from roveagent.clisupport.plugins import _dispatch_pre_tool_call_hooks
-            block_message, modified_args = _dispatch_pre_tool_call_hooks(
-                function_name, function_args, task_id=effective_task_id or "",
-                session_id=getattr(agent, "session_id", "") or "",
-                tool_call_id=tool_call_id or "",
-                turn_id=getattr(agent, "_current_turn_id", "") or "",
-                api_request_id=getattr(agent, "_current_api_request_id", "") or "",
-                middleware_trace=list(_tool_middleware_trace),
-            )
-            if modified_args is not None:
-                function_args = modified_args
-        except Exception:
-            block_message = None
+        except ImportError as _hooks_missing:
+            logger.debug("plugin hook subsystem unavailable; skipping: %s", _hooks_missing)
+        else:
+            try:
+                block_message, modified_args = _dispatch_pre_tool_call_hooks(
+                    function_name, function_args, task_id=effective_task_id or "",
+                    session_id=getattr(agent, "session_id", "") or "",
+                    tool_call_id=tool_call_id or "",
+                    turn_id=getattr(agent, "_current_turn_id", "") or "",
+                    api_request_id=getattr(agent, "_current_api_request_id", "") or "",
+                    middleware_trace=list(_tool_middleware_trace),
+                )
+                if modified_args is not None:
+                    function_args = modified_args
+            except Exception as _hook_err:  # noqa: BLE001
+                if os.environ.get("ROVEAGENT_PLUGIN_HOOK_FAIL_CLOSED") == "1":
+                    logger.warning(
+                        "plugin pre_tool_call hook FAILED (failing closed) tool=%s "
+                        "task=%s session=%s reason=%s",
+                        function_name, effective_task_id or "-",
+                        getattr(agent, "session_id", "") or "-", _hook_err,
+                    )
+                    block_message = (
+                        "Tool execution blocked: plugin hook failed and this "
+                        "deployment runs hooks fail-closed "
+                        "(ROVEAGENT_PLUGIN_HOOK_FAIL_CLOSED=1)."
+                    )
+                else:
+                    logger.warning(
+                        "plugin pre_tool_call hook FAILED (allowing, hooks not "
+                        "fail-closed) tool=%s task=%s session=%s reason=%s",
+                        function_name, effective_task_id or "-",
+                        getattr(agent, "session_id", "") or "-", _hook_err,
+                    )
+                    block_message = None
     if block_message is not None:
         result = json.dumps({"error": block_message}, ensure_ascii=False)
         try:

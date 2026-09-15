@@ -368,6 +368,15 @@ export const chatSessions = pgTable(
     title: varchar("title", { length: 255 }).notNull().default("新会话"),
     summary: text("summary").notNull().default(""),
     summarized_message_count: integer("summarized_message_count").notNull().default(0),
+    // ---------- Step 3：session runtime 元数据（审计用）----------
+    // 记录最近一轮由哪个 Runtime 执行、哪个 agent、请求类型与工具意图。
+    // 迁移：scripts/migrate-runtime-metadata.sql
+    // 未应用该迁移时，route.ts 的元数据 UPDATE 会回退为仅更新 updated_at。
+    runtime_mode: varchar("runtime_mode", { length: 20 }),
+    runtime_agent: varchar("runtime_agent", { length: 40 }),
+    runtime_request_class: varchar("runtime_request_class", { length: 20 }),
+    runtime_tool_intent: varchar("runtime_tool_intent", { length: 20 }),
+    runtime_at: timestamp("runtime_at", { withTimezone: true }),
     created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

@@ -67,7 +67,98 @@ const ROLE_RANK: Record<RoleKey | ApprovalRole, number> = {
   admin: 4,
 };
 
-export function canApprove(role: RoleKey, requiredRole: ApprovalRole): boolean {
+/**
+ * 审批判定的发起方。比商户 `RoleKey` 多一个 `admin`：角色阶梯本身就是四级
+ * （见 `ROLE_RANK`），Python gate 的 `ToolContext.role` 也接受 `"admin"`。
+ * 契约样例集里包含 admin 作为发起方的用例，因此这里必须同宽，否则两侧
+ * 无法用同一份样例校验。
+ */
+export type ApprovalActor = RoleKey | ApprovalRole;
+
+/**
+ * 审批判定的规范形状（Phase 9 / Task 2：跨语言统一契约）。
+ *
+ * 同一份契约由两侧实现，并由 `tests/fixtures/approval_decision_contract.json`
+ * 的同一组样例双向校验：
+ *   - Python：`roveagent.tools.framework.EnterpriseToolGate.decide_approval`
+ *   - TS    ：本文件的 `decideApproval`
+ *
+ * 在此之前两侧语义分叉：Python 用 `rank >= required + 1`（上级免审，且完全不看
+ * risk），TS 用 `rank >= required`（无 +1，且对 admin 恒 false）。同一个
+ * (role, required_role) 在两个平面上可能得出相反结论。
+ */
+export interface ApprovalDecision {
+  /** 发起方角色 */
+  role: ApprovalActor;
+  /** 该动作要求的审批角色；null 表示无需审批 */
+  requiredRole: ApprovalRole | null;
+  /** 风险等级 */
+  risk: ApprovalRisk;
+  /** 是否必须产生审批单（true 时调用方不得直接执行） */
+  approvalRequired: boolean;
+  /** 人类可读原因，用于审计与 UI */
+  reason: string;
+}
+
+/**
+ * 统一审批判定。规则（按顺序）：
+ *
+ * 1. `requiredRole === null`            → 不需要审批
+ * 2. `risk ∈ {high, critical}`          → **必须审批，任何角色都不得自动跳过**
+ *    （含 owner / admin —— 这是 Phase 9 的核心收紧点：terminal / write_file /
+ *     send_* 此前对 owner 免审直执）
+ * 3. `requiredRole === 'admin'`         → 必须审批，但商户域无人可批
+ *    （平台控制面动作，只能由平台管理员处理；与既有 TS 约束一致）
+ * 4. 其余（medium / low）               → 保留「上级免审」语义：
+ *    rank(role) >= rank(requiredRole) + 1
+ */
+export function decideApproval(input: {
+  role: ApprovalActor;
+  requiredRole: ApprovalRole | null;
+  risk: ApprovalRisk;
+}): ApprovalDecision {
+  const { role, requiredRole, risk } = input;
+  const base = { role, requiredRole, risk } as const;
+
+  if (requiredRole === null) {
+    return { ...base, approvalRequired: false, reason: 'no approval policy' };
+  }
+  if (risk === 'high' || risk === 'critical') {
+    return {
+      ...base,
+      approvalRequired: true,
+      reason: `${risk.toUpperCase()} risk requires approval; no role may auto-skip`,
+    };
+  }
+  if (requiredRole === 'admin') {
+    return {
+      ...base,
+      approvalRequired: true,
+      reason: 'platform-admin approval is outside the merchant RBAC domain',
+    };
+  }
+  const sufficient = ROLE_RANK[role] >= ROLE_RANK[requiredRole] + 1;
+  return {
+    ...base,
+    approvalRequired: !sufficient,
+    reason: sufficient
+      ? `role ${role} is senior to required role ${requiredRole}`
+      : `approval required: ${requiredRole}`,
+  };
+}
+
+/**
+ * 调用方是否可以批准某条待审事项（消费侧判定）。
+ *
+ * 与 `decideApproval` 的分工：`decideApproval` 回答「这个动作要不要审批」，
+ * `canApprove` 回答「这个人能不能批」。后者保留 `requiredRole === 'admin'`
+ * 恒 false 的约束 —— 商户角色不得批准平台控制面动作。
+ *
+ * 参数接受 `ApprovalActor`（含 admin）而非仅 `RoleKey`：契约样例集包含
+ * 「admin 尝试批准 admin 级」的用例，结果必须是 false；若把 admin 排除在
+ * 类型外，这条用例就无法在 TS 侧表达，契约也就只剩一半。
+ */
+export function canApprove(role: ApprovalActor, requiredRole: ApprovalRole): boolean {
   // Platform-admin approval is deliberately outside the merchant RBAC domain.
   if (requiredRole === 'admin') return false;
   return ROLE_RANK[role] >= ROLE_RANK[requiredRole];

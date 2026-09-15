@@ -25,11 +25,12 @@ Limitations:
     where redirect handling is on their servers.
 """
 
+import asyncio
+import dataclasses
 import ipaddress
 import logging
 import os
 import socket
-import asyncio
 import re
 from typing import Any, Optional
 from urllib.parse import parse_qsl, quote, unquote, urljoin, urlparse, urlsplit, urlunsplit
@@ -526,6 +527,237 @@ async def async_is_safe_url(url: str) -> bool:
     ``web_extract_tool``, vision download hooks) instead of ``is_safe_url``.
     """
     return await asyncio.to_thread(is_safe_url, url)
+
+
+# ---------------------------------------------------------------------------
+# Block attribution — WHY a URL was refused
+# ---------------------------------------------------------------------------
+# :func:`is_safe_url` answers a yes/no question, which is all the enforcement
+# path needs. Callers that must SHOW the user something (web_extract's
+# per-URL error, diagnostics, support triage) need the reason instead: the
+# same ``False`` means "you aimed at a private service" in one case and "your
+# local DNS is fabricating addresses" in another, and those need opposite
+# remedies.
+#
+# This layer is PURELY DIAGNOSTIC. It never changes a decision — the guard
+# above remains the single authority, and the classifier re-derives its
+# verdict rather than replacing it. In particular it does NOT add any
+# allowlist: addresses in these ranges stay blocked, because routing to
+# 198.18.0.0/15 is exactly what an SSRF-safe client must refuse.
+
+# Reserved ranges that a *transparent fake-IP resolver* hands out instead of
+# the real destination address. Traffic still works because the proxy recovers
+# the true host from SNI/Host and tunnels it — which is why the agent can
+# search the web successfully while web_extract reports a "private" address.
+_RESOLVER_ARTIFACT_NETWORKS = (
+    (ipaddress.ip_network("198.18.0.0/15"), "RFC 2544 benchmarking range"),
+    (ipaddress.ip_network("fdfe:dcba:9876::/48"), "synthetic fake-IP IPv6 prefix"),
+    (ipaddress.ip_network("2001::/32"), "Teredo tunnel range"),
+)
+
+
+def _classify_resolved_ip(
+    ip: "ipaddress.IPv4Address | ipaddress.IPv6Address",
+) -> str:
+    """Bucket one resolved address for attribution purposes.
+
+    Returns one of: ``metadata``, ``artifact``, ``private``, ``global``.
+    Mirrors the precedence inside :func:`is_safe_url` so the labels agree
+    with the enforcement verdict.
+    """
+    if ip in _ALWAYS_BLOCKED_IPS or any(ip in net for net in _ALWAYS_BLOCKED_NETWORKS):
+        return "metadata"
+    for network, _label in _RESOLVER_ARTIFACT_NETWORKS:
+        if ip in network:
+            return "artifact"
+    if _is_blocked_ip(ip):
+        return "private"
+    return "global"
+
+
+def _artifact_label(ip_str: str) -> str:
+    raw = ip_str.split("%")[0]
+    try:
+        ip = ipaddress.ip_address(raw)
+    except ValueError:
+        return "unparseable"
+    for network, label in _RESOLVER_ARTIFACT_NETWORKS:
+        if ip in network:
+            return label
+    return "reserved range"
+
+
+@dataclasses.dataclass(frozen=True)
+class UrlBlockReason:
+    """Structured explanation of a URL safety verdict.
+
+    ``blocked`` always agrees with :func:`is_safe_url`. Every other field is
+    presentational.
+    """
+
+    blocked: bool
+    code: str
+    detail: str
+    hint: str = ""
+    addresses: tuple = ()
+
+    def as_error_dict(self) -> dict:
+        """Shape suitable for a per-URL error entry in tool output."""
+        out = {"error": self.detail}
+        if self.hint:
+            out["hint"] = self.hint
+        if self.addresses:
+            out["resolved"] = list(self.addresses)
+        out["code"] = self.code
+        return out
+
+
+# Remedy ladder for the resolver-artifact case, ordered most-safe first. The
+# last rung weakens SSRF protection and is explicitly labelled as such — it is
+# the upstream global opt-out, documented in this module's docstring, and is
+# NOT something this classifier ever applies on the user's behalf.
+_ARTIFACT_HINT = (
+    "The host name is public; the LOCAL RESOLVER answered with a synthetic, "
+    "non-routable address, which is the signature of a fake-IP style proxy or "
+    "VPN (Clash/Surge/mihomo family) intercepting DNS. The SSRF guard refuses "
+    "those addresses by design and will keep doing so. Remedies, best first: "
+    "(1) add the host to the proxy's direct/bypass rules so DNS returns the "
+    "real address; (2) run the runtime where DNS is not intercepted; "
+    "(3) only if you accept the risk — the guard's global opt-out for "
+    "resolver-rewritten environments is security.allow_private_urls: true "
+    "(env ROVEAGENT_ALLOW_PRIVATE_URLS=true), which still blocks cloud "
+    "metadata endpoints. Do NOT add reserved ranges to a bypass list."
+)
+
+
+def classify_url_block(url: str) -> UrlBlockReason:
+    """Explain why :func:`is_safe_url` returns what it returns for *url*.
+
+    Pure and side-effect free apart from one DNS lookup. Adds no caching, so
+    callers that already ran the guard pay one extra resolution — use it on
+    the failure path only.
+    """
+    try:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").strip().lower().rstrip(".")
+        scheme = (parsed.scheme or "").strip().lower()
+
+        if scheme not in {"http", "https"}:
+            return UrlBlockReason(
+                True, "scheme",
+                f"Blocked: unsupported URL scheme {scheme or '<empty>'!r}; only http and https are allowed.",
+            )
+        if not hostname:
+            return UrlBlockReason(True, "empty_host", "Blocked: URL has no host component.")
+
+        if hostname in _BLOCKED_HOSTNAMES:
+            return UrlBlockReason(
+                True, "blocked_hostname",
+                f"Blocked: {hostname} is a cloud metadata hostname and is never a legitimate target.",
+            )
+
+        try:
+            addr_info = socket.getaddrinfo(
+                hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
+            )
+        except socket.gaierror as exc:
+            _literal = True
+            try:
+                ipaddress.ip_address(hostname)
+            except ValueError:
+                _literal = False
+            if not _literal and _proxy_is_configured():
+                return UrlBlockReason(
+                    False, "dns_delegated",
+                    f"Allowed: DNS for {hostname} failed locally ({exc}); a proxy is "
+                    "configured, so resolution is delegated to it.",
+                )
+            return UrlBlockReason(
+                True, "dns_failure",
+                f"Blocked: DNS resolution failed for {hostname} and no proxy is configured "
+                "to resolve it.",
+                hint="Check the host spelling, and this machine's DNS/network reachability.",
+            )
+
+        addresses: list[tuple[str, str]] = []
+        verdicts: list[str] = []
+        for _family, _t, _p, _c, sockaddr in addr_info:
+            ip_str = sockaddr[0]
+            raw = ip_str.split("%")[0]
+            try:
+                ip = ipaddress.ip_address(raw)
+            except ValueError:
+                addresses.append((ip_str, "unparseable"))
+                verdicts.append("unparseable")
+                continue
+            bucket = _classify_resolved_ip(ip)
+            addresses.append((ip_str, bucket))
+            verdicts.append(bucket)
+
+        allowed = is_safe_url(url)
+        listed = ", ".join("%s (%s)" % (a, b) for a, b in addresses[:6])
+
+        if allowed:
+            return UrlBlockReason(
+                False, "ok",
+                f"Allowed: {hostname} resolved to {listed}.",
+                addresses=tuple(addresses),
+            )
+
+        buckets = set(verdicts)
+        if "metadata" in buckets:
+            return UrlBlockReason(
+                True, "metadata_ip",
+                f"Blocked: {hostname} resolved to a cloud metadata / link-local address "
+                f"({listed}). These are never legitimate agent targets.",
+                addresses=tuple(addresses),
+            )
+
+        artifact_only = buckets <= {"artifact"} and "artifact" in buckets
+        if artifact_only:
+            label = _artifact_label(addresses[0][0]) if addresses else "reserved range"
+            return UrlBlockReason(
+                True, "resolver_synthetic",
+                f"Blocked: {hostname} resolved ONLY to a synthetic address ({listed}; {label}). "
+                "The URL itself is public — the local resolver fabricated the answer.",
+                hint=_ARTIFACT_HINT,
+                addresses=tuple(addresses),
+            )
+
+        if "artifact" in buckets and "global" in buckets:
+            return UrlBlockReason(
+                True, "resolver_mixed",
+                f"Blocked: {hostname} resolved to BOTH routable and reserved addresses "
+                f"({listed}). A host that answers with a global address AND a reserved one "
+                "is the classic DNS-rebinding shape, so the guard refuses it.",
+                hint=(
+                    "If this host is legitimate, the reserved answer is likely DNS "
+                    "interception or a fake-IP proxy rather than an attack. " + _ARTIFACT_HINT
+                ),
+                addresses=tuple(addresses),
+            )
+
+        return UrlBlockReason(
+            True, "resolver_private",
+            f"Blocked: {hostname} resolved to a private/internal address ({listed}).",
+            hint=(
+                "If this host is genuinely public, its DNS is being answered by a "
+                "local resolver that rewrites external names."
+            ),
+            addresses=tuple(addresses),
+        )
+
+    except Exception as exc:  # noqa: BLE001 — must never raise into a tool path
+        return UrlBlockReason(
+            True, "error",
+            f"Blocked: URL safety check failed for {url!r} ({type(exc).__name__}: {exc}). "
+            "The guard fails closed on unexpected errors.",
+        )
+
+
+async def async_classify_url_block(url: str) -> UrlBlockReason:
+    """Off-event-loop wrapper for :func:`classify_url_block`."""
+    return await asyncio.to_thread(classify_url_block, url)
 
 
 class SSRFConnectionBlocked(ValueError):

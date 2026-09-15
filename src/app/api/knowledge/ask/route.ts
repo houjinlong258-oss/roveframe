@@ -26,26 +26,41 @@ async function askKnowledge(request: Request) {
       filter_business_id: ctx.businessId,
     });
 
+    /**
+     * 检索状态必须显式三态上报，禁止把失败伪装成命中。
+     *
+     * 原实现在 RPC 报错或零命中时，回落到「当前租户最近的 5 个分块」，
+     * 并把它们编号成 [1]…[5] 交给模型引用 —— 用户看到的是带来源编号的
+     * 答案，却与问题毫无关系。这属于本仓库明令禁止的静默 fallback。
+     * 现在：失败就是 unavailable，零命中就是 no_match，两者都不注入任何分块。
+     */
+    type RetrievalStatus = 'matched' | 'no_match' | 'unavailable';
+    let retrievalStatus: RetrievalStatus;
     let sources: { title: string }[] = [];
     let contextText = '';
-    if (!error && chunks && chunks.length > 0) {
+
+    if (error) {
+      retrievalStatus = 'unavailable';
+      console.warn('[knowledge/ask] vector retrieval unavailable:', error.message);
+    } else if (!chunks || chunks.length === 0) {
+      retrievalStatus = 'no_match';
+    } else {
+      retrievalStatus = 'matched';
       contextText = (chunks as { content: string }[]).map((c, i) => `[${i + 1}] ${c.content}`).join('\n\n');
       const docIds = Array.from(new Set((chunks as { doc_id: string }[]).map((c) => c.doc_id)));
       const docsRes = await scopedTable(ctx, 'knowledge_docs', 'id, title').in('id', docIds);
       sources = ((docsRes.data ?? []) as { title: string }[]).map((d) => ({ title: d.title }));
-    } else {
-      // RPC 不存在时退回简单全量匹配（取当前租户最近文档的前几个分块）
-      const fallbackRes = await scopedTable(ctx, 'doc_chunks', 'doc_id, content')
-        .order('chunk_index', { ascending: true })
-        .limit(5);
-      const fallback = (fallbackRes.data ?? []) as { doc_id: string; content: string }[];
-      contextText = fallback.map((c, i) => `[${i + 1}] ${c.content}`).join('\n\n');
-      const docIds = Array.from(new Set(fallback.map((c) => c.doc_id)));
-      if (docIds.length > 0) {
-        const docsRes = await scopedTable(ctx, 'knowledge_docs', 'id, title').in('id', docIds);
-        sources = ((docsRes.data ?? []) as { title: string }[]).map((d) => ({ title: d.title }));
-      }
     }
+
+    const retrievalNotice = retrievalStatus === 'matched'
+      ? ''
+      : retrievalStatus === 'no_match'
+        ? (locale === 'zh'
+          ? '\n\n注意：本次检索未命中任何知识库内容。你必须如实告知用户「知识库中暂无相关内容」，并建议补充文档；禁止编造来源编号。'
+          : '\n\nNote: retrieval matched nothing in the knowledge base. You MUST tell the user plainly that no relevant content exists and suggest adding a document. Do not invent citation numbers.')
+        : (locale === 'zh'
+          ? '\n\n注意：本次向量检索服务不可用（技术故障，非「没有内容」）。你必须如实告知用户检索当前不可用，并说明这不是知识库为空；禁止编造来源编号。'
+          : '\n\nNote: vector retrieval is UNAVAILABLE (a technical failure, not an empty knowledge base). You MUST tell the user retrieval is currently unavailable and that this does not mean the knowledge base is empty. Do not invent citation numbers.');
 
     const systemPrompt = locale === 'zh'
       ? `你是商户知识库助手。仅根据下方知识库内容回答问题。
@@ -55,7 +70,7 @@ async function askKnowledge(request: Request) {
 - 用 Markdown 排版
 
 知识库内容：
-${contextText || '（知识库为空）'}`
+${contextText || '（无可用内容）'}${retrievalNotice}`
       : `You are the business knowledge base assistant. Answer ONLY based on the knowledge base content below.
 Rules:
 - If the answer exists, respond in a structured way and cite sources like [1]
@@ -63,7 +78,7 @@ Rules:
 - Use Markdown formatting
 
 Knowledge base content:
-${contextText || '(knowledge base is empty)'}`;
+${contextText || '(no content available)'}${retrievalNotice}`;
 
     const messages: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
@@ -72,6 +87,10 @@ ${contextText || '(knowledge base is empty)'}`;
 
     const response = sseResponse(streamChat('rag', messages, forwardHeaders, { tenantId: ctx.tenantId, businessId: ctx.businessId, userId: ctx.userId }));
     response.headers.set('X-Sources', encodeURIComponent(JSON.stringify(sources)));
+    // 检索状态显式上报：前端可据此区分「命中」「没命中」「检索坏了」，而不是
+    // 把三种情况都渲染成带来源编号的答案。
+    response.headers.set('X-Retrieval-Status', retrievalStatus);
+    response.headers.set('Access-Control-Expose-Headers', 'X-Retrieval-Status, X-Sources');
     return response;
   } catch (error) {
     return errorResponse(error);

@@ -87,10 +87,11 @@ FROM node:${NODE_VERSION}-bookworm-slim AS runner
 
 WORKDIR /app
 
-# curl backs the HEALTHCHECK below; it is the only added system package.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends curl \
- && rm -rf /var/lib/apt/lists/*
+# No apt layer on purpose. `curl` was the only system package wanted here, and
+# it existed solely to back the HEALTHCHECK — node:22-slim has no curl, and the
+# Debian archive was unreachable on the authoring network (`bookworm/main`
+# failed while `bookworm-security` resolved). Node 22 has a global fetch, so the
+# probe needs no extra package at all.
 
 ENV NODE_ENV=production \
     COZE_PROJECT_ENV=PROD \
@@ -116,8 +117,10 @@ EXPOSE 5000
 # /api/health is the app's own readiness probe: it verifies the database tables
 # it depends on. A 503 here means "app up, database not migrated", which is
 # exactly when this container should NOT be routed traffic.
+#
+# Node 22 global fetch, so no curl and no apt layer are needed.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-  CMD curl -fsS "http://127.0.0.1:${PORT}/api/health" >/dev/null || exit 1
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||5000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 # Documented production command (scripts/start.sh ends in the same invocation).
 CMD ["node", "dist/server.js"]

@@ -32,11 +32,21 @@
 
 FROM python:3.13-slim-bookworm
 
-# The runtime is pure Python; only curl (healthcheck) and the build toolchain
-# for any dependency without a manylinux wheel are needed.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+# No apt layer on purpose. The only system package that was ever wanted here is
+# `curl`, purely to back the HEALTHCHECK — and `python:3.13-slim` ships a full
+# CPython, so the probe can be a stdlib one-liner instead. Dropping it removes a
+# build-time dependency on the Debian archive (which failed outright on the
+# authoring network: `bookworm/main` was unreachable while `bookworm-security`
+# and `bookworm-updates` resolved), keeps the image smaller, and leaves fewer
+# moving parts to audit.
+#
+# No compiler is needed either: every pinned dependency resolves to a
+# manylinux wheel (cryptography, Pillow, psutil, uvloop, httptools, watchfiles
+# all ship one), so a wheel-only install succeeds on this base image.
+#
+# ca-certificates is already present in python:3.13-slim; the runtime's own CA
+# validation (roveagent/core/ssl_guard.py) checks the certifi bundle that pip
+# installs, not the system store.
 
 WORKDIR /app
 
@@ -56,22 +66,40 @@ COPY scripts/roveagent-service.sh scripts/mock_llm_provider.py ./scripts/
 # `where = [".."]` resolves to /app, which is where roveagent/ now lives.
 RUN pip install --no-cache-dir -e "./roveagent[web]"
 
+# Non-root runtime user, created BEFORE the writable directories so ownership
+# can be assigned once, to the same UID, everywhere.
+#
+# Regression note (found by actually running the container, not by reading it):
+# an earlier revision chowned /data to 1000 while creating this user as 10001.
+# The container therefore started, served nothing, and failed its healthcheck
+# with `PermissionError: [Errno 13] Permission denied: '/data/tenants'` —
+# TenantManager creates <root>/tenants on first request. UID_RUNTIME is defined
+# once here so the two numbers cannot drift apart again.
+ARG UID_RUNTIME=10001
+RUN useradd --uid ${UID_RUNTIME} --create-home --shell /bin/bash rove
+
 # State root. Declared as a volume so chat sessions, tenant memory, audit
 # records and installed skills survive a container replacement — the audit
 # flagged "容器回收即丢" as a production blocker.
-RUN mkdir -p /data && chown -R 1000:1000 /data
+#
+# The ownership set here is what a fresh named volume inherits when Docker
+# initialises it from the image, so getting it right is what makes the mounted
+# volume writable by the non-root user.
+RUN mkdir -p /data \
+ && chown -R ${UID_RUNTIME}:${UID_RUNTIME} /data \
+ && chown -R ${UID_RUNTIME}:${UID_RUNTIME} /app
 
-# Non-root. UID 1000 matches the python image's default non-root expectations.
-RUN useradd --uid 10001 --create-home --shell /bin/bash rove \
- && chown -R 10001:10001 /app
-USER 10001
+USER ${UID_RUNTIME}
 
 EXPOSE 8788
 
 # Unauthenticated by design (see Runtime_Deployment_Report.md finding R-06);
 # the port is published only on the compose-internal network.
+#
+# Stdlib probe instead of curl: python:3.13-slim has no curl, and adding one
+# would mean an apt layer. urllib is always present.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD curl -fsS "http://127.0.0.1:${ROVEAGENT_PORT}/api/health" >/dev/null || exit 1
+  CMD python -c "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8788/api/health', timeout=4).status == 200 else 1)" || exit 1
 
 WORKDIR /app
 CMD ["bash", "scripts/roveagent-service.sh", "--host", "0.0.0.0", "--port", "8788"]

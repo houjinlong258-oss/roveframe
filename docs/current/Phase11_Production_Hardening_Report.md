@@ -119,18 +119,37 @@
 
 ## 2. 未完成项目
 
-### 2.1 本次范围内未验证
+### 2.1 容器验证：由 UNVERIFIED 转为已验证（Docker daemon 可用后补做）
 
-| ID | 项 | 原因 | 处置 |
-|---|---|---|---|
-| U-1 | `docker build` 两个镜像 | 本机 Docker daemon 不可用（`npipe:////./pipe/dockerDesktopLinuxEngine` 不存在），尝试启动 Docker Desktop 未成功 | 标注 UNVERIFIED；由 CI `docker` job 覆盖 |
-| U-2 | `docker compose up` 端到端 | 同上 | 同上 |
-| U-3 | 容器内 `pip install -e "./roveagent[web]"` | 同上 | 同上；本机 Python 依赖版本与 pin 不一致（R-05） |
-| U-4 | 镜像体积 / 层缓存 / 非 root 运行效果 | 同上 | 同上 |
+初稿时本机 Docker daemon 不可用，镜像构建标为 UNVERIFIED。daemon 可用后补做，**四项全部转正**：
 
-**未伪造验证。** 改为在真实进程上验证运行链（证据强度更高），镜像构建明确交回 CI。
+| 原 ID | 项 | 结果 |
+|---|---|---|
+| U-1 | `docker build` 两个镜像 | **exit 0**。runtime 567 MB；web 1.57 GB |
+| U-2 | `docker compose up` 端到端 | 栈启动成功；`roveagent` **healthy** 后 `web` 才启动 |
+| U-3 | 容器内 `pip install -e "./roveagent[web]"` | **成功**，全部 manylinux wheel，无需编译器，装到确切 pin 版本 |
+| U-4 | 非 root / 镜像内容 / 端口暴露 | 非 root（1000 / 10001）；镜像内无任何凭据文件；运行时端口不对外暴露 |
 
-### 2.2 审计清单中本次未处理的项
+补做过程中发现并修复两个**只有真正构建/运行才会暴露**的缺陷：
+
+- **B-01** `/data` 属主 UID（1000）与运行用户 UID（10001）不一致 → 容器启动后
+  `PermissionError: [Errno 13] Permission denied: '/data/tenants'`，healthcheck 失败。
+  改用单一 `ARG UID_RUNTIME` 同时驱动 `useradd` / `chown` / `USER`，消除漂移。
+- **B-02** HEALTHCHECK 依赖 `curl`，而 `node:22-slim` 与 `python:3.13-slim` 都没有 →
+  引入 apt 层，而构建时 Debian `bookworm/main` 索引不可达，构建直接失败。
+  改为 Node 22 内置 `fetch` 与 Python stdlib `urllib` 探针，去掉 apt 层。
+
+**这个结果验证了 UNVERIFIED 标注的价值**：两个缺陷读代码都看不出来，首次构建和首次运行各失败一次。
+
+### 2.2 本次范围内仍未解决
+
+| ID | 项 | 状态 |
+|---|---|---|
+| **F-C1** | 容器内 agent 工具调用**未经过 EnterpriseToolGate** | **未解决，根因未确定**。同机同消息对照：原生 7 条 gate 审计、容器 0 条且 `ROVEAGENT_GATE_TRACE=1` 零输出。机制已部分定位（`conversation_loop.py:7271-7276` 的工具名修复路径）。详见 `Runtime_Deployment_Report.md` §3.4 |
+| U-5 | F-C1 根因排查 | 排查中 Docker Desktop 引擎无响应（API 500），重启后本次未恢复 |
+| U-6 | 真实 Supabase 下的 web 容器端到端 | 有意未做：指向真实库会让 web 的 scheduler 对生产数据产生副作用 |
+
+### 2.3 审计清单中本次未处理的项
 
 本阶段聚焦"让它能部署"，以下审计项**未在本轮处理**：
 
@@ -232,7 +251,36 @@ PASS  roveAgentChat() tool turn reply 64 chars
 RESULT: link OK   exit=0
 ```
 
-### 4.3 一次"声称 vs 实际"的核对
+### 4.3 容器层面验证（12 项）
+
+| ID | 验证项 | 结果 |
+|---|---|---|
+| V-B1/V-B2 | 两个镜像构建 | **exit 0**（567 MB / 1.57 GB） |
+| V-B3 | Linux editable 安装 | 成功，确切 pin 版本（fastapi 0.133.1 等） |
+| V-B4 | 镜像内是否含 `scripts/deploy.env` | **不存在**；`*.env` 命中 0 |
+| V-B5 | `scripts/*.sql` 是否在镜像内 | 11 个，全部存在 |
+| V-B6 | 非 root | `uid=1000(node)` / `uid=10001(rove)` |
+| V-B7 | `docker compose up` | 成功；`service_healthy` 门生效 |
+| V-B8 | 容器内 `/api/health` | **HTTP 200** |
+| V-B9 | 容器内 `/api/agent/chat` | **HTTP 200**，`tool_turns=2` |
+| V-B10 | 运行时端口是否对外暴露 | host 侧不可达（符合设计） |
+| V-B11 | Gate 中间件是否装载 | `tool_execution` 链含（100 条策略，`fail_closed=True`） |
+| V-B12 | 容器内 gate 直连判定 + 审计 | 成功写入 `/data/audit/tool_gate.jsonl` |
+| **V-B13** | **容器内 agent 工具调用是否经 Gate** | **否 —— 0 条，对照原生 7 条（F-C1，未解决）** |
+
+### 4.4 一次方法学陷阱（记录在案）
+
+容器验证中，compose **没有 publish** runtime 端口（只有 `expose`），
+但我仍然从 host 访问 `127.0.0.1:8788` 得到了 200 —— 因为先前原生验证用的 uvicorn 进程**还在监听**。
+差一点把原生进程的响应记成容器证据。
+
+发现方式：检查 `Get-NetTCPConnection -LocalPort 8788` 的属主 PID，发现是宿主 python 而非容器。
+处理：杀掉该进程 → 确认 host 侧确实不可达 → 改从容器网络内部取证。
+
+这条与 §4.2 的 secret 扫描、以及"mock 回复文案不是证据"属同一类问题：
+**结论必须能追到产生它的那个主体**，否则证据链是断的。
+
+### 4.5 一次"声称 vs 实际"的核对
 
 Mock LLM 的回复文案写着"所有工具调用均经 EnterpriseToolGate 判定"。
 **这是脚本台词，不是证据**，因此独立核对：

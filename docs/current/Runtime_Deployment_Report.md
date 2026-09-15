@@ -109,32 +109,92 @@ Mock provider 的回复文案里写着"所有工具调用均经 EnterpriseToolGa
 即：agent loop 真的发起了工具调用、每次调用真的过了 Gate、Gate 真的按权限**拒绝**了
 （验证身份只带 `business:read`）。default-deny 与权限判定在生产配置下是活的。
 
-### 3.3 未验证项（UNVERIFIED）
+### 3.3 容器内验证（Docker daemon 可用后补做）
+
+原 §3.3 的 U-1/U-2/U-3 已全部转为**已验证**。
+
+| ID | 验证项 | 结果 |
+|---|---|---|
+| V-B1 | `docker build` 运行时镜像 | **exit 0**，`roveframe/roveagent-runtime:phase11`，567 MB |
+| V-B2 | `docker build` Web 镜像 | **exit 0**，`roveframe/web:phase11`，**1.57 GB** |
+| V-B3 | 容器内 `pip install -e "./roveagent[web]"`（U-3） | **成功**。全部依赖解析为 manylinux wheel，**无需编译器**；安装到 **pin 的确切版本**（fastapi 0.133.1 / starlette 1.3.1 / uvicorn 0.41.0） |
+| V-B4 | `scripts/deploy.env` 是否进入镜像层 | **不存在**（`.dockerignore` 生效）；镜像内 `*.env` 命中 0 |
+| V-B5 | `scripts/*.sql` 是否在镜像内 | 存在，**11 个**（启动期 DDL 依赖满足） |
+| V-B6 | 非 root 运行 | web `uid=1000(node)`；runtime `uid=10001(rove)` |
+| V-B7 | `docker compose up` | 栈启动成功；`roveagent` **healthy** 后 `web` 才启动（`depends_on: service_healthy` 生效） |
+| V-B8 | 容器内 `GET /api/health` | **HTTP 200** |
+| V-B9 | 容器内 `POST /api/agent/chat` | **HTTP 200**，agent 循环运行（日志 `tool_turns=2, api_calls=3`） |
+| V-B10 | 运行时端口是否对外暴露 | host 侧 `127.0.0.1:8788` **不可达**（compose 仅 `expose`，未 publish）——符合设计 |
+| V-B11 | Gate 是否装载 | `tool_execution` 中间件链含 `enterprise_gate_middleware`，`fail_closed=True`，**100 条策略** |
+| V-B12 | Gate 直连判定 + 审计落地（容器内） | `gate.authorize()` 写入审计成功，`audit_root()=/data/audit` |
+
+镜像构建阶段发现并修复的两个真实缺陷：
+
+| 缺陷 | 现象 | 修复 |
+|---|---|---|
+| **B-01** `/data` 属主 UID 与运行用户 UID 不一致 | 容器启动后 healthcheck 失败：`PermissionError: [Errno 13] Permission denied: '/data/tenants'`（`TenantManager` 在首次请求时创建该目录）。根因：`chown -R 1000:1000 /data` 与 `useradd --uid 10001` 两个数字不一致 | 改用单一 `ARG UID_RUNTIME` 同时驱动 `useradd`、`chown /data`、`chown /app`、`USER`，两个数字不可能再漂移 |
+| **B-02** HEALTHCHECK 依赖 `curl`，而基础镜像无 `curl` | 为装 `curl` 引入 apt 层，构建时 `deb.debian.org` 的 `bookworm/main` 索引不可达（`bookworm-security`/`bookworm-updates` 正常），构建直接失败 | 去掉 apt 层。web 用 Node 22 内置 `fetch`，runtime 用 Python stdlib `urllib` 做探针。镜像更小、依赖更少 |
+
+B-01 只在**真正运行容器**时才会暴露 —— 静态审阅 Dockerfile 看不出问题。这正是把镜像构建标为 UNVERIFIED 而不是"He 该没问题"的价值。
+
+### 3.4 未解决：容器内 agent 工具调用未经过 Gate（F-C1）
+
+这是本次容器验证中发现的一个**未解释的行为差异**，如实记录。
+
+在**同一台机器、同一条消息、同一组权限**下做对照：
+
+| | 原生进程 | 容器 |
+|---|---|---|
+| 消息 | `please read the README file` | 同左 |
+| `ROVEAGENT_GATE_TRACE` | `1` | `1` |
+| Mock 返回的工具 | `read_file` → 被改写为 `read_sales` | `read_file`（未改写） |
+| stderr `[gate-trace]` 行数 | **7** | **0** |
+| `tool_gate.jsonl` 新增条目 | **7**（`read_sales`，全部 `allowed=false`，`reason=permission denied: requires 'orders:read'`） | **0** |
+| 请求耗时 | 8164 ms | 104035 ms |
+
+已定位的机制：`roveagent/core/conversation_loop.py:7271-7276` 只在
+`tool_name not in agent.valid_tool_names` 时才做名称修复。
+原生环境里 `read_file` 不在 ceo agent 的 `valid_tool_names` 中 → 改写成 `read_sales` → 进入 Gate；
+容器里 `read_file` 未被改写 → 该次调用**没有产生任何 `[gate-trace]` 输出**。
+
+**已知：** 容器内 Gate 中间件确实已装载（V-B11）、确实可用（V-B12）、
+且 agent 循环确实运行了工具轮次（V-B9）。**未知：** 为什么这些工具轮次没有经过 `tool_execution` 中间件链。
+根因**未确定**，需要一轮定向排查。
+
+两项环境差异值得优先排查：容器内 `read_file` 是否真的在 `valid_tool_names` 中（若在，则工具集解析在两种环境下不同）；
+以及容器内是否存在绕过中间件链的派发路径（日志显示容器内发生了
+`Lazy-installing edge-tts==7.2.7` 这类**请求期惰性安装**，104 秒的延迟与之吻合，需确认它是否同时改变了工具派发路径）。
+
+在根因确定之前，**不应假定容器部署下 Gate 对 agent 发起的工具调用生效**。
+
+### 3.5 未验证项（UNVERIFIED，剩余）
 
 | ID | 项 | 原因 |
 |---|---|---|
-| U-1 | `docker build` 两个镜像 | 本机 Docker daemon 不可用（`npipe:////./pipe/dockerDesktopLinuxEngine` 不存在），已尝试启动 Docker Desktop 未成功 |
-| U-2 | `docker compose up` 端到端 | 同上 |
-| U-3 | 容器内 `pip install -e "./roveagent[web]"` | 同上。本机 Python 环境已装 fastapi/uvicorn，但版本与 pin 不一致（见 §6 R-05） |
-| U-4 | 镜像体量、层缓存、非 root 运行实际效果 | 同上 |
+| U-5 | F-C1 根因 | 见 §3.4。排查过程中 Docker Desktop 引擎无响应（API 500），重启后未能在本次恢复 |
+| U-6 | 真实 Supabase 下的端到端（web 容器 /api/health 200） | 有意未做：容器内用的是占位凭据，指向真实库会让 web 的 scheduler 对生产数据产生副作用 |
 
-缓解措施：CI 新增 `docker` job 会真实构建两个镜像（`.github/workflows/ci.yml`），
-使 U-1/U-3 在下次 CI 运行时自动转为已验证。
+容器内 `web` 服务的 `/api/health` 因占位数据库不可达而返回 503 —— 这是**正确**结果，
+而非缺陷：该端点本就是数据库就绪探针。
 
 ---
 
-## 4. Docker daemon 不可用的处理
+## 4. Docker daemon 的处理过程
+
+首次撰写时 daemon 不可用：
 
 ```
 docker version → failed to connect to the docker API at
                  npipe:////./pipe/dockerDesktopLinuxEngine
 ```
 
-已尝试：启动 `Docker Desktop.exe`。结果：daemon 仍未就绪。
+当时的处置：**不伪造验证**，改为用真实进程验证运行链（§3.1，证据强度更高），
+把镜像构建明确标为 UNVERIFIED，并写进 CI 使 U-1/U-3 必然被验证。
 
-处理原则：**不伪造验证**。改为用真实进程验证运行链（§3.1，证据强度更高），
-把镜像构建明确标为 UNVERIFIED，并写进 CI 使其必然被验证。
-未使用 `Dockerfile` 语法猜测代替构建结果。
+daemon 可用后（用户启动 Docker Desktop），补做了全部容器验证（§3.3）。
+实际结果证明这个流程是对的：镜像构建**首次尝试即失败**（apt 层，见 B-02），
+容器运行**首次尝试即失败**（UID 不匹配，见 B-01）。
+两处都不是"读代码能看出来"的问题。若当时用"看起来没问题"结案，这两个缺陷会带进生产。
 
 ---
 
@@ -172,8 +232,20 @@ V-12 已验证该行为。
 
 ## 7. 一句话结论
 
-运行链已建立并**在本机真实跑通**：Python 运行时启动、`/api/health` 200、`/api/agent/chat` 200、
+运行链已建立并**在两个层面都跑通**。
+
+原生进程层面：Python 运行时启动、`/api/health` 200、`/api/agent/chat` 200、
 agent 真实发起工具调用并经 EnterpriseToolGate 判定（含一次真实拒绝）、
-真实 TS 客户端模块到 Python 的链路 `link OK`、无凭据生产构建 exit 0、compose 通过语法与插值校验。
-821,458 行 Python 第一次在真实部署形态下运行。
-唯一未验证项是镜像构建本身（Docker daemon 在本机不可用），已标注 UNVERIFIED 并由 CI 的 `docker` job 接管验证。
+真实 TS 客户端模块到 Python 的链路 `link OK`、无凭据生产构建 exit 0。
+
+容器层面：两个镜像均构建成功（exit 0）；`docker compose up` 起栈，
+`roveagent` healthy 后 `web` 才启动；容器内 health 200、agent chat 200、
+运行时端口不对外暴露、镜像内无任何凭据文件、两个容器均以非 root 运行；
+Linux 上 `pip install -e "./roveagent[web]"` 首次被证明可行且装到确切 pin 版本。
+
+过程中发现并修复两个只有真正构建/运行容器才会暴露的缺陷（B-01 UID 不匹配导致
+`/data` 不可写、B-02 HEALTHCHECK 依赖基础镜像没有的 `curl`）。
+
+**一项未解决**：容器内 agent 发起的工具调用没有产生任何 Gate 评估（F-C1，见 §3.4）——
+原生环境同一请求产生 7 条。机制已部分定位（工具名修复路径），根因未确定。
+在澄清之前，不应假定容器部署下 Gate 对 agent 发起的工具调用生效。

@@ -1,0 +1,125 @@
+# ---------------------------------------------------------------------------
+# RoveFrame AI Business OS — minimal production run chain
+#
+# Phase 11 / Task 2. Two services, one shared state volume, no baked secrets.
+#
+#   web        Next.js 16 + custom server      :5000  (public)
+#   roveagent  Python FastAPI RoveAgent runtime :8788  (internal only)
+#
+# Every credential is required at run time via compose's `${VAR:?message}`
+# syntax, so `docker compose up` fails immediately and names the missing
+# variable instead of starting a container that answers 401/503 forever.
+#
+# Usage:
+#   cp docker/deploy.env.example docker/deploy.env   # then fill it in
+#   docker compose --env-file docker/deploy.env up -d --build
+#   curl -fsS http://localhost:5000/api/health
+#
+# NOTE ON `scripts/deploy.env`: the web image deliberately does NOT contain it
+# (see .dockerignore). src/storage/database/supabase-client.ts loads that file
+# with dotenv `override: true`, so a copy inside the image would silently win
+# over everything below — key rotation would need an image rebuild rather than a
+# restart. Inject through the environment, as this file does.
+# ---------------------------------------------------------------------------
+
+name: roveframe
+
+# Shared values. ROVEAGENT_API_KEY and ROVEAGENT_APPROVAL_SECRET MUST be two
+# DISTINCT secrets: roveagent/api/app.py rejects a request with 503 when they are
+# equal, because otherwise "holds the API key" would also mean "may sign approval
+# callbacks" and the separation of duties between caller and approver collapses.
+x-roveagent-secrets: &roveagent-secrets
+  ROVEAGENT_API_KEY: ${ROVEAGENT_API_KEY:?set ROVEAGENT_API_KEY (shared by both services)}
+  ROVEAGENT_APPROVAL_SECRET: ${ROVEAGENT_APPROVAL_SECRET:?set ROVEAGENT_APPROVAL_SECRET (must differ from ROVEAGENT_API_KEY)}
+
+services:
+
+  # -------------------------------------------------------------------------
+  # Python execution plane. This container is the reason /api/agent/chat can
+  # return 200 instead of 502.
+  # -------------------------------------------------------------------------
+  roveagent:
+    build:
+      context: .
+      dockerfile: Dockerfile.roveagent
+    image: roveframe/roveagent-runtime:phase11
+    restart: unless-stopped
+    environment:
+      <<: *roveagent-secrets
+
+      # Single data root. app.py reads ROVEAGENT_ROOT; ~everything else
+      # (logs, skills, auth.json, memory, plugin-data, cache) resolves through
+      # ROVEAGENT_HOME. Setting only one of them splits state across two roots.
+      ROVEAGENT_ROOT: /data
+      ROVEAGENT_HOME: /data
+
+      # --- LLM -----------------------------------------------------------------
+      # Required for /api/agent/chat. Without it the runtime answers 503 by
+      # design: it never fabricates an answer.
+      ROVEAGENT_LLM_API_KEY: ${ROVEAGENT_LLM_API_KEY:?set ROVEAGENT_LLM_API_KEY}
+      ROVEAGENT_LLM_BASE_URL: ${ROVEAGENT_LLM_BASE_URL:-}
+      ROVEAGENT_LLM_MODEL: ${ROVEAGENT_LLM_MODEL:-gpt-4o-mini}
+
+      # --- Reverse link (Python -> Next.js approval callbacks) -----------------
+      # Without this the runtime defaults to 127.0.0.1:5000, i.e. ITSELF, and
+      # task creation hard-fails with 503.
+      ROVEFRAME_INTERNAL_API_URL: ${ROVEFRAME_INTERNAL_API_URL:-http://web:5000}
+
+      # --- Test-only ----------------------------------------------------------
+      # Never enable in production: it makes the runtime accept a Mock LLM.
+      ROVEAGENT_TEST_MODE: ${ROVEAGENT_TEST_MODE:-false}
+    volumes:
+      - roveagent-data:/data
+    expose:
+      - "8788"
+    # Deliberately NOT published to the host: /api/health on this service is
+    # unauthenticated and reports the tenant count.
+    networks:
+      - roveframe
+
+  # -------------------------------------------------------------------------
+  # Web control plane.
+  # -------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    image: roveframe/web:phase11
+    restart: unless-stopped
+    depends_on:
+      roveagent:
+        condition: service_healthy
+    environment:
+      <<: *roveagent-secrets
+
+      # --- Database (external Supabase; no DB container needed) ---------------
+      COZE_SUPABASE_URL: ${COZE_SUPABASE_URL:?set COZE_SUPABASE_URL}
+      COZE_SUPABASE_ANON_KEY: ${COZE_SUPABASE_ANON_KEY:?set COZE_SUPABASE_ANON_KEY}
+      COZE_SUPABASE_SERVICE_ROLE_KEY: ${COZE_SUPABASE_SERVICE_ROLE_KEY:?set COZE_SUPABASE_SERVICE_ROLE_KEY}
+      COZE_SUPABASE_JWT_SECRET: ${COZE_SUPABASE_JWT_SECRET:-}
+
+      # AES-256-GCM key for provider/email credentials at rest. Required in
+      # production — src/lib/crypto.ts throws without it, and it must NOT be the
+      # same value as COZE_SUPABASE_SERVICE_ROLE_KEY (rotating the DB credential
+      # would otherwise make every stored credential permanently undecryptable).
+      ENCRYPTION_SECRET: ${ENCRYPTION_SECRET:?set ENCRYPTION_SECRET (must differ from the Supabase service key)}
+
+      # --- Link to the runtime ------------------------------------------------
+      ROVEAGENT_API_URL: http://roveagent:8788
+
+      COZE_PROJECT_ENV: PROD
+      PORT: "5000"
+    ports:
+      - "${WEB_PORT:-5000}:5000"
+    networks:
+      - roveframe
+
+volumes:
+  # Chat sessions, tenant memory, audit log, installed skills, task queue.
+  roveagent-data:
+
+networks:
+  roveframe:
+    driver: bridge

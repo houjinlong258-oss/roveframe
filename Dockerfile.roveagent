@@ -1,0 +1,77 @@
+# syntax=docker/dockerfile:1
+# ---------------------------------------------------------------------------
+# RoveFrame AI Business OS — RoveAgent Runtime (Python 3.13 / FastAPI)
+#
+# Phase 11 / Task 2. This is the container that makes the Python execution plane
+# reachable for the first time. Before it, `.coze` declared only
+# `requires = ["nodejs-24"]` and scripts/start.sh ran `node dist/server.js`
+# alone — the deployed artefact contained no Python, no FastAPI and no way to
+# start the runtime, so /api/agent/chat could only ever 502.
+#
+# Why an EDITABLE install (`pip install -e`):
+#   roveagent/pyproject.toml declares `[tool.setuptools.packages.find]
+#   where = [".."]`, i.e. the package root is the PARENT of roveagent/, so the
+#   project must be installed from a directory that contains roveagent/. More
+#   importantly its `[tool.setuptools.package-data]` only covers .md/.json/.yaml
+#   under skills_library and plugins — the tree also ships .mjs/.js/.html/.sh
+#   templates that no pattern matches. A non-editable `pip install .` would
+#   silently build a wheel with those templates missing. Editable keeps the
+#   source tree authoritative.
+#
+# Why python:3.13: pyproject requires >=3.11,<3.14. The two `sys_platform ==
+# 'win32'`-marked dependencies (tzdata, concurrent-log-handler) self-exclude on
+# Linux, and every Windows code path in the runtime is `sys.platform`-guarded.
+#
+# Why the repo's own launcher is the entrypoint: scripts/roveagent-service.sh
+# already (a) fails fast when ROVEAGENT_API_KEY / ROVEAGENT_APPROVAL_SECRET are
+# missing, (b) refuses to start when the approval secret equals the API key,
+# (c) unifies ROVEAGENT_HOME with ROVEAGENT_ROOT so state does not split across
+# two roots, and (d) can start the Mock LLM provider for contract testing.
+# Re-implementing that in the Dockerfile would be a second, divergent copy.
+# ---------------------------------------------------------------------------
+
+FROM python:3.13-slim-bookworm
+
+# The runtime is pure Python; only curl (healthcheck) and the build toolchain
+# for any dependency without a manylinux wheel are needed.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    ROVEAGENT_HOST=0.0.0.0 \
+    ROVEAGENT_PORT=8788 \
+    ROVEAGENT_ROOT=/data \
+    ROVEAGENT_HOME=/data
+
+# pip is used here only to install the project itself; the project's own package
+# manager rule (pnpm-only) governs JS dependencies, not Python ones.
+COPY roveagent/ ./roveagent/
+COPY scripts/roveagent-service.sh scripts/mock_llm_provider.py ./scripts/
+
+# `where = [".."]` resolves to /app, which is where roveagent/ now lives.
+RUN pip install --no-cache-dir -e "./roveagent[web]"
+
+# State root. Declared as a volume so chat sessions, tenant memory, audit
+# records and installed skills survive a container replacement — the audit
+# flagged "容器回收即丢" as a production blocker.
+RUN mkdir -p /data && chown -R 1000:1000 /data
+
+# Non-root. UID 1000 matches the python image's default non-root expectations.
+RUN useradd --uid 10001 --create-home --shell /bin/bash rove \
+ && chown -R 10001:10001 /app
+USER 10001
+
+EXPOSE 8788
+
+# Unauthenticated by design (see Runtime_Deployment_Report.md finding R-06);
+# the port is published only on the compose-internal network.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD curl -fsS "http://127.0.0.1:${ROVEAGENT_PORT}/api/health" >/dev/null || exit 1
+
+WORKDIR /app
+CMD ["bash", "scripts/roveagent-service.sh", "--host", "0.0.0.0", "--port", "8788"]

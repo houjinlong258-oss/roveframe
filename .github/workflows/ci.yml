@@ -1,14 +1,50 @@
 name: CI
 
+# ---------------------------------------------------------------------------
+# Phase 11 / Task 5 — production gate.
+#
+# Before this change CI ran four steps (install, ts-check, test, lint:build) on
+# the Node side only. Missing, and silently so: style lint, migration contract
+# validation, the production scan, the entire Python suite, the production
+# build, and any container build. ARCHITECTURE.md claimed eight gates; five of
+# them did not exist. A green check therefore proved nothing about whether the
+# product could be built or run.
+#
+# Three jobs now, one per plane, plus the container build:
+#
+#   web        lint -> migrations -> types -> tests -> scan -> BUILD
+#   roveagent  Linux install of the runtime + 795-test suite (offline)
+#   docker     both images actually build
+#
+# The `roveagent` job matters beyond running tests: it is the first time the
+# Python runtime's dependency set is installed on Linux by CI. The runtime is
+# deployed as a Linux container and its install path had never been exercised.
+# ---------------------------------------------------------------------------
+
 on:
   push:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keeps the Python runtime from making real provider calls during tests.
+  # scripts/run-python-tests.py also forces this, but setting it here makes the
+  # intent visible in the workflow.
+  ROVEAGENT_OFFLINE: "1"
+
 jobs:
-  validate:
+
+  # =========================================================================
+  # Control plane — Next.js / TypeScript
+  # =========================================================================
+  web:
+    name: web (types, tests, scan, build)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -22,11 +58,131 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Fast, pure-file checks first: they fail in seconds, not minutes.
+      - name: Migration contract (schema.ts vs scripts/*.sql)
+        run: pnpm validate:migrations
+
       - name: Type check
         run: pnpm ts-check
+
+      - name: Lint (build-blocking errors)
+        run: pnpm lint:build
+
+      - name: Lint (styles)
+        run: pnpm lint:style
 
       - name: Unit tests
         run: pnpm test
 
-      - name: Lint
-        run: pnpm lint:build
+      # Fails the build on committed credentials, placeholder branding,
+      # accidental globals and stray build artifacts.
+      - name: Production scan
+        run: pnpm scan:production
+
+      # The step that was missing entirely. A repository that cannot build
+      # cannot ship, and nothing here proved it could.
+      #
+      # Placeholder credentials are supplied deliberately: the build must not
+      # depend on real secrets. If it ever does, this job fails loudly, which is
+      # the correct outcome — a build that needs production credentials cannot
+      # be run on a pull request from a fork.
+      - name: Production build
+        env:
+          COZE_SUPABASE_URL: https://ci-placeholder.supabase.co
+          COZE_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+          COZE_SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+          COZE_SUPABASE_JWT_SECRET: ci-placeholder-jwt-secret
+          ENCRYPTION_SECRET: ci-placeholder-encryption-secret-not-a-real-key
+          COZE_PROJECT_ENV: PROD
+        run: pnpm build
+
+      - name: Upload build output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build-logs
+          path: |
+            .next/build-manifest.json
+            dist/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # =========================================================================
+  # Execution plane — Python RoveAgent runtime
+  # =========================================================================
+  roveagent:
+    name: roveagent (linux install + tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # roveagent/pyproject.toml: requires-python = ">=3.11,<3.14"
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install runtime with web extras
+        # This is also the Linux installability proof. The project uses an
+        # editable install on purpose: [tool.setuptools.package-data] does not
+        # cover the .mjs/.js/.html/.sh templates under skills_library, so a
+        # non-editable install would silently produce an incomplete artifact.
+        run: pip install -e "./roveagent[web]"
+
+      - name: Verify the FastAPI app imports
+        # Cheap, explicit smoke test: catches a broken dependency pin before the
+        # 795-test suite spends minutes discovering it.
+        run: python -c "from roveagent.api.app import create_app; app = create_app(); print('routes:', len(app.routes))"
+
+      - name: Python tests (offline — no provider spend)
+        run: python scripts/run-python-tests.py
+
+  # =========================================================================
+  # Container build — proves the deployment path, not just the source
+  # =========================================================================
+  docker:
+    name: docker (web + roveagent images)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Runs after the two source jobs so a broken build fails on the cheap
+      # runner rather than after two image builds.
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: false
+          build-args: |
+            NPM_REGISTRY=https://registry.npmjs.org
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+      - name: Build roveagent image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.roveagent
+          push: false
+          load: false
+          cache-from: type=gha,scope=roveagent
+          cache-to: type=gha,scope=roveagent,mode=max
+
+      - name: Validate compose file
+        # Proves the two services wire together with every required variable
+        # supplied, and that the file has no interpolation errors.
+        env:
+          ROVEAGENT_API_KEY: ci-placeholder-api-key
+          ROVEAGENT_APPROVAL_SECRET: ci-placeholder-approval-secret
+          COZE_SUPABASE_URL: https://ci-placeholder.supabase.co
+          COZE_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+          COZE_SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+          ENCRYPTION_SECRET: ci-placeholder-encryption-secret-not-a-real-key
+          ROVEAGENT_LLM_API_KEY: ci-placeholder-llm-key
+        run: docker compose -f docker-compose.yml config --quiet

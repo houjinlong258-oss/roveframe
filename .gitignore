@@ -203,3 +203,18 @@ scripts/deploy.env
 scripts/*.env
 *.env
 !.env.example
+
+# ---------------------------------------------------------------------------
+# Phase 12 / P1-9 — CJK fonts are PROVISIONED, not source.
+#
+# `scripts/setup-pdf-font.mjs` fetches Noto Sans SC (~17 MB, OFL) so Chinese
+# PDFs render instead of degrading, and `scripts/setup-cjk-font.mjs` copies a
+# system CJK font. The Dockerfile runs the fetch at build time, so the image
+# carries the font while the repository does not accumulate a 17 MB binary in
+# its history forever. public/fonts/README.md documents the discovery order and
+# stays tracked.
+# ---------------------------------------------------------------------------
+public/fonts/*.ttf
+public/fonts/*.otf
+public/fonts/*.ttc
+public/fonts/*.part

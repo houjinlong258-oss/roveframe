@@ -81,6 +81,26 @@ RUN NODE_OPTIONS="${NODE_OPTIONS:-} --no-deprecation" pnpm next build \
       --outDir dist --no-splitting --no-minify
 
 # ---------------------------------------------------------------------------
+# Phase 12 / P1-9 — provision a CJK font for PDF rendering.
+#
+# Slim Linux images ship no CJK font, and src/lib/artifacts/pdf-writer.ts then
+# degrades: Chinese PDFs lose their text. `public/fonts/` is candidate ③ in its
+# documented discovery order, so placing the font there fixes it with no code
+# change.
+#
+# Deliberately BEST-EFFORT (`|| echo`), for three reasons:
+#   * a missing font degrades exactly as it does today — it is not a NEW failure
+#     mode, so it must not fail an otherwise good build;
+#   * the font is fetched, not committed (17 MB does not belong in git history);
+#   * `COPY public` in the runner stage picks the file up automatically.
+#
+# Operators who cannot reach the network at build time can mount a font and set
+# RF_PDF_FONT — candidate ② in the discovery order, which outranks public/fonts.
+# ---------------------------------------------------------------------------
+RUN node scripts/setup-pdf-font.mjs \
+ || echo "WARN: CJK font unavailable — Chinese PDFs will degrade (set RF_PDF_FONT to override)"
+
+# ---------------------------------------------------------------------------
 # Stage 3 — runtime
 # ---------------------------------------------------------------------------
 FROM node:${NODE_VERSION}-bookworm-slim AS runner

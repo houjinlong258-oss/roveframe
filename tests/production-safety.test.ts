@@ -18,15 +18,16 @@ describe('production safety boundaries', () => {
     }
   });
 
-  test('production encryption refuses a missing secret', () => {
+  test('production encryption refuses a missing secret even when the service key is present', () => {
     const previousSecret = process.env.ENCRYPTION_SECRET;
     const previousServiceKey = process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
     const previousEnv = process.env.COZE_PROJECT_ENV;
     delete process.env.ENCRYPTION_SECRET;
-    // 必须同时清掉 service_role_key：getKey() 在 ENCRYPTION_SECRET 缺失时会回落到它。
-    // 原用例只删 ENCRYPTION_SECRET，在 service_role_key 存在时不会抛错 —— 它此前
-    // 之所以是绿的，只是因为那个进程恰好没有加载 scripts/deploy.env。属于偶然通过。
-    delete process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
+    // Phase 12 / R-03: the service key must NOT rescue a missing secret. Before
+    // the fix this test had to delete the service key too, because its presence
+    // silently supplied the encryption key — meaning the production guard could
+    // never actually fire in a real deployment, where that key always exists.
+    process.env.COZE_SUPABASE_SERVICE_ROLE_KEY = 'present-but-must-not-be-used';
     process.env.COZE_PROJECT_ENV = 'PROD';
     try {
       assert.throws(() => encrypt('must not use a default key'), /ENCRYPTION_SECRET is required/);
@@ -40,54 +41,79 @@ describe('production safety boundaries', () => {
     }
   });
 
-  // 锁定「不得静默回落」这一契约，并记录已知有害但暂时保留的兼容行为
-  // （技术债登记 P1-15：数据库超级凭据被复用为加密密钥，轮换即导致
-  // 全部已落库凭据永久不可解密）。彻底修复需部署侧先提供 ENCRYPTION_SECRET。
-  test('missing ENCRYPTION_SECRET falls back to the service key and warns', () => {
+  // Phase 12 / R-03：旧契约（「缺 ENCRYPTION_SECRET 时回落到 service_role_key 并告警」）
+  // 已被删除。该回落把数据库超级凭据复用为加密密钥，轮换即导致全部已落库凭据
+  // 永久不可解密 —— 从"已知有害但保留"升级为"不再存在"。
+  // 下面三个用例锁定替代它的契约。
+  test('the service key is never used as an encryption key', () => {
     const previousSecret = process.env.ENCRYPTION_SECRET;
     const previousServiceKey = process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
-    delete process.env.ENCRYPTION_SECRET;
-    process.env.COZE_SUPABASE_SERVICE_ROLE_KEY = 'service-role-key-as-encryption-key';
-    const warnings: string[] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => {
-      warnings.push(args.map(String).join(' '));
-    };
     try {
-      const payload = encrypt('tenant credential');
+      process.env.ENCRYPTION_SECRET = 'dedicated-encryption-secret';
+      process.env.COZE_SUPABASE_SERVICE_ROLE_KEY = 'service-role-key-that-must-be-ignored';
 
-      // 1) 功能仍然可用（非破坏性改动）
+      const payload = encrypt('tenant credential');
       assert.equal(decrypt(payload), 'tenant credential');
 
-      // 2) 密钥确实派生自 service_role_key，而不是开发默认值
-      const expectedKey = crypto
+      // 用 service_role_key 派生的密钥必须**解不开**它。
+      // 这是整个 R-03 修复的核心保证，且与环境（prod/dev）无关，
+      // 因此不需要操纵 NODE_ENV（它是只读属性，直接赋值过不了 ts-check）。
+      const forbiddenKey = crypto
         .createHash('sha256')
-        .update('service-role-key-as-encryption-key')
+        .update('service-role-key-that-must-be-ignored')
         .digest();
       const [ivB64, tagB64, dataB64] = payload.split('.');
-      const decipher = crypto.createDecipheriv(
-        'aes-256-gcm',
-        expectedKey,
-        Buffer.from(ivB64, 'base64'),
-      );
-      decipher.setAuthTag(Buffer.from(tagB64, 'base64'));
-      const plain = Buffer.concat([
-        decipher.update(Buffer.from(dataB64, 'base64')),
-        decipher.final(),
-      ]).toString('utf8');
-      assert.equal(plain, 'tenant credential');
-
-      // 3) 必须打印告警 —— 静默回落是不可接受的
-      assert.ok(
-        warnings.some((line) => line.includes('COZE_SUPABASE_SERVICE_ROLE_KEY')),
-        '回落到数据库超级凭据时必须打印告警',
-      );
+      assert.throws(() => {
+        const decipher = crypto.createDecipheriv(
+          'aes-256-gcm',
+          forbiddenKey,
+          Buffer.from(ivB64, 'base64'),
+        );
+        decipher.setAuthTag(Buffer.from(tagB64, 'base64'));
+        Buffer.concat([decipher.update(Buffer.from(dataB64, 'base64')), decipher.final()]);
+      }, 'service_role_key 不得能解开任何密文');
     } finally {
-      console.warn = originalWarn;
       if (previousSecret === undefined) delete process.env.ENCRYPTION_SECRET;
       else process.env.ENCRYPTION_SECRET = previousSecret;
       if (previousServiceKey === undefined) delete process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
       else process.env.COZE_SUPABASE_SERVICE_ROLE_KEY = previousServiceKey;
+    }
+  });
+
+  test('ENCRYPTION_SECRET_PREVIOUS decrypts old ciphertext but never encrypts', () => {
+    const saved = {
+      secret: process.env.ENCRYPTION_SECRET,
+      previous: process.env.ENCRYPTION_SECRET_PREVIOUS,
+      env: process.env.COZE_PROJECT_ENV,
+    };
+    try {
+      // 1) 用「旧密钥」写一条密文（模拟历史数据）
+      process.env.ENCRYPTION_SECRET = 'old-rotated-secret';
+      delete process.env.ENCRYPTION_SECRET_PREVIOUS;
+      const legacy = encrypt('legacy credential');
+
+      // 2) 轮换：新密钥生效，旧密钥降级为只读
+      process.env.ENCRYPTION_SECRET = 'new-dedicated-secret';
+      process.env.ENCRYPTION_SECRET_PREVIOUS = 'old-rotated-secret';
+
+      // 历史数据仍可读 —— 轮换不再是破坏性操作
+      assert.equal(decrypt(legacy), 'legacy credential');
+
+      // 新写入必须用新密钥：拿旧密钥解不开
+      const fresh = encrypt('fresh credential');
+      delete process.env.ENCRYPTION_SECRET_PREVIOUS;
+      assert.equal(decrypt(fresh), 'fresh credential');
+
+      process.env.ENCRYPTION_SECRET = 'old-rotated-secret';
+      delete process.env.ENCRYPTION_SECRET_PREVIOUS;
+      assert.throws(() => decrypt(fresh), '新密文不得能用旧密钥解开');
+    } finally {
+      if (saved.secret === undefined) delete process.env.ENCRYPTION_SECRET;
+      else process.env.ENCRYPTION_SECRET = saved.secret;
+      if (saved.previous === undefined) delete process.env.ENCRYPTION_SECRET_PREVIOUS;
+      else process.env.ENCRYPTION_SECRET_PREVIOUS = saved.previous;
+      if (saved.env === undefined) delete process.env.COZE_PROJECT_ENV;
+      else process.env.COZE_PROJECT_ENV = saved.env;
     }
   });
 

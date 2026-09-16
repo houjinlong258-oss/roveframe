@@ -66,14 +66,22 @@ services:
       ROVEFRAME_INTERNAL_API_URL: ${ROVEFRAME_INTERNAL_API_URL:-http://web:5000}
 
       # --- Test-only ----------------------------------------------------------
-      # Never enable in production: it makes the runtime accept a Mock LLM.
+      # Never enable in production. Since Phase 12 this is enforced in CODE
+      # (roveagent/api/app.py::create_app), not only by the launcher script:
+      # ROVEAGENT_TEST_MODE plus a production signal makes the runtime refuse to
+      # start, because test mode lets the kernel accept a Mock LLM — i.e.
+      # fabricated answers. The launcher could always be bypassed by running
+      # uvicorn directly; a code-level guard cannot.
       ROVEAGENT_TEST_MODE: ${ROVEAGENT_TEST_MODE:-false}
+      # The production signal that guard binds to.
+      ROVEAGENT_ENV: production
     volumes:
       - roveagent-data:/data
     expose:
       - "8788"
-    # Deliberately NOT published to the host: /api/health on this service is
-    # unauthenticated and reports the tenant count.
+    # Deliberately NOT published to the host. /api/health is unauthenticated by
+    # design (container HEALTHCHECK), but since Phase 12 it exposes liveness
+    # only — no tenant count, no business fields, no disk side effects.
     networks:
       - roveframe
 

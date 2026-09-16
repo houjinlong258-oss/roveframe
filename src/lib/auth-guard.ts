@@ -102,6 +102,8 @@ export function injectRfHeaders(headers: Headers, user: AuthenticatedUser): void
 // ---------------------------------------------------------------------------
 
 const ROLE_CACHE_TTL_MS = 5 * 60_000;
+/** Phase 12 / P1-10：硬上限，保证内存有界（原实现只在超限时清过期项）。 */
+const ROLE_CACHE_MAX = 5_000;
 const roleCache = new Map<string, { role: Role; expiresAt: number }>();
 
 function b64urlDecode(input: string): Buffer {
@@ -170,6 +172,42 @@ export function verifyJwtLocally(token: string): LocalClaims | null {
   };
 }
 
+/**
+ * 向 TTL 缓存插入一条，并施加**硬上限**。
+ *
+ * Phase 12 / P1-10。原实现在 size 超阈值时只清理**已过期**的条目，而且
+ * token 侧的清理只挂在远程解析分支上：
+ *
+ *   · 配好 `COZE_SUPABASE_JWT_SECRET` 后（生产推荐配置）请求走本地验签分支，
+ *     那处清理**永远不会执行**；
+ *   · 即使执行，若同时在活的条目多于阈值（60s TTL 在持续负载下完全可能），
+ *     它一条也清不掉，Map 继续无界增长。
+ *
+ * 有界缓存必须有**无条件**的上限，而不是有条件的大扫除。这里先按过期清理，
+ * 仍然超限就按插入顺序淘汰最旧的（Map 保证插入顺序，短 TTL 下与 LRU 等价）。
+ */
+function rememberBounded<K, V extends { expiresAt: number }>(
+  cache: Map<K, V>,
+  key: K,
+  value: V,
+  max: number,
+  now: number,
+): void {
+  // 先删后插：让重复写入刷新插入顺序，避免热 key 被当成最旧淘汰。
+  cache.delete(key);
+  cache.set(key, value);
+  if (cache.size <= max) return;
+
+  for (const [k, v] of cache) {
+    if (v.expiresAt <= now) cache.delete(k);
+  }
+  while (cache.size > max) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
+
 function cachedRole(userId: string): Role | null {
   const hit = roleCache.get(userId);
   if (hit && hit.expiresAt > Date.now()) return hit.role;
@@ -178,13 +216,13 @@ function cachedRole(userId: string): Role | null {
 }
 
 function rememberRole(userId: string, role: Role): void {
-  roleCache.set(userId, { role, expiresAt: Date.now() + ROLE_CACHE_TTL_MS });
-  if (roleCache.size > 5000) {
-    const now = Date.now();
-    for (const [k, v] of roleCache) {
-      if (v.expiresAt <= now) roleCache.delete(k);
-    }
-  }
+  rememberBounded(
+    roleCache,
+    userId,
+    { role, expiresAt: Date.now() + ROLE_CACHE_TTL_MS },
+    ROLE_CACHE_MAX,
+    Date.now(),
+  );
 }
 
 // 演示模式（仅 RF_E2E_DEMO=1 且非生产）：自播种演示用户角色。
@@ -203,6 +241,16 @@ export function _clearAuthCaches(): void {
 }
 
 /**
+ * 测试用：读取两个鉴权缓存的当前条目数。
+ *
+ * Phase 12 / P1-10。上限本身是内存安全属性，无法从外部行为观察
+ * （缓存未命中只会表现为一次慢请求），因此需要这个读取口来钉住它。
+ */
+export function _authCacheSizes(): { token: number; role: number } {
+  return { token: tokenCache.size, role: roleCache.size };
+}
+
+/**
  * 测试用：预置 role 缓存。
  * 配合 COZE_SUPABASE_JWT_SECRET 构造的本地可验签 JWT，
  * 让测试在无 Supabase 环境下走通 withAuth 完整链路（含角色门控）。
@@ -217,6 +265,8 @@ interface CacheEntry {
 }
 
 const TOKEN_CACHE_TTL_MS = 60_000;
+/** Phase 12 / P1-10：硬上限，保证内存有界。 */
+const TOKEN_CACHE_MAX = 2_000;
 const tokenCache = new Map<string, CacheEntry>();
 
 export async function resolveRequestUser(
@@ -237,7 +287,15 @@ export async function resolveRequestUser(
     const role = cachedRole(local.userId);
     if (role) {
       const user: AuthenticatedUser = { ...local, role };
-      tokenCache.set(token, { user, expiresAt: now + TOKEN_CACHE_TTL_MS });
+      // Phase 12 / P1-10：走同一个有界写入。此前这一分支**完全没有**清理，
+      // 而它正是配了 JWT secret 之后的主路径。
+      rememberBounded(
+        tokenCache,
+        token,
+        { user, expiresAt: now + TOKEN_CACHE_TTL_MS },
+        TOKEN_CACHE_MAX,
+        now,
+      );
       return { ok: true, user };
     }
     // role 未缓存：落一次远程解析补齐（之后 5 分钟内都走本地）
@@ -250,16 +308,15 @@ export async function resolveRequestUser(
       return { ok: false, error: result.error };
     }
     rememberRole(result.data.userId, result.data.role);
-    tokenCache.set(token, {
-      user: result.data,
-      expiresAt: now + TOKEN_CACHE_TTL_MS,
-    });
-    // 防御性清理，避免缓存无界增长
-    if (tokenCache.size > 2000) {
-      for (const [k, v] of tokenCache) {
-        if (v.expiresAt <= now) tokenCache.delete(k);
-      }
-    }
+    // Phase 12 / P1-10：换成无条件硬上限（原实现只清过期项，
+    // 且仅挂在本分支上）。
+    rememberBounded(
+      tokenCache,
+      token,
+      { user: result.data, expiresAt: now + TOKEN_CACHE_TTL_MS },
+      TOKEN_CACHE_MAX,
+      now,
+    );
     return { ok: true, user: result.data };
   } catch (e) {
     // Supabase 未配置/不可达时 resolveUserByToken 会直接抛错；
@@ -331,3 +388,12 @@ export function withAuth<R extends Request = Request>(
     return handler(request, ctx);
   };
 }
+
+/**
+ * 测试用：两个缓存的上限，供断言引用而不是硬编码数字。
+ *
+ * 必须定义在 `TOKEN_CACHE_MAX` / `ROLE_CACHE_MAX` 之后：两者都是 `const`，
+ * 模块作用域里提前求值会命中 TDZ（实测报错
+ * `Cannot access 'TOKEN_CACHE_MAX' before initialization`）。
+ */
+export const _AUTH_CACHE_LIMITS = { token: TOKEN_CACHE_MAX, role: ROLE_CACHE_MAX } as const;

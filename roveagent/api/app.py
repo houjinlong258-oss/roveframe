@@ -303,7 +303,41 @@ class SkillInstallRequest(_TenantScopedRequest):
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
+def _production_mode_requested() -> bool:
+    """部署方是否声明了生产环境。"""
+    for var in ("ROVEAGENT_ENV", "COZE_PROJECT_ENV", "APP_ENV"):
+        if os.environ.get(var, "").strip().lower() in ("prod", "production"):
+            return True
+    return False
+
+
+def _test_mode_requested() -> bool:
+    return os.environ.get("ROVEAGENT_TEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def create_app():
+    # -----------------------------------------------------------------
+    # Phase 12 / R-07：ROVEAGENT_TEST_MODE 的代码级生产护栏。
+    #
+    # 该变量此前**只被 scripts/roveagent-service.sh 读取**，app.py 完全不认。
+    # 于是护栏取决于"用哪个脚本启动"：
+    #   · 绕过启动脚本直接 `uvicorn roveagent.api.app:get_app`（部署平台重启、
+    #     调试、自定义编排都会这么做）→ 护栏消失；
+    #   · 而 TEST_MODE 一旦生效，内核会接受 Mock LLM —— 在生产里等于
+    #     "任何人可以让 AI 返回编造内容"。
+    #
+    # 护栏放在代码里而不是脚本里，是因为脚本可以被绕过，代码不会。
+    # 显式放行仅用于 staging/集成测试：设置 ROVEAGENT_ALLOW_TEST_MODE=1。
+    # -----------------------------------------------------------------
+    if _test_mode_requested() and _production_mode_requested():
+        if os.environ.get("ROVEAGENT_ALLOW_TEST_MODE", "").strip() not in ("1", "true", "yes", "on"):
+            raise RuntimeError(
+                "ROVEAGENT_TEST_MODE is enabled while a production environment is declared "
+                "(ROVEAGENT_ENV/COZE_PROJECT_ENV/APP_ENV = prod). Test mode makes the kernel "
+                "accept a Mock LLM, i.e. fabricated answers. Refusing to start. "
+                "Set ROVEAGENT_ALLOW_TEST_MODE=1 only for staging/integration test runs."
+            )
+
     from fastapi import Depends, FastAPI, Header, HTTPException, Query
     from fastapi.responses import StreamingResponse
 
@@ -365,9 +399,38 @@ def create_app():
     # ---------------------------------------------------------------
     @app.get("/api/health")
     def health() -> dict[str, Any]:
+        """公开存活探针（Phase 12 / R-01）。
+
+        此端点**无鉴权**，因为容器 HEALTHCHECK 与负载均衡探针需要它。正因如此
+        它必须只暴露「进程是否活着」这一件事。修复前的实现有三个问题：
+
+        1. 调用了 ``get_context()``。那会实例化 ``ServiceContext`` →
+           ``RoveAgentKernel`` → ``self.root.mkdir(parents=True)`` ——
+           **一个公开探针会产生磁盘副作用**，并且首次探针特别慢。
+        2. 返回 ``tenants``（租户数量）—— 业务信息。任何能访问 8788 端口的人
+           都能持续观测该实例的租户规模。
+        3. 一旦 8788 被误发布到公网（compose 默认不发布，但 ``-p 8788:8788``
+           一行即可），上面两点同时成为对外泄漏。
+
+        现在：不建上下文、不返回业务字段、保持无鉴权。
+        详细信息移到 ``GET /api/health/detail``（需鉴权）。
+        """
+        return {"status": "ok", "service": "roveagent", "ts": time.time()}
+
+    @app.get("/api/health/detail", dependencies=[Depends(auth)])
+    def health_detail() -> dict[str, Any]:
+        """需鉴权的详细健康信息 —— 原先公开端点上泄漏内容的收容处。
+
+        同时保留一个有用的性质：它会真正实例化内核，因此调用方能据此确认
+        数据根可写、租户管理器可用，而不只是「进程还在」。
+        """
         ctx = get_context()
-        return {"status": "ok", "service": "roveagent", "ts": time.time(),
-                "tenants": len(ctx.kernel.tenants.list()) if hasattr(ctx.kernel.tenants, "list") else None}
+        return {
+            "status": "ok",
+            "service": "roveagent",
+            "ts": time.time(),
+            "tenants": len(ctx.kernel.tenants.list()) if hasattr(ctx.kernel.tenants, "list") else None,
+        }
 
     def _prepare_chat(req: ChatRequest):
         """``chat`` 与 ``chat_stream`` 共用的前置装配（Step 2 抽取，行为不变）。

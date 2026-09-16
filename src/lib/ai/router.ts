@@ -5,6 +5,7 @@ import { AUTO_ROUTE, PROVIDER_PRESETS, type Capability } from "@/lib/ai/provider
 import { REASONING_LEVELS, isNativeReasoningModel, type ModelPreference, type ReasoningLevel } from "@/lib/ai/model-registry";
 import { getCatalogEntry, runtimeProtocolOf } from "@/lib/ai/provider-catalog";
 import { AIError, classifyHTTPError } from "@/lib/ai/errors";
+import { providerBreaker } from "@/lib/ai/circuit-breaker";
 import { joinEndpoint, checkBaseUrl } from "@/lib/ai/url-utils";
 import { recordAIUsage } from "@/lib/ai/usage-ledger";
 import { assertSafeOutboundUrl, fetchWithOutboundGuard } from "@/lib/security/outbound-url";
@@ -367,9 +368,41 @@ function composeSignal(resolved: ResolvedModel, opts?: AICallOptions): AbortSign
   return opts?.signal ? AbortSignal.any([timeout, opts.signal]) : timeout;
 }
 
+/** 退避基数与上限（毫秒）。 */
+export const RETRY_BASE_DELAY_MS = 250;
+export const RETRY_MAX_DELAY_MS = 8_000;
+
 /**
- * 有界重试的外部 fetch：仅对 429/5xx/网络错误重试（maxRetries 次，指数退避），
- * 4xx 不重试。最终失败抛结构化 AIError（脱敏）。
+ * 第 `attempt` 次重试前的等待时间。
+ *
+ * Phase 12 / P1-7。原实现是 `250 * 2 ** (attempt - 1)` —— **完全确定性**。
+ * 当某个 provider 抖动时，所有并发请求会在同一毫秒一起重试，形成
+ * 惊群（thundering herd），把一次短暂抖动放大成对方看到的尖峰。抖动让
+ * 重试时刻分散开。
+ *
+ * 采用 equal jitter（一半固定 + 一半随机）而不是 full jitter：
+ * full jitter 可能产生接近 0 的延迟，等于放弃退避；equal jitter 保留
+ * 指数退避的下界，同时打散并发。上限 `RETRY_MAX_DELAY_MS` 防止
+ * `maxRetries` 较大时延迟失控。
+ *
+ * 导出仅供契约测试使用。
+ */
+export function retryDelayMs(attempt: number, random: () => number = Math.random): number {
+  const exponential = Math.min(
+    RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+    RETRY_MAX_DELAY_MS,
+  );
+  const half = exponential / 2;
+  return Math.round(half + random() * half);
+}
+
+/**
+ * 有界重试的外部 fetch：仅对 429/5xx/网络错误重试（maxRetries 次，指数退避 +
+ * 抖动），4xx 不重试。最终失败抛结构化 AIError（脱敏）。
+ *
+ * Phase 12 / P1-7：接入按 provider 的熔断器。熔断打开时**立即失败**，把请求
+ * 交给 failover 链，而不是先付满重试预算再换路。
+ *
  * 导出仅供契约测试使用。
  */
 export async function fetchWithResilience(
@@ -379,11 +412,30 @@ export async function fetchWithResilience(
   requestId: string,
   opts?: AICallOptions,
 ): Promise<Response> {
+  // 熔断按 provider 维度（一个 provider 宕机影响它的全部模型）。
+  // ResolvedModel.provider 是可选字段，这里落到 model 再落到常量，
+  // 保证 key 永远是 string —— 否则一个未命名的 provider 会绕过熔断。
+  const breakerKey = resolved.provider ?? resolved.model ?? "unknown-provider";
+  const gate = providerBreaker.canAttempt(breakerKey);
+  if (!gate.allowed) {
+    throw new AIError(
+      {
+        code: "provider_circuit_open",
+        provider: resolved.provider,
+        model: resolved.model,
+        requestId,
+        // 不可重试：交给 failover 换 provider 才有意义，原地重试只会继续压垮对方。
+        retryable: false,
+      },
+      `${resolved.provider} 连续失败已熔断，${Math.ceil(gate.retryAfterMs / 1000)}s 后重试`,
+    );
+  }
+
   const maxRetries = opts?.maxRetries ?? resolved.maxRetries;
   let lastError: AIError | null = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
-      await new Promise((r) => setTimeout(r, 250 * 2 ** (attempt - 1)));
+      await new Promise((r) => setTimeout(r, retryDelayMs(attempt)));
     }
     try {
       // 受控出站：重定向逐跳复检 + DNS 解析后逐地址拦截（allowLocal 仅非生产本地模型）
@@ -392,14 +444,21 @@ export async function fetchWithResilience(
         { ...init, signal: composeSignal(resolved, opts) },
         resolved.allowLocal ? { allowHttp: true, allowPrivate: true } : {},
       );
-      if (resp.ok) return resp;
+      if (resp.ok) {
+        // 成功即认为 provider 健康，清空该 provider 的连续失败计数。
+        providerBreaker.recordSuccess(breakerKey);
+        return resp;
+      }
       const { code, retryable } = classifyHTTPError(resp.status);
       const body = await resp.text().catch(() => "");
       lastError = new AIError(
         { code, provider: resolved.provider, model: resolved.model, status: resp.status, requestId, retryable },
         `${resolved.provider} 调用失败 (${resp.status}): ${body}`,
       );
-      if (!retryable) throw lastError;
+      if (!retryable) {
+        // 4xx 是配置/请求问题，不是 provider 健康问题 —— 不计入熔断。
+        throw lastError;
+      }
     } catch (err) {
       if (err instanceof AIError && !err.retryable) throw err;
       if (err instanceof AIError) {
@@ -432,6 +491,11 @@ export async function fetchWithResilience(
       );
     }
   }
+
+  // 整个调用（含全部重试）失败一次 = 熔断器记一次失败。
+  // 不按单次 attempt 计数：否则 maxRetries=3 时一次请求就能把阈值刷满。
+  providerBreaker.recordFailure(breakerKey);
+
   throw lastError ?? new AIError(
     { code: "provider_unavailable", provider: resolved.provider, model: resolved.model, requestId, retryable: false },
     "provider 调用失败",

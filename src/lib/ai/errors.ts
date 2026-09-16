@@ -11,6 +11,7 @@ export type AIErrorCode =
   | 'provider_timeout'
   | 'provider_rate_limited' // 429
   | 'provider_unavailable' // 5xx / 网络错误
+  | 'provider_circuit_open' // 熔断中：该 provider 连续失败已达阈值，快速失败交给 failover
   | 'provider_error' // 4xx 或 provider 返回的业务错误
   | 'stream_error'; // SSE 中途失败或 provider error event
 

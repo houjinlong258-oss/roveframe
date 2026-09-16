@@ -23,11 +23,34 @@ import {
 
 const intlMiddleware = createMiddleware(routing);
 
+/**
+ * Phase 12 / P0-4 —— 请求 id 贯通。
+ *
+ * 一次请求要能跨「中间件 → 路由 handler → 日志 → 上游 AI / Runtime」被串起来，
+ * 否则线上排查只能靠时间戳猜。此前只有零星几处自己生成 requestId（13 个文件
+ * 提到它），没有统一点，因此没有一条链路是完整可追的。
+ *
+ * 两条规则：
+ *   1. 优先复用调用方传入的 `x-request-id`（负载均衡/网关通常已生成），
+ *      这样跨服务是一次追踪而不是两次。
+ *   2. **但只接受形态受控的值。** 该 id 会进入日志；原样接受任意客户端字符串
+ *      等于开放日志注入（换行可伪造日志行、超长可撑爆日志）。不匹配就重新生成，
+ *      不报错 —— request id 的价值在于可追踪，不在于校验失败时中断请求。
+ */
+const REQUEST_ID_HEADER = 'x-request-id';
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{8,128}$/;
+
+function resolveRequestId(request: NextRequest): string {
+  const incoming = request.headers.get(REQUEST_ID_HEADER);
+  if (incoming && REQUEST_ID_PATTERN.test(incoming)) return incoming;
+  return globalThis.crypto.randomUUID();
+}
+
 function unauthorized(error: string): NextResponse {
   return NextResponse.json({ error: `unauthorized: ${error}` }, { status: 401 });
 }
 
-async function handleApiRequest(request: NextRequest): Promise<NextResponse> {
+async function handleApiRequest(request: NextRequest, requestId: string): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
 
   // 平台控制面：与商户会话完全分离，不走 Supabase 商户 token 边界，
@@ -35,6 +58,7 @@ async function handleApiRequest(request: NextRequest): Promise<NextResponse> {
   if (pathname.startsWith('/api/admin/')) {
     const headers = new Headers(request.headers);
     stripRfHeaders(headers);
+    headers.set(REQUEST_ID_HEADER, requestId);
     return NextResponse.next({ request: { headers } });
   }
 
@@ -42,6 +66,7 @@ async function handleApiRequest(request: NextRequest): Promise<NextResponse> {
   if (isPublicApiPath(pathname)) {
     const headers = new Headers(request.headers);
     stripRfHeaders(headers);
+    headers.set(REQUEST_ID_HEADER, requestId);
     return NextResponse.next({ request: { headers } });
   }
 
@@ -52,15 +77,24 @@ async function handleApiRequest(request: NextRequest): Promise<NextResponse> {
 
   const headers = new Headers(request.headers);
   injectRfHeaders(headers, resolved.user);
+  headers.set(REQUEST_ID_HEADER, requestId);
   return NextResponse.next({ request: { headers } });
 }
 
 export default async function proxy(request: NextRequest): Promise<NextResponse | Response> {
   const { pathname } = request.nextUrl;
+  const requestId = resolveRequestId(request);
+
+  // 回显在**所有**响应上，包括 401：鉴权失败恰恰是最需要追踪的一类请求。
   if (pathname.startsWith('/api/') || pathname === '/api') {
-    return handleApiRequest(request);
+    const response = await handleApiRequest(request, requestId);
+    response.headers.set(REQUEST_ID_HEADER, requestId);
+    return response;
   }
-  return intlMiddleware(request);
+
+  const response = intlMiddleware(request);
+  response.headers.set(REQUEST_ID_HEADER, requestId);
+  return response;
 }
 
 export const config = {

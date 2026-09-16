@@ -21,6 +21,9 @@
     "scan:production": "node scripts/production-scan.mjs all",
     "package:source": "python scripts/package-source.py",
     "validate:migrations": "node scripts/verify-migrations.mjs",
+    "backup": "node scripts/backup.mjs",
+    "backup:verify": "node scripts/backup.mjs --verify",
+    "drill:rollback": "node scripts/rollback-drill.mjs",
     "validate": "pnpm validate:migrations && pnpm ts-check && pnpm lint:build && pnpm lint:style && pnpm test && pnpm scan:production"
   },
   "dependencies": {

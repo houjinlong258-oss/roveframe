@@ -170,6 +170,10 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AsyncGenerato
           reasoning: input.reasoning ?? undefined,
           preference: input.preference ?? undefined,
           onEvent: input.onProviderEvent,
+          // Phase 12 / P1-6：把客户端断开信号传到真正的 LLM 流。
+          // 此前 signal 只给了 runAgentLoop（工具循环），两条 streamChatWithFailover
+          // 都没传 —— 于是客户端断线后上游生成会一直跑到结束，白烧算力与 provider 额度。
+          signal: input.signal,
         },
       );
       return;
@@ -219,6 +223,9 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AsyncGenerato
         reasoning: input.reasoning ?? undefined,
         preference: input.preference ?? undefined,
         onEvent: input.onProviderEvent,
+        // Phase 12 / P1-6：同上 —— synthesis 往往是最长的一次生成，
+        // 不接信号时它正是"客户端已走、模型还在写"的主要浪费来源。
+        signal: input.signal,
       },
     );
   })();

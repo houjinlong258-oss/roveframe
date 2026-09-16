@@ -286,7 +286,7 @@ function sseErrorEvent(error: unknown): AgentSseEvent {
  * 兼容层：delta 事件带 text 字段、error 事件带 error 字段。
  */
 export function agentSseResponse(
-  producer: (emit: (event: AgentSseEvent) => void) => Promise<void>,
+  producer: (emit: (event: AgentSseEvent) => void, signal: AbortSignal) => Promise<void>,
   /**
    * 资源清理回调。**必须由本函数在所有路径上调用一次**：
    * ReadableStream 的 start() 在构造时立即执行，因此 producer 的
@@ -298,6 +298,16 @@ export function agentSseResponse(
   onSettled?: () => void,
 ): Response {
   const encoder = new TextEncoder();
+  // Phase 12 / P1-6：客户端断开 → 中止上游生成。
+  //
+  // 此前客户端的断开只走到 onSettled（释放并发槽），**不会**停止 producer。
+  // 于是用户关掉页面/切走后，上游 LLM 仍会把整段回复生成完 —— 算力与
+  // provider 额度照付，且并发槽被一个没人要的结果占着。
+  //
+  // ReadableStream 的 cancel() 正是浏览器断开时的回调，用它来 abort。
+  // 信号最终落到 gateway.ts 的 streamChatWithFailover → fetchWithResilience
+  // 的 composeSignal，与超时信号合并（AbortSignal.any）。
+  const abortController = new AbortController();
   const readable = new ReadableStream({
     async start(controller) {
       let closed = false;
@@ -310,9 +320,10 @@ export function agentSseResponse(
         }
       };
       try {
-        await producer(emit);
+        await producer(emit, abortController.signal);
       } catch (error) {
-        emit(sseErrorEvent(error));
+        // 断线导致的中止不是错误，不该再往一个已经消失的流里写 error 事件。
+        if (!abortController.signal.aborted) emit(sseErrorEvent(error));
       } finally {
         if (!closed) {
           try {
@@ -334,6 +345,10 @@ export function agentSseResponse(
           // 清理失败不得覆盖已发送的响应
         }
       }
+    },
+    cancel() {
+      // 客户端断开。幂等：重复 abort 是 no-op。
+      abortController.abort();
     },
   });
   return new Response(readable, {
@@ -664,7 +679,7 @@ async function runChat(request: Request) {
     const artifactScope = { tenantId: ctx.tenantId, businessId: ctx.businessId };
     const canReadApprovals = hasPermission(ctx.role, 'approvals:read');
 
-    const response = agentSseResponse(async (emit) => {
+    const response = agentSseResponse(async (emit, streamSignal) => {
       // 工具的每一次开始/结束都实时推给前端（registry 的审计回调是唯一权威来源）
       const auditedContext = withAgentAudit({
         tenantId: ctx.tenantId,
@@ -730,7 +745,11 @@ async function runChat(request: Request) {
           messages,
           userMessage: body.message,
           forwardHeaders,
-          signal: request.signal,
+          // Phase 12 / P1-6：两个断开信号合并，任一触发即中止上游生成。
+          //   · request.signal —— 请求体流的中止信号（Next.js 在客户端断开时触发）
+          //   · streamSignal   —— ReadableStream.cancel() 产生的信号
+          // 两者在不同运行时的可靠性不同，取并集比赌其中一个更稳。
+          signal: AbortSignal.any([request.signal, streamSignal]),
           context: turnContext,
           preference,
           reasoning,

@@ -515,16 +515,30 @@ def container_argv(
     argv += ["--network", "bridge" if spec.network else "none"]
     argv += ["--read-only", "--tmpfs", "/tmp:rw,size=64m"]
     argv += ["--workdir", "/plugin"]
+    # Phase 13 / P1-3：bind 源路径必须规范化。
+    #
+    # `--mount` 用**逗号**分隔键值，而 Windows 绝对路径形如
+    # `C:\Users\...` —— 其中的 `:` 与 `\` 会把它解析坏，docker 直接报
+    # "Run 'docker run --help' for more information"，容器根本起不来。
+    #
+    # 这段 argv 此前从未被执行过（`plugin_tools.py` 硬编码 SUBPROCESS），
+    # 所以这个缺陷也从未暴露。第一次真跑就撞上了。
+    #
+    # 修法：统一成 POSIX 正斜杠形式（`C:/Users/...`）。Docker Desktop 与
+    # Linux 都接受该形式，而反斜杠形式只有 Windows 会出现、且在这里非法。
+    def _bind_src(path: Any) -> str:
+        return Path(path).resolve().as_posix()
+
     argv += ["--mount",
-             "type=bind,src=%s,dst=/plugin,readonly" % Path(plugin_path).resolve()]
+             "type=bind,src=%s,dst=/plugin,readonly" % _bind_src(plugin_path)]
     argv += ["--mount",
-             "type=bind,src=%s,dst=/opt/roveagent,readonly" % Path(root).resolve()]
+             "type=bind,src=%s,dst=/opt/roveagent,readonly" % _bind_src(root)]
     if spec.memory_mb:
         argv += ["--memory", "%dm" % spec.memory_mb]
     if spec.cpus:
         argv += ["--cpus", str(spec.cpus)]
     for extra in spec.writable_paths:
-        argv += ["--mount", "type=bind,src=%s,dst=%s" % (extra, extra)]
+        argv += ["--mount", "type=bind,src=%s,dst=%s" % (_bind_src(extra), extra)]
     argv += ["--env", "PYTHONPATH=/opt/roveagent"]
     argv += ["--env", "PYTHONIOENCODING=utf-8"]
     argv += ["--env", "ROVEAGENT_SANDBOXED_PLUGIN=1"]

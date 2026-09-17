@@ -54,6 +54,7 @@ from roveagent.api.plugin_isolation import (
     PluginSandboxProcess,
     SandboxError,
     SandboxSpec,
+    parse_sandbox_spec,
     evaluate_isolation,
 )
 from roveagent.api.plugin_trust import (
@@ -287,6 +288,39 @@ def resolve_plugin_manifest(plugin_path: Any, manifest: Any) -> Any:
     return merged
 
 
+def sandbox_spec_for_plugin(
+    plugin_path: Any, manifest: Any, *, timeout_s: float,
+) -> "SandboxSpec":
+    """按插件**自己声明的** sandbox 模式构造 SandboxSpec（Phase 13 / P1-3）。
+
+    修复前这里在两处硬编码 ``SandboxSpec(mode=IsolationMode.SUBPROCESS)``，
+    于是 ``plugin_isolation.container_argv()`` 那套完整的容器硬化参数
+    （``--network none`` / ``--read-only`` / ``--tmpfs`` / ``--user 65534``）
+    **永远不可能被执行** —— 不是因为没实现，而是因为没有任何调用点会把
+    ``mode`` 设成 CONTAINER。审计把这记作"容器模式是死代码"。
+
+    这与本模块自身的契约直接矛盾：``parse_sandbox_spec`` 的文档写着
+
+        A manifest that asks for confinement we cannot provide must NOT be
+        silently downgraded.
+
+    而硬编码 SUBPROCESS 恰恰就是那个静默降级：作者写了
+    ``sandbox: {mode: container}``，运行时却在进程里跑。
+
+    现在的行为：
+      · manifest 声明 container 且引擎可用  -> 真跑容器
+      · manifest 声明 container 但无引擎    -> ``PluginSandboxProcess.start()``
+        抛出 SandboxStartError（拒绝加载），不再静默降级
+      · manifest 未声明 / 声明 subprocess    -> 与修复前完全一致
+
+    ``timeout_s`` 仍来自策略，不被 manifest 覆盖（超时属运营策略而非插件诉求）。
+    """
+    resolved = resolve_plugin_manifest(plugin_path, manifest)
+    raw = resolved.get("sandbox") if isinstance(resolved, Mapping) else None
+    spec = parse_sandbox_spec(raw)
+    return dataclasses.replace(spec, timeout_s=timeout_s)
+
+
 def register_plugin_tools(
     plugin_name: str, plugin_path: Any, tool_names: Sequence[str], *,
     source: str = "", manifest: Any = None, assessment: Optional[TrustAssessment] = None,
@@ -356,7 +390,7 @@ def register_plugin_tools(
 
     bridge = bridge or PluginToolBridge(
         plugin_name, plugin_path, tools=[b.tool_name for b in bindings],
-        spec=SandboxSpec(mode=IsolationMode.SUBPROCESS, timeout_s=policy.timeout_s))
+        spec=sandbox_spec_for_plugin(plugin_path, manifest, timeout_s=policy.timeout_s))
 
     registered: list[str] = []
     for binding in bindings:
@@ -670,8 +704,8 @@ class SandboxPluginLoader:
             bridge = self._bridge_factory(
                 name, Path(raw_path) if not isinstance(raw_path, Path) else raw_path,
                 tools=tool_names,
-                spec=SandboxSpec(mode=IsolationMode.SUBPROCESS,
-                                 timeout_s=assessment.policy.timeout_s),
+                spec=sandbox_spec_for_plugin(
+                    raw_path, manifest, timeout_s=assessment.policy.timeout_s),
             )
             result = register_plugin_tools(
                 name, raw_path, tool_names, source=source, manifest=manifest,

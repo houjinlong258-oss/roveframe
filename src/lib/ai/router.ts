@@ -94,6 +94,15 @@ export interface AIRouteDiagnostics {
   model: string;
   usedFallback: boolean;
   fallbackReason: string | null;
+  /**
+   * Phase 15：该路由当前是否**真的可用**。
+   *
+   * `kind` 描述"会走哪条路"，`available` 描述"那条路现在通不通"。
+   * 二者必须分开：平台内置在没有凭据时（自部署 compose 的常态）
+   * 仍然是一条合法的路由选择，只是走不通。
+   * 目前只有 `peekAIRoute` 填充它；真实解析路径要么成功、要么抛错。
+   */
+  available?: boolean;
 }
 
 export interface ResolvedModel {
@@ -192,8 +201,84 @@ export interface ModelResolution {
   diagnostics: AIRouteDiagnostics;
 }
 
-function platformResolution(capability: Capability, requestId: string, usedFallback: boolean, fallbackReason: string | null): ModelResolution {
+/**
+ * 平台内置模型的凭据来源。
+ *
+ * ## 为什么需要这个（Phase 15）
+ *
+ * "平台内置"原本只有一条实现：`coze-coding-dev-sdk` 的 `LLMClient`，其凭据是
+ * 平台注入的 `COZE_API_TOKEN`。这个前提在**自部署**下不成立 —— compose 从不注入
+ * 该变量，于是 `auto` 回落必然抛 SDK 的原始报错
+ * `API key is required. Set COZE_API_TOKEN or provide apiKey in config`。
+ *
+ * 后果不是"少一个兜底"，而是：**新注册的商家一条消息都发不出去**。
+ * `/api/auth/signup` 不建 `settings` 行 ⇒ `model_assign` 视为 `auto`
+ * ⇒ 走平台内置 ⇒ 抛错。实测 8 个 tenant 只有 1 行 settings。
+ *
+ * 因此这里给自部署运营方一个**环境变量可选**的平台凭据：设置后，"平台内置"
+ * 走常规的 OpenAI 兼容通路（复用既有 `streamExternal`，零新增依赖）。
+ * 未设置时**保持原行为并 fail-closed**，但报错改成可操作的说明，不再透出 SDK 文案。
+ */
+function platformLLMConfig(): { apiKey: string; baseUrl: string; model?: string } | null {
+  const apiKey = process.env.ROVEFRAME_PLATFORM_LLM_API_KEY?.trim();
+  const baseUrl = process.env.ROVEFRAME_PLATFORM_LLM_BASE_URL?.trim();
+  if (!apiKey || !baseUrl) return null;
+  const model = process.env.ROVEFRAME_PLATFORM_LLM_MODEL?.trim();
+  return { apiKey, baseUrl, model: model || undefined };
+}
+
+/**
+ * 解析平台内置模型。
+ *
+ * 返回 `null` 表示**该候选不可用** —— 与 `resolveExternalModel` 同一约定：
+ * 故障切换链据此把它记成 skipped，而不是让一个不可用的候选抛错、打断整条链
+ * （链的职责是收集全部失败原因并汇报）。
+ * 直接对话路径必须自己处理 `null`：那里是"唯一选项"，要 fail-closed。
+ */
+function platformResolution(capability: Capability, requestId: string, usedFallback: boolean, fallbackReason: string | null): ModelResolution | null {
   const auto = AUTO_ROUTE[capability];
+  const selfHosted = platformLLMConfig();
+
+  if (selfHosted) {
+    // 运营方自备平台凭据：走 external 通路，协议为 OpenAI 兼容。
+    const model = selfHosted.model || auto.model;
+    const urlCheck = checkBaseUrl(selfHosted.baseUrl, { allowLocal: false });
+    if (!urlCheck.ok) {
+      // 配置错误是**运维错误**，不是"未接入"：必须显式报错，不能静默跳过。
+      throw new AIError(
+        { code: 'ssrf_blocked', provider: 'platform', model, requestId, retryable: false },
+        `ROVEFRAME_PLATFORM_LLM_BASE_URL 未通过安全校验 (${urlCheck.reason})`,
+      );
+    }
+    return {
+      resolved: {
+        kind: 'external',
+        provider: 'platform',
+        model,
+        temperature: auto.temperature,
+        apiKey: selfHosted.apiKey,
+        baseUrl: selfHosted.baseUrl,
+        protocol: 'openai',
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+        maxRetries: DEFAULT_MAX_RETRIES,
+        allowLocal: false,
+      },
+      diagnostics: {
+        requestId,
+        capability,
+        kind: 'external',
+        provider: 'platform',
+        model,
+        usedFallback,
+        fallbackReason,
+      },
+    };
+  }
+
+  // 未配置自部署凭据：只有平台确实注入了 COZE_API_TOKEN 时才能走 SDK 通路。
+  // 否则返回 null（"该候选不可用"），由调用方决定是跳过还是报错。
+  if (!process.env.COZE_API_TOKEN?.trim()) return null;
+
   return {
     resolved: {
       kind: "platform",
@@ -213,6 +298,29 @@ function platformResolution(capability: Capability, requestId: string, usedFallb
       fallbackReason,
     },
   };
+}
+
+/**
+ * 平台内置模型不可用时的统一报错文案。
+ *
+ * 直连路径（`resolveModelDetailed`）用它 fail-closed。
+ * 面向老板，所以必须说明**怎么修**，而不是透出 SDK 的
+ * "Set COZE_API_TOKEN or provide apiKey in config" —— 那句话与本案无关：
+ * 自部署场景的解法是接入服务商或由部署方提供平台凭据。
+ */
+function noPlatformProviderError(capability: Capability, requestId: string): AIError {
+  return new AIError(
+    {
+      code: 'no_provider',
+      provider: 'platform',
+      model: AUTO_ROUTE[capability].model,
+      requestId,
+      retryable: false,
+    },
+    '尚未配置 AI 服务商：请在该商家的设置页接入一个模型服务商，'
+    + '或由部署方设置 ROVEFRAME_PLATFORM_LLM_API_KEY / ROVEFRAME_PLATFORM_LLM_BASE_URL '
+    + '以提供平台内置模型。',
+  );
 }
 
 /**
@@ -318,6 +426,24 @@ async function resolveConfiguredProvider(
  * 不静默切换到平台模型。
  */
 async function resolveModelDetailed(capability: Capability, scope: AIRequestScope | null = null): Promise<ModelResolution> {
+  const result = await resolveModelDetailedInternal(capability, scope);
+  if (!result) throw noPlatformProviderError(capability, scope?.requestId ?? crypto.randomUUID());
+  return result;
+}
+
+/**
+ * 解析模型；平台内置不可用时返回 `null`，**不抛**。
+ *
+ * 拆出来的原因（Phase 15）：解析有两个调用方，失败语义不同。
+ *   - 真正要发请求的路径（`streamChat` / `invokeChat` / `resolvePlatformModel`）
+ *     必须 fail-closed 抛出可操作的错误；
+ *   - 诊断路径（`peekAIRoute`）只回答"会走哪条路由"，不该在一个诊断端点上抛错 ——
+ *     它应当**如实报告"平台候选不可用"**，让调用方看见原因。
+ */
+async function resolveModelDetailedInternal(
+  capability: Capability,
+  scope: AIRequestScope | null = null,
+): Promise<ModelResolution | null> {
   const requestId = scope?.requestId ?? crypto.randomUUID();
   const scopeCheck = validateModelResolutionScope(scope);
   if (!scopeCheck.ok) {
@@ -341,6 +467,7 @@ async function resolveModelDetailed(capability: Capability, scope: AIRequestScop
   const assign = (settingsRows?.[0]?.model_assign ?? {}) as Record<string, string>;
   const target = assign[capability] ?? "auto";
 
+  // 新注册商家走的正是这条：signup 不建 settings 行 ⇒ assign 为空 ⇒ "auto"。
   if (target === "auto" || !target.includes(":")) {
     return platformResolution(capability, requestId, false, null);
   }
@@ -544,11 +671,20 @@ export async function trackUsage(
   }
 }
 
-/** 平台内置模型的解析结果（故障切换链的最后一级兜底）。 */
+/**
+ * 平台内置模型的解析结果（故障切换链的最后一级兜底）。
+ *
+ * 返回 `null` = 该候选不可用（未注入 COZE_API_TOKEN，且未配置
+ * ROVEFRAME_PLATFORM_LLM_*）。调用方按 `resolveExternalModel` 的同一约定处理：
+ * **跳过并记录**，而不是抛错打断整条链。
+ *
+ * 判据是"有没有凭据"，不是"平台级还是租户级"：`AUTO_ROUTE` 的 `auto` 只是
+ * 模型名选择，凭据始终来自平台环境。
+ */
 export function resolvePlatformModel(
   capability: Capability,
   requestId?: string,
-): ModelResolution {
+): ModelResolution | null {
   return platformResolution(capability, requestId ?? crypto.randomUUID(), false, null);
 }
 
@@ -618,9 +754,49 @@ export async function invokeChat(
 }
 
 /** 诊断当前路由决策（设置页展示“实际使用的 provider/model/fallback”），不发起模型调用 */
+/**
+ * 预览路由决策（诊断用，**永不抛错**）。
+ *
+ * 为什么单独实现而不是复用 `resolveModelDetailed`：诊断端点只回答
+ * "会走哪条路由、为什么"，不应该因为"平台凭据没配"就抛错 ——
+ * 那恰恰是运维最需要看到的信息。
+ *
+ * 因此这里报告的是**会走哪条路由**（`kind` / `provider` / `model`），
+ * 并用 `available` 单独标明"该路由当前是否真的可用"（平台凭据是否存在）。
+ * 真正的调用路径仍然 fail-closed（见 `resolveModelDetailed`）。
+ */
 export async function peekAIRoute(capability: Capability, scope: AIRequestScope | null = null): Promise<AIRouteDiagnostics> {
-  const { diagnostics } = await resolveModelDetailed(capability, scope);
-  return diagnostics;
+  const requestId = scope?.requestId ?? crypto.randomUUID();
+  try {
+    const resolved = await resolveModelDetailedInternal(capability, scope);
+    if (resolved) return resolved.diagnostics;
+
+    // 解析成功但平台候选不可用：如实报告，不抛。
+    return {
+      requestId,
+      capability,
+      kind: 'platform',
+      provider: 'platform',
+      model: AUTO_ROUTE[capability].model,
+      usedFallback: false,
+      fallbackReason: 'no_provider',
+      available: false,
+    };
+  } catch (err) {
+    // 保留原语义：scope 形状错误（如 tenantId 有值但 businessId 缺失）仍要暴露，
+    // 因为那是调用方的编程错误，不是环境配置问题。
+    if (err instanceof Error && err.message.includes('business scope is required')) throw err;
+    return {
+      requestId,
+      capability,
+      kind: 'platform',
+      provider: 'platform',
+      model: AUTO_ROUTE[capability].model,
+      usedFallback: false,
+      fallbackReason: err instanceof Error ? err.message : 'route peek failed',
+      available: false,
+    };
+  }
 }
 
 /**

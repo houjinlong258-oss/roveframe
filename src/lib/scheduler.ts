@@ -27,16 +27,121 @@ let _lastSkipReason: string | null = null;
 let _lastSkipAt: string | null = null;
 
 /**
- * 调度器健康状态（供 preflight/health 使用）。
- * cron_state 缺失时不再是静默跳过：health 端点与启动自检必须显式失败并告警。
+ * 调度器心跳在 cron_state 里的键。
+ *
+ * Phase 15：为什么状态要落库，而不是只留在模块变量里。
+ *
+ * `/api/health` 导入的 `src/lib/scheduler.ts` 与 `src/server.ts` 启动的
+ * `startScheduler()` **不是同一个模块实例**（Next.js 给不同入口独立实例化）。
+ * 实测证据：`cron_state` 在容器启动 18 秒后就被调度器写入（`imap_sync.*`、
+ * `square_sync_throttle.*`），说明 tick 确实在跑；而同一时刻 `/api/health`
+ * 报 `cronStateReady: null` —— 路由侧那个实例从未被 `ensureCronState()` 置位。
+ *
+ * 后果：`degraded` 由这个空实例算出，恒为 false，**健康端点永远无法上报调度器降级**。
+ *
+ * 修法：把"调度器是否活着"变成**落库的事实**，由健康端点读取。
+ * 这样无论有几个模块实例、状态在谁身上，health 看到的都是真实调度器写下的证据。
+ * 心跳本身不引入任何新依赖，也不新增表（复用 cron_state）。
  */
-export function schedulerHealth(): { cronStateReady: boolean | null; degraded: boolean; lastSkipReason: string | null; lastSkipAt: string | null } {
+export const SCHEDULER_HEARTBEAT_KEY = 'scheduler.heartbeat';
+
+/**
+ * 健康状态（供 preflight/health 使用）。
+ *
+ * 判定优先级：
+ *   1. **心跳**（权威）：真调度器每 tick 写一行，任何模块实例都能读到；
+ *   2. 本实例的 `_cronStateReady`（回退）：心跳还没写过时（冷启动瞬间）用它；
+ *   3. 两者都没有 → `degraded: false` 且 `source: 'unknown'`，
+ *      **不谎报健康**：调用方能看到"还没有证据"，而不是把 null 当成正常。
+ */
+export async function schedulerHealth(): Promise<{
+  cronStateReady: boolean | null;
+  degraded: boolean;
+  lastSkipReason: string | null;
+  lastSkipAt: string | null;
+  lastTickAt: string | null;
+  tickAgeMs: number | null;
+  source: 'heartbeat' | 'instance' | 'unknown';
+}> {
+  const heartbeat = await readSchedulerHeartbeat();
+  if (heartbeat) {
+    return {
+      cronStateReady: heartbeat.cronStateReady,
+      degraded: heartbeat.cronStateReady === false,
+      lastSkipReason: heartbeat.lastSkipReason,
+      lastSkipAt: heartbeat.lastSkipAt,
+      lastTickAt: heartbeat.at,
+      tickAgeMs: Math.max(0, Date.now() - Date.parse(heartbeat.at)),
+      source: 'heartbeat',
+    };
+  }
+  const hasInstance = _cronStateReady !== null;
   return {
     cronStateReady: _cronStateReady,
     degraded: _cronStateReady === false,
     lastSkipReason: _lastSkipReason,
     lastSkipAt: _lastSkipAt,
+    lastTickAt: null,
+    tickAgeMs: null,
+    source: hasInstance ? 'instance' : 'unknown',
   };
+}
+
+interface SchedulerHeartbeat {
+  at: string;
+  cronStateReady: boolean;
+  lastSkipReason: string | null;
+  lastSkipAt: string | null;
+}
+
+/** 读调度器心跳。读不到（表缺失 / 无行 / 网络失败）返回 null，绝不抛。 */
+async function readSchedulerHeartbeat(): Promise<SchedulerHeartbeat | null> {
+  try {
+    const client = getSupabaseClient();
+    const { data, error } = await client
+      .from('cron_state')
+      .select('value')
+      .eq('key', SCHEDULER_HEARTBEAT_KEY)
+      .maybeSingle();
+    if (error || !data) return null;
+    const value = (data as { value: Record<string, unknown> | null }).value;
+    if (!value || typeof value.at !== 'string') return null;
+    return {
+      at: value.at,
+      cronStateReady: value.cronStateReady !== false,
+      lastSkipReason: typeof value.lastSkipReason === 'string' ? value.lastSkipReason : null,
+      lastSkipAt: typeof value.lastSkipAt === 'string' ? value.lastSkipAt : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 写一次心跳。由**真正在跑的**那个调度器实例在每个 tick 调用。
+ *
+ * 失败必须静默：心跳写不进去（例如 cron_state 缺失）不能反过来影响调度本身，
+ * 那只会把"健康信息不可用"升级成"调度不可用"。此时 health 会退到
+ * `source:'unknown'`，如实表示"没有证据"，而不是谎报健康。
+ */
+async function writeSchedulerHeartbeat(cronStateReady: boolean): Promise<void> {
+  try {
+    const client = getSupabaseClient();
+    await client.from('cron_state').upsert(
+      {
+        key: SCHEDULER_HEARTBEAT_KEY,
+        value: {
+          at: new Date().toISOString(),
+          cronStateReady,
+          lastSkipReason: _lastSkipReason,
+          lastSkipAt: _lastSkipAt,
+        },
+      },
+      { onConflict: 'key' },
+    );
+  } catch {
+    // 心跳是观测手段，不是调度前提；失败不得影响 tick。
+  }
 }
 
 async function ensureCronState(): Promise<boolean> {
@@ -368,7 +473,11 @@ export function _forceTickInFlightForTests(): void {
 
 async function runScheduledJobsInner(): Promise<void> {
   try {
-    if (!(await ensureCronState())) return;
+    const ready = await ensureCronState();
+    // Phase 15：每 tick 写一次心跳，**包括降级路径** —— 否则 cron_state 缺失时
+    // 心跳停摆，health 会退到 source:'unknown'，而真实原因（表缺失）就丢了。
+    await writeSchedulerHeartbeat(ready);
+    if (!ready) return;
 
     // 1. Run Durable Agent Tasks Engine Worker Loop
     try {

@@ -127,6 +127,19 @@ services:
       # `ENCRYPTION_SECRET_PREVIOUS` never reached the container.
       ENCRYPTION_SECRET_PREVIOUS: ${ENCRYPTION_SECRET_PREVIOUS:-}
 
+      # --- Platform built-in model (self-hosted) ------------------------------
+      # Without these AND without a platform-injected COZE_API_TOKEN, a tenant
+      # with model_assign "auto" has no working model at all. Newly registered
+      # businesses are exactly that case: signup creates no settings row, so
+      # every new merchant hits the built-in fallback, which carries no
+      # credential. Setting these gives it a working OpenAI-compatible endpoint.
+      #
+      # Listed here on purpose: compose passes an explicit whitelist, so a
+      # variable added only to docker/deploy.env is silently dropped.
+      ROVEFRAME_PLATFORM_LLM_API_KEY: ${ROVEFRAME_PLATFORM_LLM_API_KEY:-}
+      ROVEFRAME_PLATFORM_LLM_BASE_URL: ${ROVEFRAME_PLATFORM_LLM_BASE_URL:-}
+      ROVEFRAME_PLATFORM_LLM_MODEL: ${ROVEFRAME_PLATFORM_LLM_MODEL:-}
+
       # --- Link to the runtime ------------------------------------------------
       ROVEAGENT_API_URL: http://roveagent:8788
 

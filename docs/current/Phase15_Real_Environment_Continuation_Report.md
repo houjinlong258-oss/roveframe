@@ -441,11 +441,20 @@ health 里的 `scheduler` 字段**不代表真实调度器**。因为 `degraded`
 | 套件 | Phase 14 末 | Phase 15 末 | 结果 |
 |---|---|---|---|
 | Python | 812 | **812** | OK（skipped=4） |
-| TypeScript | 661 | **669**（+8） | 668 pass / 1 skip / **0 fail** |
+| TypeScript | 661 | **682**（+21） | 681 pass / 1 skip / **0 fail** |
 | `pnpm validate` | **不可达（exit 2）** | **exit 0** | 迁移契约 + ts-check + 双 lint + 测试 + 生产扫描 |
-| 生产扫描 | — | 2245 文件通过 | — |
+| 生产扫描 | — | 2253 文件通过 | — |
 
-新增 8 个 TS 用例：`tests/boot-check-failopen.test.ts`（4）+ `tests/migration-column-coverage.test.ts`（4）。
+新增 21 个 TS 用例：
+
+| 文件 | 数量 | 负向验证 |
+|---|---|---|
+| `tests/boot-check-failopen.test.ts` | 4 | 注入回归后 **1 例变红** |
+| `tests/migration-column-coverage.test.ts` | 4 | 注入回归后 **2 例变红** |
+| `tests/scheduler-health-visibility.test.ts` | 5 | 注入回归后 **1 例变红** |
+| `tests/platform-fallback-credentials.test.ts` | 8 | 注入初版抛错实现后 **2 例变红** |
+
+**4 个新守卫全部验证过"它们能失败"。**
 
 ---
 
@@ -455,8 +464,19 @@ health 里的 `scheduler` 字段**不代表真实调度器**。因为 `degraded`
 |---|---|
 | 镜像 | `roveframe/web:phase13` |
 | 构建器 | 经典构建器（`DOCKER_BUILDKIT=0`）—— 本机 `auth.docker.io` 仍不可达 |
-| 构建结果 | 成功。前两次被 `next build` 的构建期 `tsc` 拦下（暴露了 §3 与 §4 之前的问题），第三次因 `sha256:d9787cc3…` 层缓存损坏失败，`docker builder prune -f` 后重建成功 |
+| 构建结果 | 成功。前两次被 `next build` 的构建期 `tsc` 拦下（暴露了 §3 与 §4 之前的问题），一次因 `sha256:d9787cc3…` 层缓存损坏失败，`docker builder prune -f` 后重建成功 |
 | 容器 | `roveframe-web-1`，`Up (healthy)` |
+
+**构建踩坑记录（两条，都可复现）**：
+
+1. `docker builder prune -f` **清不掉经典构建器的层存储** —— 清完仍报
+   `failed to export image: No such image: sha256:…` 与
+   `failed to copy files: … symlink … no such file or directory`。
+   必须用 `docker build --no-cache`。
+2. `--no-cache` 会走 BuildKit，于是又撞上 `auth.docker.io`：
+   `failed to fetch oauth token: … dial tcp … connectex`。
+   `DOCKER_BUILDKIT=0` 必须与 `--no-cache` **同时**给出。
+   另注：每次 `pwsh` 调用是独立进程，`$env:` 不跨调用保留。
 
 **R-02 契约在真实容器上得到验证**（这是 `phase11` 缺失的部分）：
 
@@ -505,9 +525,10 @@ health 里的 `scheduler` 字段**不代表真实调度器**。因为 `degraded`
 | 项 | 状态 |
 |---|---|
 | 在真实库应用 `migrate-runtime-metadata.sql` | **UNVERIFIED** —— 本机无 DDL 凭据（已入自动迁移链，下一次带 DSN 的部署会创建）。已核实不存在 `exec_sql` 类 RPC，无法绕过：`migrate.sql` 只有 `claim_agent_task_runs` / `claim_notification_outbox` / `claim_daily_briefing_slot` 三个业务函数 |
-| 修复 scheduler 健康可见性 | **未做** —— 需架构决策（状态落库 / 调度器独立进程） |
+| 修复 scheduler 健康可见性 | **已修** —— 见 §19（心跳落库 + health 读心跳） |
 | APM / 指标导出 / 告警 / 日志聚合 / 备份调度 | **未做** —— 需引入外部系统 |
-| 新注册商家的平台内置模型回落 | **未做** —— 见 §18，需产品决策 |
+| 新注册商家的平台内置模型回落 | **已修（代码）** —— 见 §20。行为已单测覆盖；**端到端未验证**（本环境没有可用余额的 provider 密钥） |
+| 测试残留 tenant/business 清理 | **计划已生成，未执行** —— 见 §21 |
 | `agent_tasks` 10 行 `active` | **未查** —— 观察到未消费的任务队列，未判断是积压还是正常在途 |
 | `gateway/` 死代码处置 | **未做** —— 沿用 Phase 13 结论（活跃依赖，未删） |
 | P1-3 沙箱 L4 | **未做** |
@@ -578,7 +599,11 @@ Phase 12 给 `ENCRYPTION_SECRET` 赋了独立新值，于是这两行变成永�
 说明凭据已经真的被解开并送到了 DeepSeek。剩下的 402 是 **DeepSeek 账户余额不足**，
 属账户状态而非代码缺陷。
 
-### 18.4 仍未解决：新注册商家的 AI 完全不可用
+### 18.4 仍未解决：新注册商家在 TS 侧的模型回落不可用
+
+> **更正**：本节初稿写成「新注册商家的 AI 完全不可用」。该判断**过大**，
+> 已由 §20.6 的实测推翻 —— Agent 对话走 RoveAgent 运行时，不受此影响。
+> 以下保留修正后的准确描述。
 
 `_verify_settings_scope.mts` 实测（8 个 tenant / 仅 1 行 settings）：
 
@@ -590,17 +615,18 @@ Phase 12 给 `ENCRYPTION_SECRET` 赋了独立新值，于是这两行变成永�
 `/api/auth/signup` 建 tenant、business、auth user、public.users，
 但**不建 `settings` 行**。`resolveModelDetailed` 对 `auto` 走
 `platformResolution()`，该分支**不携带 `apiKey`**，而本环境未配置平台密钥 ——
-于是新商家在配置任何 provider 之前，AI 一律回
+于是 **TS 侧**的 `invokeChat` 调用回
 `API key is required. Set COZE_API_TOKEN or provide apiKey in config.`
+
+**影响面**：只有 TS 侧自己发起的轻量调用（当前是 `extractAndStoreMemory()`
+的 `invokeChat('light', …)`），后果是**企业长期记忆对新商家不沉淀**。
+AI 对话本身走 RoveAgent 运行时，凭据是 `ROVEFRAME_LLM_API_KEY`，不受影响。
 
 | 层面 | 判定 |
 |---|---|
 | 代码缺陷？ | **否** —— `auto` 回落平台内置是设计行为 |
-| 产品缺口？ | **是** —— 新商家开箱即用的路径依赖"平台密钥"，自部署场景下没有 |
-| 报错质量？ | 差 —— 面向老板的提示应说明"尚未配置 AI 服务商"，而不是 SDK 的原始报错 |
-
-未做改动（产品决策）。建议二选一：注册后引导配置 provider；
-或让 `auto` 在没有平台密钥时给出明确的可操作提示。
+| 产品缺口？ | **是** —— 平台回落的可用性依赖"平台密钥"，自部署场景下没有 |
+| 报错质量？ | 差（**已修**，见 §20）—— 面向老板的提示不该是 SDK 原始报错 |
 
 ### 18.5 顺带修正：文档中的列名
 
@@ -608,3 +634,152 @@ Phase 12 给 `ENCRYPTION_SECRET` 赋了独立新值，于是这两行变成永�
 `email_accounts.credentials` / `integration_configs.credentials` 为加密凭据列。
 实测三张表**均无此列**；真实列名为 `api_key_encrypted` 与 `credentials_encrypted`。
 `integration_configs` 的 10 列里没有任何疑似凭据列。
+
+---
+
+## 19. scheduler 健康可见性 —— 已修
+
+§10 记录了问题：调度器在跑（`cron_state` 有它写的行），但 `/api/health` 报的是
+**另一个模块实例**的状态，`degraded` 恒为 false。
+
+### 19.1 修法：把"调度器是否活着"变成落库的事实
+
+心跳写入 `cron_state` 的 `scheduler.heartbeat` 键，每 tick 一次；
+`schedulerHealth()` 优先读心跳，读不到才回退到本实例变量。
+
+这样无论有几个模块实例、状态在谁身上，health 看到的都是**真调度器写下的证据**。
+不新增依赖、不新增表（复用 `cron_state`）。
+
+### 19.2 顺带修掉一个同类的 fail-open
+
+`cronStateReady: null` + `degraded: false` 原本会让一个**从未跑过**的调度器
+看起来健康。现在 `/api/health` 额外要求：
+
+| 条件 | 判定 |
+|---|---|
+| `source === 'unknown'`（没有任何 tick 留下心跳） | **不健康** |
+| 心跳过期（`> 60s × 5`） | **不健康** |
+| `degraded`（`cron_state` 缺失） | 不健康（原有行为） |
+
+响应里新增 `scheduler.ok / heartbeatStale / lastTickAt / tickAgeMs / source`，
+让"为什么判不健康"可读。
+
+不会在正常启动时误报：`startScheduler()` 立即触发一次 tick，
+而容器健康检查有 90s 的 `start-period` 宽限。
+
+### 19.3 负向验证
+
+`tests/scheduler-health-visibility.test.ts`（5 例）。注入回归
+（删掉 `source !== 'unknown'` 判定）后**1 例变红**，还原后 5/5 绿。
+
+---
+
+## 20. 新注册商家的 AI 开箱不可用 —— 代码已修，端到端未验证
+
+### 20.1 问题（§18.4 已取证）
+
+`/api/auth/signup` 不建 `settings` 行 ⇒ `model_assign` 视为 `auto`
+⇒ 走 `platformResolution()` ⇒ 该分支只有一个实现：`coze-coding-dev-sdk` 的
+`LLMClient`，凭据是平台注入的 `COZE_API_TOKEN`。自部署 compose 从不注入它 ⇒
+新商家一条消息都发不出去，报 SDK 的原始文案。
+
+### 20.2 修法
+
+| 变更 | 内容 |
+|---|---|
+| 新增可选环境变量 | `ROVEFRAME_PLATFORM_LLM_API_KEY` / `_BASE_URL` / `_MODEL`。设置后"平台内置"走**既有**的 OpenAI 兼容通路（`streamExternal`），零新增依赖 |
+| base URL 安全 | 复用 `checkBaseUrl`，私网/链路本地地址**抛 `ssrf_blocked`**（配置错误必须显式报错，不静默跳过） |
+| 未配置时 | 返回 `null`（候选不可用），直连路径抛 `AIError(no_provider)`，文案改为**可操作**的说明，不再透出 SDK 文案 |
+| 故障切换链 | 平台不可用时记入 `skipped(not_configured)`，**不抛错** —— 链的职责是收集全部失败原因，一个候选抛错会吞掉其余 provider 的信息 |
+| compose 白名单 | 三个新变量同时加入 `docker-compose.yml`（否则重犯 §18.2 的静默丢弃） |
+
+### 20.3 过程中修正了我自己的一个设计错误
+
+初版让 `platformResolution()` 无条件抛 `no_provider`，结果**打断了故障切换链**，
+5 个既有用例变红。这暴露了分层错误：**"唯一选项"与"候选之一"不能用同一种失败语义**。
+改为返回 `null`（与既有 `resolveExternalModel` 同一约定），由调用方决定跳过还是报错。
+
+两个 failover 用例的**前提确实变了**，已就地改写并注明理由，未静默修改：
+
+| 用例 | 原前提 | 修正后 |
+|---|---|---|
+| `...degrades to the platform model only` | 平台永远可用 ⇒ 恰好 1 个候选 | 平台可用则 1 个候选；不可用则 0 候选 + `skipped` 记录原因 |
+| `...platform candidate is always last` | 平台候选总存在 | 显式注入 `COZE_API_TOKEN` 后再断言"它排最后" |
+
+### 20.4 验证边界（诚实说明）
+
+| 项 | 状态 |
+|---|---|
+| 行为单测（8 例，含 SSRF 拒绝与半配置） | **通过**；负向对照：还原初版抛错实现后 2 例变红 |
+| `resolvePlatformModel` 三分支 | **通过** |
+| 故障切换链跳过语义 | **通过** |
+| 新商家的**用户可见报错**（真实 HTTP） | **通过** —— 不再透出 SDK 文案，改为可操作说明 |
+| 新商家"能收到真实回复" | **通过，且与本修复无关** —— 见下 |
+
+### 20.6 更正：我在 §18.4 把影响面说大了
+
+<details>
+<summary>原文（保留）：§18.4 曾写「新注册商家的 AI 完全不可用」</summary>
+
+> **新注册商家的 AI 完全不可用** … 于是新商家在配置任何 provider 之前，
+> AI 一律回 `API key is required. Set COZE_API_TOKEN or provide apiKey in config.`
+
+</details>
+
+**该结论不成立。** 实测（`scripts/_verify_newtenant_error.mts`，真实注册 + 真实 HTTP）：
+
+| 观测 | 结果 |
+|---|---|
+| 新商家 chat 请求 | **HTTP 200** |
+| `runtime_status` | `mode: "roveagent"` |
+| 正文长度 | **1618 字符**（模型真的答了） |
+| `error` / `notice` 事件 | 无 |
+
+原因：**Agent 对话走的是 RoveAgent 运行时**，它的模型凭据是
+`ROVEFRAME_LLM_API_KEY`（compose 已注入），与 TS 侧 `model_assign` /
+平台内置回落是**两条独立通路**。我把"TS 侧平台回落不可用"错推成了"AI 不可用"。
+
+**真实影响面（修正后）**：只有 TS 侧自身发起的那条轻量调用受影响 ——
+即 `extractAndStoreMemory()` 的 `invokeChat('light', …)`。后果是
+**企业长期记忆对新商家不沉淀**（功能降级，非不可用），且代码已把它标为
+non-blocking 并捕获。
+
+修复仍然有价值：它把一条**静默失败的功能**变成有明确原因的失败，
+并给自部署运营方提供了让平台回落真正可用的开关。但它的严重度远低于我原先的描述。
+
+### 20.5 部署方需要做的
+
+二选一：
+
+1. 设置 `ROVEFRAME_PLATFORM_LLM_API_KEY` + `ROVEFRAME_PLATFORM_LLM_BASE_URL`
+   （见 `docker/deploy.env.example` 的说明）—— 让 TS 侧（记忆沉淀等）真正可用；**或**
+2. 让每个商家在设置页接入自己的服务商。
+
+不做也不会影响 AI 对话本身（走 Runtime）。
+
+---
+
+## 21. 测试残留清理计划（已生成，未执行）
+
+`scripts/_cleanup_test_residue.mts` 默认**零写入**，只打印计划；`--apply` 才删除。
+
+计划范围（**锚点显式排除**：tenant `000…000` / business `000…001`）：
+
+| 对象 | 数量 | 命名 |
+|---|---|---|
+| tenant | 7 | `rls-probe`、`424323`、5 个 `E2E Phase15 …` |
+| business | 6 | 同上（`rls-probe` 没有 business） |
+
+引用清点（删除顺序的依据，非零引用全部列出，不静默级联）：
+
+| tenant | 引用 |
+|---|---|
+| `rls-probe` | 无 |
+| `424323` | businesses=1, agent_tasks=2, agent_task_runs=19 |
+| 每个 `E2E Phase15 …` | businesses=1, users=1, chat_sessions=1, audit_events=3, agent_tasks=2, agent_approvals=1, agent_task_runs=3, inventory_items=1, ai_usage_ledger=1 |
+
+删除顺序：先删 `agent_task_runs`（`agent_tasks` 的子表，按 business 逐条），
+再按 `tenant_id` 删其余表（含 `businesses`），最后删 `tenants`。
+顺序反了会撞外键 23503。
+
+**未执行**：该操作不可逆，等确认。注意本轮验收又新增了 2 条（共 7 条 tenant）。

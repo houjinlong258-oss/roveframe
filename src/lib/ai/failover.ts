@@ -222,7 +222,19 @@ export async function resolveModelChain(
   }
 
   // 4. 平台内置兜底
+  //
+  // Phase 15：平台内置不再"永远可用" —— 它需要凭据（平台注入的
+  // COZE_API_TOKEN，或部署方配置的 ROVEFRAME_PLATFORM_LLM_*）。
+  // 自部署 compose 两者都没有，于是新注册商家（无 settings 行 ⇒ auto）会落到这里。
+  //
+  // 不可用时**跳过并记录原因**，与上面 tryExternal 的处理一致：链的职责是
+  // 收集全部失败原因并汇报（AllProvidersFailedError），一个不可用的候选
+  // 抛错会把其余 provider 的信息一起吞掉。
   const platform = resolvePlatformModel(capability, scope?.requestId);
+  if (!platform) {
+    skipped.push({ provider: 'platform', model: '', reason: 'not_configured' });
+    return { candidates, skipped, registry };
+  }
   push({
     provider: 'platform',
     model: platform.diagnostics.model,

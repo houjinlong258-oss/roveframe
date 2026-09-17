@@ -4,14 +4,38 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AllProvidersFailedError, resolveModelChain } from '../src/lib/ai/failover';
 
+/**
+ * Phase 15：这三个用例的**前提被修正过**，改动理由记录在此，不做静默修改。
+ *
+ * 原文断言"平台内置永远可用，因此候选链至少有一个 platform 候选"。
+ * 该前提在自部署下不成立：平台内置需要凭据（平台注入的 COZE_API_TOKEN，
+ * 或部署方配置的 ROVEFRAME_PLATFORM_LLM_*）。compose 两者都不注入，
+ * 于是 `resolvePlatformModel()` 现在返回 `null` 表示"该候选不可用"。
+ *
+ * 为什么是返回 null 而不是抛错：链的职责是收集全部失败原因并汇报
+ * （AllProvidersFailedError）。让一个不可用的候选抛错，会把其余 provider 的
+ * 失败信息一起吞掉 —— 这正是调用方需要看到的东西。
+ *
+ * 因此本文件断言的是**结构**：平台可用时它是最后一级兜底；
+ * 不可用时它进 skipped(not_configured)，候选链为空但**不抛错**。
+ */
+
 test('without a business scope the chain degrades to the platform model only', async () => {
   // 平台级 scope 不允许读取任何租户配置（防跨租户凭据滥用），
-  // 因此这里必须得到「唯一候选 = 平台内置」，且不触碰数据库。
+  // 因此候选池里只可能有平台内置这一项，且不触碰数据库。
   const chain = await resolveModelChain('agent', null, null);
-  assert.equal(chain.candidates.length, 1);
-  assert.equal(chain.candidates[0].provider, 'platform');
-  assert.equal(chain.candidates[0].source, 'platform');
   assert.equal(chain.registry.defaultProvider, null);
+  // 平台可用 ⇒ 唯一候选就是它；不可用 ⇒ 没有候选，但原因必须被记录。
+  if (chain.candidates.length > 0) {
+    assert.equal(chain.candidates.length, 1);
+    assert.equal(chain.candidates[0].provider, 'platform');
+    assert.equal(chain.candidates[0].source, 'platform');
+  } else {
+    assert.ok(
+      chain.skipped.some((s) => s.provider === 'platform'),
+      '没有候选时，平台必须以 skipped 的形式给出原因',
+    );
+  }
 });
 
 test('an explicit preference for an unconfigured provider is skipped, not fatal', async () => {
@@ -19,17 +43,23 @@ test('an explicit preference for an unconfigured provider is skipped, not fatal'
     provider: 'openai',
     model: 'gpt-5',
   });
-  assert.equal(chain.candidates.length, 1);
-  assert.equal(chain.candidates[0].provider, 'platform');
-  assert.deepEqual(chain.skipped, [
-    { provider: 'openai', model: 'gpt-5', reason: 'not_configured' },
-  ]);
+  // 未接入的 provider 必须进 skipped，而不是中断解析。
+  assert.deepEqual(
+    chain.skipped.filter((s) => s.provider === 'openai'),
+    [{ provider: 'openai', model: 'gpt-5', reason: 'not_configured' }],
+  );
 });
 
-test('the platform candidate is always last so external providers are preferred', async () => {
-  const chain = await resolveModelChain('agent', null, null);
-  const last = chain.candidates[chain.candidates.length - 1];
-  assert.equal(last.kind, 'platform');
+test('the platform candidate, when available, is always last', async () => {
+  process.env.COZE_API_TOKEN = 'platform-token-for-ordering-test';
+  try {
+    const chain = await resolveModelChain('agent', null, null);
+    assert.ok(chain.candidates.length > 0, '有平台凭据时应当至少有一个候选');
+    const last = chain.candidates[chain.candidates.length - 1];
+    assert.equal(last.kind, 'platform');
+  } finally {
+    delete process.env.COZE_API_TOKEN;
+  }
 });
 
 test('AllProvidersFailedError surfaces every provider reason without leaking keys', () => {

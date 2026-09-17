@@ -4,6 +4,7 @@ import next from 'next';
 import { startScheduler } from '@/lib/scheduler';
 import { runBootChecks } from '@/lib/boot-check';
 import { autoMigrate } from '@/lib/migration';
+import { assertRateLimitContract, rateLimitBackend } from '@/lib/rate-limit';
 
 const dev = process.env.COZE_PROJECT_ENV !== 'PROD';
 const hostname = process.env.HOSTNAME || 'localhost';
@@ -71,6 +72,18 @@ app
       );
       // 启动流程：自动建表 → 自检 → 定时任务
       //
+      // Phase 15：限流契约检查放在最前面。限流状态在进程内存里，
+      // 因此只在单副本下成立；部署方若声明已接入共享后端而实际没有，
+      // 必须在这里大声说出来（不阻止启动 —— 那是把降级升级成不可用）。
+      const rateLimitContract = assertRateLimitContract();
+      if (rateLimitContract) {
+        console.error(`✗ [rate-limit] 部署契约不成立：${rateLimitContract}`);
+      } else if (rateLimitBackend() === 'process-memory') {
+        console.warn(
+          '⚠️ [rate-limit] 使用进程内限流状态：本进程必须单副本运行。'
+          + '多副本会使注册/登录限流与聊天并发上限成倍放宽。',
+        );
+      }
       // R-04：整段加 `.catch()`。此前这里是 `void (async () => …)()`，而
       // `autoMigrate()` 在找不到 `scripts/*.sql` 时会**抛错**（migration.ts
       // 的 `migrationSql()`）—— 于是一个精简镜像（缺 SQL 文件）会以

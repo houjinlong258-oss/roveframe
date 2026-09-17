@@ -3,10 +3,67 @@ import { NextResponse } from 'next/server';
 /**
  * P0-1 集中限流（进程内固定窗口 + 指数退避 + 并发门 + 日配额）。
  *
- * 当前为单实例内存实现；多实例部署时请将内部 store 替换为共享后端（如 Redis），
- * 保持 checkFixedWindow / acquireSlot / noteFailure 接口不变（每实例各自计数的
- * 限流在多实例下会成倍放宽，属已知部署契约，见 ARCHITECTURE.md）。
+ * ## 部署契约（Phase 15 起显式化，并被测试守住）
+ *
+ * 本模块的状态在**进程内存**里：三个 `Map`。因此它只在**单副本**部署下成立。
+ *
+ * 多副本会怎样（算术推论，非实测）：N 个副本 ⇒ 每个副本各记一份计数 ⇒
+ * 注册/登录限流实际放宽 N 倍；每商户聊天并发上限从 4 变成 4N。
+ * 这不是"可能有问题"，而是"多开副本就失效"。
+ *
+ * ## 为什么没有直接换成共享后端
+ *
+ * 本模块的 API 是**同步**的（`checkFixedWindow` / `acquireSlot` 直接返回结果），
+ * 而 Redis 之类的共享后端本质是异步的。替换要改动全部调用点（当前 12 处）
+ * 并让它们变成 await —— 那是一次跨模块改造，不是一次依赖替换；
+ * 而且本仓库约束"零新增依赖"，进程内实现是当时唯一能落地的选择。
+ *
+ * 因此这里做的是：**把契约写清楚、可被检测、并在违反时出声**，
+ * 而不是假装支持多副本。
+ *
+ * ## 部署方要做的
+ *
+ * 单副本：什么都不用做（默认）。
+ * 多副本：设置 `ROVEFRAME_RATE_LIMIT_SHARED=1` **仅在你确实接入了共享后端之后**。
+ * 若设置了它却没有共享后端，启动时会报错 —— 这个变量是声明，不是开关。
  */
+
+/** 当前限流状态所在的存储类型 */
+export type RateLimitBackend = 'process-memory' | 'shared';
+
+/**
+ * 当前的限流后端。
+ *
+ * 只有真的接入了共享后端才应返回 `'shared'`。
+ * 环境变量 `ROVEFRAME_RATE_LIMIT_SHARED=1` 是**部署方的声明**：
+ * 声明了却仍是进程内实现时，`assertRateLimitContract()` 会失败。
+ */
+export function rateLimitBackend(): RateLimitBackend {
+  return process.env.ROVEFRAME_RATE_LIMIT_SHARED === '1' ? 'shared' : 'process-memory';
+}
+
+/** 本进程内是否已是共享后端（当前实现恒为 false，接入后改为 true） */
+function hasSharedBackend(): boolean {
+  // 进程内 Map 就是当前唯一实现；接入 Redis 等之后这里改为探测连接。
+  return false;
+}
+
+/**
+ * 校验部署契约。**在启动时调用**（`src/server.ts`）。
+ *
+ * 返回 null 表示契约成立；返回字符串表示违反，调用方应记录为错误级别。
+ * 之所以做成"返回原因"而不是抛错：限流状态不对不应阻止服务启动
+ * （那会把一个降级问题升级成不可用），但必须大声说出来。
+ */
+export function assertRateLimitContract(): string | null {
+  const backend = rateLimitBackend();
+  if (backend === 'shared' && !hasSharedBackend()) {
+    return 'ROVEFRAME_RATE_LIMIT_SHARED=1 已设置，但当前实现仍是进程内 Map。'
+      + '该变量是"已接入共享后端"的声明，不是开关 —— 现在多副本下限流会成倍放宽。'
+      + '要么接入共享后端，要么去掉这个变量。';
+  }
+  return null;
+}
 
 export interface RateDecision {
   ok: boolean;

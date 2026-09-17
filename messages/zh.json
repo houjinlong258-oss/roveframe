@@ -1033,7 +1033,9 @@
     "manualModelNote": "该服务商不支持模型列表发现，可手动填写模型 ID",
     "timeoutMs": "超时（毫秒）",
     "maxRetries": "重试次数",
-    "optInLocal": "允许本地/内网地址（http、loopback，显式 opt-in）"
+    "optInLocal": "允许本地/内网地址（http、loopback，显式 opt-in）",
+    "connectivityOnly": "仅连通性",
+    "erpConnectivityOnlyNotice": "连接测试已通过，但 ERPNext 的**数据同步尚未实现**。本商家显示的库存来自本地数据，不是 ERPNext。"
   },
   "store": {
     "all": "全部",

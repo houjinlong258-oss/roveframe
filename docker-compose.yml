@@ -140,6 +140,13 @@ services:
       ROVEFRAME_PLATFORM_LLM_BASE_URL: ${ROVEFRAME_PLATFORM_LLM_BASE_URL:-}
       ROVEFRAME_PLATFORM_LLM_MODEL: ${ROVEFRAME_PLATFORM_LLM_MODEL:-}
 
+      # --- Horizontal scaling contract (Phase 15) -----------------------------
+      # Rate limiting and chat concurrency slots live in process memory, so this
+      # service must run as a SINGLE replica. Listed here so a deployment that
+      # has genuinely moved that state to a shared backend can declare it; the
+      # server logs an error at startup if declared without such a backend.
+      ROVEFRAME_RATE_LIMIT_SHARED: ${ROVEFRAME_RATE_LIMIT_SHARED:-}
+
       # --- Link to the runtime ------------------------------------------------
       ROVEAGENT_API_URL: http://roveagent:8788
 

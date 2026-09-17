@@ -77,6 +77,17 @@ interface Integration {
   last_sync_at: string | null;
   status: string;
   recordCount: number;
+  /**
+   * Phase 15：该集成是否具备**真实的**数据同步实现。
+   *
+   * 由 `/api/integrations` 从 `src/lib/connectors/capabilities.ts` 带出，
+   * 与同步路由、状态写入共用同一事实源。
+   * 不能只看 `status`：不可同步的 provider 存的是 `connectivity_only`，
+   * 而它的意义是"连通性已验证、**数据不会同步**"。
+   */
+  syncable?: boolean;
+  /** 不可同步时给用户的说明（英文兜底，UI 可覆盖） */
+  capabilityNotice?: string | null;
 }
 
 const PROVIDER_INITIALS: Record<string, string> = {
@@ -533,8 +544,16 @@ export default function SettingsPage() {
     }
   };
 
-  const erp = integrations.find((i) => i.provider === 'erpnext' && i.status === 'connected');
-  const getInt = (p: string) => integrations.find((i) => i.provider === p && i.status === 'connected');
+  // Phase 15：已配置 ≠ 可用。
+  // 此前只看 `status === 'connected'`，而 connectIntegration 对**任何** provider
+  // 都写 'connected' —— 于是 ERPNext 填完地址就显示"已连接"，
+  // 尽管它的同步端点根本没有实现（数据永远不会到达）。
+  // 现在"已配置"与"数据真的会同步"分开表达：`erpConfigured` 控制是否展示配置面板，
+  // `erp`（要求 syncable）控制是否声称数据在同步。
+  const isConfigured = (i: Integration) => i.status === 'connected' || i.status === 'connectivity_only';
+  const erpConfigured = integrations.find((i) => i.provider === 'erpnext' && isConfigured(i));
+  const erp = erpConfigured && erpConfigured.syncable ? erpConfigured : undefined;
+  const getInt = (p: string) => integrations.find((i) => i.provider === p && isConfigured(i));
 
   const groups: { key: Group; icon: typeof Store; label: string }[] = [
     { key: 'business', icon: Store, label: t('groupBusiness') },
@@ -1017,15 +1036,28 @@ export default function SettingsPage() {
                     <div>
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-semibold">ERPNext</p>
-                        <StatusBadge connected={Boolean(erp)} connectedText={tc('connected')} disconnectedText={tc('notConfigured')} />
+                        {/* Phase 15：不可同步时不得显示 "Connected"。
+                            徽章文案由 syncable 决定，与后端能力表同一事实源。 */}
+                        <StatusBadge
+                          connected={Boolean(erp)}
+                          connectedText={tc('connected')}
+                          disconnectedText={erpConfigured ? t('connectivityOnly') : tc('notConfigured')}
+                        />
                       </div>
                       <p className="text-xs text-on-surface-variant mt-0.5">{t('erpNote')}</p>
                     </div>
                   </div>
                   <button onClick={() => setErpModal(true)} className="text-sm text-primary font-medium hover:underline">
-                    {erp ? tc('manage') : tc('configure')}
+                    {erpConfigured ? tc('manage') : tc('configure')}
                   </button>
                 </div>
+                {/* 已配置但不可同步：明确说明数据不会从此系统同步过来。
+                    库存在这种情况下显示的是本地数据 —— 不能让老板以为是 ERP 的库存。 */}
+                {erpConfigured && !erp && (
+                  <p className="text-xs rounded-md bg-surface-container-high text-on-surface-variant p-3 mb-4">
+                    {t('erpConnectivityOnlyNotice')}
+                  </p>
+                )}
                 {erp && (
                   <>
                     <div className="grid grid-cols-4 gap-3 mb-4">

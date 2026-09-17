@@ -29,8 +29,12 @@ const DEFAULT_BUSINESS = '00000000-0000-0000-0000-000000000001';
 
 /** 计划外对象的命名特征 —— 只有明确匹配的才纳入删除计划。
  *
- *  `NewTenant …` 由 `_verify_newtenant_error.mts` 创建（新商家报错验证）。 */
-const RESIDUE_NAME = /^(rls-probe|424323|E2E Phase15|NewTenant )/;
+ *  `NewTenant …` 由 `_verify_newtenant_error.mts` 创建（新商家报错验证）。
+ *  `ERP probe …` 由 `_verify_erp_status_http.mts` 创建（集成状态语义验证）。
+ *
+ *  **新增验收脚本时请沿用其中之一**，否则清理会漏掉它 ——
+ *  本项目要求显式清理，不做静默级联。 */
+const RESIDUE_NAME = /^(rls-probe|424323|E2E Phase15|NewTenant |ERP probe )/;
 
 const APPLY = process.argv.includes('--apply');
 

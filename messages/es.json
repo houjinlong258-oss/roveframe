@@ -1033,7 +1033,9 @@
     "manualModelNote": "Este proveedor no admite descubrimiento de modelos; ingrese el ID del modelo manualmente",
     "timeoutMs": "Tiempo de espera (ms)",
     "maxRetries": "Reintentos máximos",
-    "optInLocal": "Permitir direcciones locales/privadas (http, loopback, opt-in explícito)"
+    "optInLocal": "Permitir direcciones locales/privadas (http, loopback, opt-in explícito)",
+    "connectivityOnly": "Solo conectividad",
+    "erpConnectivityOnlyNotice": "La prueba de conexión fue correcta, pero la sincronización de datos desde ERPNext no está implementada. El inventario mostrado proviene de datos locales, no de ERPNext."
   },
   "store": {
     "all": "Todo",

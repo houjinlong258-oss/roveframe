@@ -1033,7 +1033,9 @@
     "manualModelNote": "This provider does not support model discovery; enter the model ID manually",
     "timeoutMs": "Timeout (ms)",
     "maxRetries": "Max retries",
-    "optInLocal": "Allow local/private addresses (http, loopback, explicit opt-in)"
+    "optInLocal": "Allow local/private addresses (http, loopback, explicit opt-in)",
+    "connectivityOnly": "Connectivity only",
+    "erpConnectivityOnlyNotice": "A connection test succeeded, but data sync from ERPNext is not implemented. Inventory shown for this business comes from local data, not from ERPNext."
   },
   "store": {
     "all": "All",

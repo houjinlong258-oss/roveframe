@@ -137,7 +137,52 @@ Mock provider 的回复文案里写着"所有工具调用均经 EnterpriseToolGa
 
 B-01 只在**真正运行容器**时才会暴露 —— 静态审阅 Dockerfile 看不出问题。这正是把镜像构建标为 UNVERIFIED 而不是"He 该没问题"的价值。
 
-### 3.4 未解决：容器内 agent 工具调用未经过 Gate（F-C1）
+### 3.4 F-C1：已解决（Phase 12）—— 不是安全问题
+
+**本节初稿的结论已被推翻，现更正。** 初稿称"容器内 agent 工具调用未经过 Gate"，
+并警告"在澄清之前不应假定 Gate 生效"。该警告过强。
+
+Phase 12 用同一容器、同一 Mock、同一请求，只把 agent 作为变量：
+
+| agent | Gate 审计增量 | `[gate-trace]` |
+|---|---|---|
+| `developer` | **+2** | `read_file`、`terminal` |
+| `ceo` | **+0** | 无 |
+
+`developer` 的工具调用**正常经 Gate 并留下审计** —— Gate 在容器里从未失效。
+
+ceo 的 0 条是**症状而非原因**：它的 `business` toolset 被 tool_search 的渐进式
+披露折叠成桥接工具（`tool_search`/`tool_call`），`read_sales` 等不再出现在
+`valid_tool_names` 中；模型发出的 `read_file` 因此被判无效并丢弃，
+**没有任何东西被派发，也就没有任何东西可被门控**。
+
+原生之所以"看起来正常"，只是因为本机缺 `snowballstemmer`（`pyproject.toml` 的
+pin 之一），使装配整段抛异常被 `model_tools.py` 的 except 分支跳过 ——
+**不是原生正确，而是原生恰好没开启该特性**。
+
+**真实缺陷**（功能正确性，非门控绕过）：dev 与 prod 因一个可选依赖而暴露不同
+工具接口，且 agent 会在什么都没执行的情况下返回"完成"（审计反复提到的「假响应」）。
+
+**修复**：`roveagent/toolsets.py` 的 `_ROVEAGENT_CORE_TOOLS` 纳入受治理的
+RoveFrame 业务工具。理由是治理模型以**工具名**为键（Gate 策略、审批总线、
+审计、TS `AgentToolRegistry`），折叠即失去可寻址性。
+
+修复后容器内 ceo 的 Gate 审计 **+0 → +7**，判定正确：
+`read_sales` allowed（已授予 `orders:read`）、`terminal` denied（缺 `admin:process`）、
+`read_file` allowed（已授予 `files:read`）。
+
+<details>
+<summary>初稿原文（保留以便对照，结论已作废）</summary>
+
+当时观察到 ceo 的请求在 `ROVEAGENT_GATE_TRACE=1` 下零输出、审计 0 条，
+而原生同请求 7 条。当时的解释是"工具派发绕过了 tool_execution 中间件链"，
+并推测与 `model_tools.py:1587` 的 `skip_tool_execution_middleware` 分支有关。
+
+**该解释是错的**：那些分支是防止中间件重复执行的正常设计 —— 外层
+`_run_agent_tool_execution_middleware` 已经执行过一次门控，
+内层 `_invoke_tool` 传 `skip=True` 只是避免跑第二遍。
+
+</details>
 
 这是本次容器验证中发现的一个**未解释的行为差异**，如实记录。
 

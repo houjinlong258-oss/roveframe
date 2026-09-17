@@ -85,6 +85,34 @@ _ROVEAGENT_CORE_TOOLS = [
     "kanban_attach", "kanban_attach_url", "kanban_attachments",
     # Computer use (macOS, gated on cua-driver being installed via check_fn)
     "computer_use",
+    # -----------------------------------------------------------------------
+    # RoveFrame business toolsets（tools/business_data_tool.py，toolset="business"）
+    #
+    # 为什么必须在 core 集合里（Phase 12 / F-C1）：
+    #
+    # 这些工具是**受治理面**，而 RoveFrame 的治理模型完全以**工具名**为键：
+    # EnterpriseToolGate 一行一工具的策略、审批总线记录的工具名、审计记录、
+    # TS 侧 AgentToolRegistry 契约，全部按名字寻址。
+    #
+    # tool_search 的渐进式披露会把非 core 工具折叠成 tool_search/tool_call
+    # 桥接工具。一旦折叠，这些名字就不再出现在 AIAgent.valid_tool_names 里
+    # （agent_init 用默认装配取定义），于是：
+    #
+    #   1. 模型直接发出的工具名被判为无效并丢弃 —— 门控根本不会被咨询，
+    #      因为没有任何东西被派发到执行链上；
+    #   2. 更糟的是 agent 仍会返回"完成"，即审计反复提到的「假响应」；
+    #   3. **dev 与 prod 行为不同**：装配依赖 tools/tool_search 能否 import
+    #      其可选依赖（snowballstemmer）。该依赖在 pyproject 的 pin 里，
+    #      因此**生产容器装了、开发机常常没装** —— 实测同一份代码在容器里
+    #      ceo 解析出 6 个工具，在本机解析出 13 个。
+    #
+    # 实测证据（Phase 12）：容器内 developer agent 的工具调用被 Gate 正常
+    # 判定并留下 2 条审计；ceo agent 为 0 条 —— 因为它的 business 工具被
+    # 折叠，模型发出的 read_file 无效，什么都没派发。Gate 本身从未被绕过。
+    # -----------------------------------------------------------------------
+    "read_business_profile", "read_sales", "read_orders", "read_customers",
+    "read_products", "read_inventory", "read_reviews", "read_payments",
+    "analyze_churn_customers", "send_customer_recovery_campaign",
 ]
 
 # Webhook events may originate from untrusted third-party content (for example,

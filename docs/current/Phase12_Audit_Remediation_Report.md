@@ -77,9 +77,9 @@ Phase 11 交付了"能部署"，Phase 12 处理审计清单里剩下的安全与
 
 | ID | 项 | 状态 |
 |---|---|---|
-| **F-C1** | 容器内 agent 发起的工具调用**没有产生任何 EnterpriseToolGate 评估**（原生同请求 7 条，容器 0 条） | **未解决**。已定位到 `model_tools.py:1587` 的 `skip_tool_execution_middleware=True` 直接派发路径，但容器与原生环境工具集不同（Mock 选中 `read_file` vs `read_sales`），根因需 Docker 复现。Docker 引擎在排查中无响应 |
+| **F-C1** | 容器内 agent 发起的工具调用**没有产生任何 EnterpriseToolGate 评估**（原生同请求 7 条，容器 0 条） | **已解决（Phase 12 末）**。见下方 §3.5 |
 
-**在 F-C1 澄清之前，不应假定容器部署下 Gate 对 agent 发起的工具调用生效。**
+**见 §3.5：该结论已被推翻，Gate 在容器中从未失效。**
 
 ### 3.4 未验证项
 
@@ -233,3 +233,61 @@ Phase 11 交付了"能部署"，Phase 12 处理审计清单里剩下的安全与
 
 不以"代码增加"验收，而以"真实运行能力增加"验收：每条结论能追到一条命令及其原始输出，或一个可复跑脚本；
 无法验证写 UNVERIFIED；任何"通过/干净"的结论必须先有能产生"不通过"的负向证据。
+
+### 3.5 F-C1：已解决，且它不是安全问题
+
+**初稿在本节把 F-C1 记为"未解决的安全问题"，该结论已被推翻。**
+
+用同一容器、同一 Mock、同一请求，只把 agent 作为变量：
+
+| agent | Gate 审计增量 | `[gate-trace]` |
+|---|---|---|
+| `developer` | **+2** | `read_file`、`terminal` |
+| `ceo` | **+0** | 无 |
+
+`developer` 的工具调用**正常经过 Gate**。Gate 在容器里从未失效。
+
+ceo 的 0 条是**症状而非原因**：它的 `business` toolset 被 tool_search 的渐进式
+披露折叠成桥接工具，`read_sales` 等不再出现在 `valid_tool_names` 中，模型发出的
+`read_file` 被判无效并丢弃 —— **没有任何东西被派发到执行链上，因此没有任何东西
+可被门控**。原生之所以"正常"，只是因为本机缺 `snowballstemmer`（pin 之一），
+使装配整段抛异常被跳过（`model_tools.py` 的 except 分支）。
+
+初稿推测的 `model_tools.py:1587` 的 `skip_tool_execution_middleware=True` 路径
+**是误判**：那些分支是防止中间件重复执行的正常设计，外层
+`_run_agent_tool_execution_middleware` 已经跑过一次门控。
+
+**这是真实缺陷，但属功能正确性而非门控绕过**：dev 与 prod 因一个可选依赖
+（`snowballstemmer`，在 `pyproject.toml` 的 pin 里，因此生产装了、开发机常没装）
+而暴露不同工具接口，且 agent 会在什么都没执行的情况下返回"完成" —— 即审计
+反复提到的「假响应」。
+
+修复：`roveagent/toolsets.py` 的 `_ROVEAGENT_CORE_TOOLS` 纳入受治理的 RoveFrame
+业务工具。治理模型以**工具名**为键（Gate 策略、审批总线、审计、TS
+`AgentToolRegistry`），折叠即失去可寻址性。
+
+验证（重建镜像 `roveframe/roveagent-runtime:phase12` 后，全新容器）：
+
+| 检查 | 修复前 | 修复后 |
+|---|---|---|
+| ceo 解析工具数 | 6 | **13** |
+| `read_sales` 可用 | 否 | **是** |
+| ceo 的工具调用到达 Gate | **0 条** | **+7 条** |
+| Gate 判定 | — | `read_sales` allowed / `terminal` denied（缺 `admin:process`）/ `read_file` allowed |
+
+**镜像重建的诚实说明**：`auth.docker.io` 在本机两次不可达，BuildKit 无法解析基础
+镜像 manifest。最终用经典构建器（`DOCKER_BUILDKIT=0`，直接使用本地已缓存的基础
+镜像）构建成功，产物即上述 `:phase12` 标签。CI 的 `docker` job 会用标准 BuildKit
+路径复验。
+
+### 3.6 顺带修正：三个把"本机事实"当作不变量的测试
+
+`roveagent/api/plugin_isolation_test.py` 的三个用例断言"本机没有容器引擎" →
+"容器隔离模式不可用"。Docker Desktop 一启动三条全部变红。
+断言消息本身就预告了这一点：*"docker daemon became reachable; the container path
+can now be verified for real and this test should be updated to do so"*。
+
+它们把**环境事实**写成了**产品契约**，这正是审计批评的测试类别：通过与否取决于
+跑测机器的状态，而不是代码行为。已改为按引擎可用性分支：引擎不可用时断言原有的
+拒绝语义（该契约仍重要），可用时显式 `skipTest` 并说明容器路径本身仍未验证
+（对应 P1-3：插件执行仍硬编码 SUBPROCESS）。

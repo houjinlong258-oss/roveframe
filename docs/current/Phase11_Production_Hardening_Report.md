@@ -266,7 +266,42 @@ RESULT: link OK   exit=0
 | V-B10 | 运行时端口是否对外暴露 | host 侧不可达（符合设计） |
 | V-B11 | Gate 中间件是否装载 | `tool_execution` 链含（100 条策略，`fail_closed=True`） |
 | V-B12 | 容器内 gate 直连判定 + 审计 | 成功写入 `/data/audit/tool_gate.jsonl` |
-| **V-B13** | **容器内 agent 工具调用是否经 Gate** | **否 —— 0 条，对照原生 7 条（F-C1，未解决）** |
+| **V-B13** | **容器内 agent 工具调用是否经 Gate** | **是 —— Phase 12 已解决，见 §4.3.1 更正** |
+
+#### 4.3.1 对初稿的更正：F-C1 不是安全问题
+
+本报告初稿在此处写过："容器内 agent 发起工具调用未经 EnterpriseToolGate
+（原生 7 条、容器 0 条）"，并警告"在澄清之前不应假定 Gate 生效"。
+
+**该结论已被推翻，警告过强，现予更正。**
+
+Phase 12 用同一容器、同一 Mock、同一请求做了对照，把 agent 作为唯一变量：
+
+| agent | Gate 审计增量 | `[gate-trace]` |
+|---|---|---|
+| `developer` | **+2** | `read_file`、`terminal` |
+| `ceo` | **+0** | 无 |
+
+`developer` 的工具调用**正常经过 Gate 并留下审计**。Gate 在容器里从未失效。
+
+ceo 的 0 条是**症状而非原因**：它的 `business` toolset 被 tool_search 的渐进式
+披露折叠，`read_sales` 等不再出现在 `valid_tool_names` 中，模型发出的 `read_file`
+被判无效并丢弃 —— **没有任何东西被派发到执行链上，因此没有任何东西可被门控**。
+原生之所以看起来"正常"，只是因为本机缺 `snowballstemmer`（`pyproject.toml` 的
+pin 之一），使装配整段抛异常被跳过（`model_tools.py` 的 except 分支）。
+
+这是真实缺陷 —— dev 与 prod 因一个可选依赖而暴露不同工具接口，且 agent 会在
+什么都没执行的情况下返回"完成" —— 但它是**功能正确性**问题，不是门控绕过。
+
+修复：`roveagent/toolsets.py` 的 `_ROVEAGENT_CORE_TOOLS` 纳入受治理的
+RoveFrame 业务工具（治理模型以工具名为键，折叠即失去可寻址性）。
+修复后容器内 ceo 的 Gate 审计由 **+0 → +7**，且判定正确：
+
+| 工具 | 判定 | 依据 |
+|---|---|---|
+| `read_sales` | allowed | 已授予 `orders:read` |
+| `terminal` | **denied** | 需要 `admin:process`，未授予 |
+| `read_file` | allowed | 已授予 `files:read` |
 
 ### 4.4 一次方法学陷阱（记录在案）
 

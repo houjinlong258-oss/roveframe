@@ -54,6 +54,35 @@ GOOD_PLUGIN = """
     """
 
 
+# ---------------------------------------------------------------------------
+# Phase 12：这三处断言原本把「本机没有容器引擎」当作不变量，而那是**环境事实**
+# 而非产品契约。Docker Desktop 一启动它们就必然变红 —— 断言消息本身就写着
+# "docker daemon became reachable ... this test should be updated to do so"。
+#
+# 现在改为按引擎可用性分支：
+#   · 引擎不可用 -> 断言原有的拒绝语义（这条契约仍然重要）
+#   · 引擎可用   -> 不假装通过，显式标注该路径尚未被验证
+#
+# 后者对应审计 P1-3：容器硬化参数已写好，但插件执行路径仍硬编码 SUBPROCESS，
+# 因此"引擎可达"并不等于"容器隔离已生效"。
+# ---------------------------------------------------------------------------
+def _container_engine_available() -> bool:
+    """本机容器引擎当前是否真的可达。"""
+    from roveagent.api import plugin_isolation as _iso
+
+    try:
+        return bool(_iso.available_isolation_modes()[_iso.IsolationMode.CONTAINER])
+    except Exception:
+        return False
+
+
+_ENGINE_MSG = (
+    "container engine is reachable on this host; the container isolation path "
+    "itself is still unverified (audit P1-3: plugin execution hardcodes "
+    "SUBPROCESS). This assertion encodes a host fact, not a product invariant."
+)
+
+
 class _SandboxCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -222,6 +251,8 @@ class IsolationPolicyTest(unittest.TestCase):
         """Recorded as an observed fact about this machine, not an assumption."""
         modes = iso.available_isolation_modes()
         self.assertTrue(modes[iso.IsolationMode.SUBPROCESS])
+        if _container_engine_available():
+            self.skipTest(_ENGINE_MSG)
         self.assertFalse(
             modes[iso.IsolationMode.CONTAINER],
             "docker daemon became reachable; the container path can now be "
@@ -457,6 +488,8 @@ class BoundaryRefusalTest(_SandboxCase):
 
     def test_container_mode_refuses_without_a_daemon(self) -> None:
         path = write_plugin(self.root, "cont", GOOD_PLUGIN)
+        if _container_engine_available():
+            self.skipTest(_ENGINE_MSG)
         proc = iso.PluginSandboxProcess(
             "cont", path, spec=iso.SandboxSpec(mode=iso.IsolationMode.CONTAINER))
         self.addCleanup(proc.stop)
@@ -848,6 +881,8 @@ class IsolationStatusTest(_SandboxCase):
         self.assertIn("NOT yet routed", summary["note"])
 
     def test_a_third_party_plugin_declaring_container_is_refused_without_an_engine(self) -> None:
+        if _container_engine_available():
+            self.skipTest(_ENGINE_MSG)
         entry = self._entry("wants-container", source="user",
                             manifest="name: wants-container\nsandbox:\n  mode: container\n")
         rows = iso.isolation_status_for_discovered([entry])

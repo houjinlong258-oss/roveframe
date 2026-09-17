@@ -85,16 +85,23 @@ async function main(): Promise<number> {
   const blob = JSON.stringify({ errEvent, noticeEvent, text });
   const leaksSdkText = /Set COZE_API_TOKEN or provide apiKey in config/.test(blob);
   const actionable = /尚未配置 AI 服务商|接入一个模型服务商|ROVEFRAME_PLATFORM_LLM/.test(blob);
+  const gotAnswer = text.length > 0 && !errEvent;
 
   console.log('='.repeat(78));
   console.log(`判定 1 —— 是否仍透出 SDK 原始文案: ${leaksSdkText ? '是 ✗（未修好）' : '否 ✓'}`);
-  console.log(`判定 2 —— 是否给出可操作说明: ${actionable ? '是 ✓' : '否 ✗'}`);
-  console.log(`结论: ${!leaksSdkText && actionable ? '新商家的报错可操作（修复生效）' : '修复未在用户可见路径生效'}`);
+  if (gotAnswer) {
+    // 平台回落已配置凭据 ⇒ 走成功路径。此时"可操作报错"不应出现，出现反而是错的。
+    console.log('判定 2 —— 平台回落是否真的可用: 是 ✓（新商家拿到了真实回复）');
+    console.log(`           正文 ${text.length} 字符，无 error 事件`);
+    console.log(`           注意：本路径下不应再出现"尚未配置 AI 服务商"提示（出现=${actionable ? '是 ✗' : '否 ✓'}）`);
+  } else {
+    console.log(`判定 2 —— 失败时是否给出可操作说明: ${actionable ? '是 ✓' : '否 ✗'}`);
+  }
   console.log('');
-  console.log('注意：本环境没有可用余额的 provider 密钥，因此"新商家能收到真实回复"');
-  console.log('      **未验证** —— 这里验证的只是"失败时说清楚了原因"。');
+  const pass = !leaksSdkText && (gotAnswer ? !actionable : actionable);
+  console.log(`结论: ${pass ? '新商家路径正常（要么真的可用，要么失败时说清楚了原因）' : '修复未在用户可见路径生效'}`);
   console.log('='.repeat(78));
-  return (!leaksSdkText && actionable) ? 0 : 1;
+  return pass ? 0 : 1;
 }
 
 main()

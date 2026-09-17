@@ -524,11 +524,11 @@ health 里的 `scheduler` 字段**不代表真实调度器**。因为 `degraded`
 
 | 项 | 状态 |
 |---|---|
-| 在真实库应用 `migrate-runtime-metadata.sql` | **UNVERIFIED** —— 本机无 DDL 凭据（已入自动迁移链，下一次带 DSN 的部署会创建）。已核实不存在 `exec_sql` 类 RPC，无法绕过：`migrate.sql` 只有 `claim_agent_task_runs` / `claim_notification_outbox` / `claim_daily_briefing_slot` 三个业务函数 |
-| 修复 scheduler 健康可见性 | **已修** —— 见 §19（心跳落库 + health 读心跳） |
+| 在真实库应用 `migrate-runtime-metadata.sql` | **已完成** —— 见 §22。`chat_sessions` 由 9 列 → **14 列**，且已证实应用在**写入**这 5 列 |
+| 修复 scheduler 健康可见性 | **已修并实测** —— 见 §19 |
 | APM / 指标导出 / 告警 / 日志聚合 / 备份调度 | **未做** —— 需引入外部系统 |
-| 新注册商家的平台内置模型回落 | **已修（代码）** —— 见 §20。行为已单测覆盖；**端到端未验证**（本环境没有可用余额的 provider 密钥） |
-| 测试残留 tenant/business 清理 | **已执行** —— 见 §21。1 tenant / 1 business / 0 孤儿，与文档锚点一致 |
+| 新注册商家的平台内置模型回落 | **已修并端到端验证** —— 见 §20 / §23 |
+| 测试残留 tenant/business 清理 | **已执行并复核** —— 见 §21；收尾后 1 tenant / 1 business / 0 孤儿 |
 | `agent_tasks` 10 行 `active` | **未查** —— 观察到未消费的任务队列，未判断是积压还是正常在途 |
 | `gateway/` 死代码处置 | **未做** —— 沿用 Phase 13 结论（活跃依赖，未删） |
 | P1-3 沙箱 L4 | **未做** |
@@ -818,3 +818,101 @@ non-blocking 并捕获。
 | `auth.users` 行 | 上述 8 个测试账号在 Supabase Auth 里仍存在。本脚本只处理 `public` schema，**未触碰 auth schema**。数量 UNVERIFIED |
 | `cron_state` 21 行 | 其中含已删 tenant 的 `imap_sync.*` / `square_sync_throttle.*` 水位线；这些表没有 `tenant_id` 列（是 `key` 文本），本脚本不处理。无功能影响（孤儿水位线不会被读到） |
 | 本轮又新增 1 条 | 验收脚本再跑会再建 tenant —— §7 的 `_verify_e2e_journey.mts` 每次注册都留一条链 |
+
+---
+
+## 22. runtime-metadata 迁移：已应用到真实库并验证写入
+
+§5 与 §15 曾把这一项记为 UNVERIFIED（本机无 DDL 凭据）。DDL 凭据到手后已完成。
+
+### 22.1 连接方式（推翻了一条长期假设）
+
+| 端点 | DNS | TCP | 结论 |
+|---|---|---|---|
+| `db.<ref>.supabase.co` | **仅 AAAA**（IPv6） | **OPEN** | **本次可直连** |
+| `aws-0/1-us-east-1.pooler.supabase.com` | A（IPv4） | OPEN | 备用，未用到 |
+
+AGENTS.md 与 Phase 14 记录"直连是 IPv6-only、沙箱不可达"。本次实测**直连成功**
+（1674 ms）。即那条结论是**当时的环境事实，不是不变量** —— 与本项目既往教训同类
+（曾把"本机没有容器引擎"写成产品契约）。已在报告中改述为"视网络环境而定"。
+
+### 22.2 迁移效果（用列数变化证明，不是看"没报错"）
+
+```
+[执行前] chat_sessions 共 9 列
+         目标列缺失: runtime_mode, runtime_agent, runtime_request_class, runtime_tool_intent, runtime_at
+[执行]  运行 migrate-runtime-metadata.sql …（命令返回成功）
+[执行后] chat_sessions 共 14 列（+5）
+         runtime_mode             存在
+         runtime_agent            存在
+         runtime_request_class    存在
+         runtime_tool_intent      存在
+         runtime_at               存在
+```
+
+### 22.3 关键一步：证明应用**真的在写**这些列
+
+只证明"列存在"是不够的 —— 那只是 schema 层面的证据。取证方式：
+迁移**前**建的会话应为 NULL，迁移**后**跑过对话的会话应有值。**两类并存**
+才说明是新写入，而不是默认值填充。
+
+| 分组 | 行数 | `runtime_mode` |
+|---|---|---|
+| 迁移后（2026-09-17T16:40 起） | **3** | `roveagent`，`runtime_agent=ceo`，`request_class=chat` |
+| 迁移前（2026-09-12 ~ 15:35） | 21 | `NULL` |
+
+```
+created_at                 runtime_mode runtime_agent request_class  title
+2026-09-17T16:42:57        roveagent    ceo           chat           How many orders are there? U
+2026-09-17T16:41:15        roveagent    ceo           chat           How many orders are there? U
+2026-09-17T16:40:13        roveagent    ceo           chat           How many orders are there? U
+2026-09-17T15:35:08        (NULL)       (NULL)        (NULL)         How many orders are there? U
+```
+
+同时：日志中 `runtime metadata columns unavailable` 的计数在迁移后**不再增长**
+（此前每轮对话一条）。
+
+**至此 Phase 12 Step 3 的审计目标（"这条回答是 Runtime 出的还是 TS 降级出的"在数据层可查证）
+第一次真正达成** —— 此前该列从未被写入过。
+
+---
+
+## 23. 平台回落：端到端验证通过
+
+§20 曾把"新商家真的能收到回复"记为**未验证**（无可用余额的 provider 密钥）。
+拿到一组可用凭据后已补齐。
+
+### 23.1 配置
+
+`docker/deploy.env` 新增三项并由 compose 白名单注入（该白名单在 §18.2 已修）：
+
+```
+ROVEFRAME_PLATFORM_LLM_API_KEY=<agnes key>
+ROVEFRAME_PLATFORM_LLM_BASE_URL=https://apihub.agnes-ai.com/v1
+ROVEFRAME_PLATFORM_LLM_MODEL=agnes-2.5-flash
+```
+
+容器内确认三项均存在。
+
+### 23.2 验证结果（`scripts/_verify_newtenant_error.mts`）
+
+| 项 | 修复前 | 修复后 |
+|---|---|---|
+| 注册 | 201 | 201 |
+| chat | 200（但 TS 侧调用报错） | **200** |
+| 正文长度 | — | **1653 字符**（模型真的答了） |
+| `error` / `notice` 事件 | 有 SDK 原始文案 | **无** |
+| `memory extraction failed` | 每轮 1~2 条 | **0 条** |
+
+**新商家的 TS 侧调用（记忆沉淀）现在真的可用**，不只是"失败时报错更清楚"。
+
+### 23.3 该测试脚本自身的判定也修正了
+
+原判定逻辑假定"必然失败"，于是平台回落**修好之后**它反而报 `未生效` ——
+因为它在等一个不再出现的错误文案。已改为按结果分支：
+
+- 拿到正文 ⇒ 断言"回落真的可用"，且**不应**出现"尚未配置"提示；
+- 没有正文 ⇒ 断言"给出了可操作说明"。
+
+这是本项目第 N 次出现同一类问题：**断言写死了"失败的样子"，
+修好之后测试反而变红。**

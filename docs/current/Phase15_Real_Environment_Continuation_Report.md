@@ -394,6 +394,12 @@ health 里的 `scheduler` 字段**不代表真实调度器**。因为 `degraded`
 | 3 | `src/lib/scheduler.ts` | `cron_state` 就绪判定改用列投影 | 同上测试覆盖 |
 | 4 | `src/lib/migration.ts` | `MIGRATION_FILES` 纳入 `migrate-runtime-metadata.sql` | `tests/migration-column-coverage.test.ts`（4 例，注入回归后 2 例变红） |
 | 5 | `scripts/_verify_real_database.mts` | 修 `select` 重载类型（解 `ts-check` 阻塞） | `ts-check` exit 0；Next 构建通过 |
+| 6 | `docker-compose.yml` | web 服务纳入 `ENCRYPTION_SECRET_PREVIOUS`（原先被白名单静默丢弃） | 容器内变量出现；两行凭据由"解不开"变为可解密（§18） |
+| 7 | `docker/deploy.env`（gitignored） | 设置 `ENCRYPTION_SECRET_PREVIOUS`（= 历史派生密钥） | 同上 |
+
+**验证边界**：`docker/deploy.env` 与 compose 的运行时行为已实测，但该文件不进 git，
+因此 **compose 的改动本身没有被 `pnpm validate` 覆盖**（validate 不解析 compose 语义）。
+镜像内容未因此变化（该变量是运行时注入），故未触发镜像重建。
 
 ### 11.1 本轮新增的取证 / 验收脚本（只读为主）
 
@@ -413,6 +419,11 @@ health 里的 `scheduler` 字段**不代表真实调度器**。因为 `degraded`
 | `scripts/_verify_preflight_cost.mts` | 前置开销 / 冷启动分解 |
 | `scripts/_observe_scheduler.mts` | scheduler 实际行为观察 |
 | `scripts/_diagnose_module_shape.mts` | CJS 互操作下模块导出形状 |
+| `scripts/_verify_column_names.mts` | 用 `select('*')` 取真实列名（发现文档列名不存在） |
+| `scripts/_container_decrypt_check.cjs` | **容器内**逐个候选密钥试解密（密钥不出容器，不打印明文） |
+| `scripts/_diagnose_decrypt_failures.mts` | 宿主侧解密失败定位 |
+| `scripts/_verify_model_assign.mts` | `model_assign` 与 provider 配置关联 |
+| `scripts/_verify_settings_scope.mts` | settings 行与 tenant 归属对照 |
 
 ### 11.1 两处修复的负向验证（本项目规矩）
 
@@ -493,10 +504,10 @@ health 里的 `scheduler` 字段**不代表真实调度器**。因为 `degraded`
 
 | 项 | 状态 |
 |---|---|
-| 在真实库应用 `migrate-runtime-metadata.sql` | **UNVERIFIED** —— 本机无 DDL 凭据（已入自动迁移链，下一次带 DSN 的部署会创建） |
+| 在真实库应用 `migrate-runtime-metadata.sql` | **UNVERIFIED** —— 本机无 DDL 凭据（已入自动迁移链，下一次带 DSN 的部署会创建）。已核实不存在 `exec_sql` 类 RPC，无法绕过：`migrate.sql` 只有 `claim_agent_task_runs` / `claim_notification_outbox` / `claim_daily_briefing_slot` 三个业务函数 |
 | 修复 scheduler 健康可见性 | **未做** —— 需架构决策（状态落库 / 调度器独立进程） |
 | APM / 指标导出 / 告警 / 日志聚合 / 备份调度 | **未做** —— 需引入外部系统 |
-| `memory extraction failed: Unsupported state or unable to authenticate data` | **未查** —— 解密失败（`ENCRYPTION_SECRET` 与已落库凭据不匹配，即 R-03 的迁移面）；记忆沉淀是增强项，失败已被代码静默降级 |
+| 新注册商家的平台内置模型回落 | **未做** —— 见 §18，需产品决策 |
 | `agent_tasks` 10 行 `active` | **未查** —— 观察到未消费的任务队列，未判断是积压还是正常在途 |
 | `gateway/` 死代码处置 | **未做** —— 沿用 Phase 13 结论（活跃依赖，未删） |
 | P1-3 沙箱 L4 | **未做** |
@@ -524,3 +535,76 @@ health 里的 `scheduler` 字段**不代表真实调度器**。因为 `degraded`
 而生产自检与健康端点**不具检测能力**，调度器在跑却对健康检查不可见。
 
 四轮下来的同一条教训再次成立：**一个不能失败的检查，等于没有检查。**
+
+---
+
+## 18. 追加：已落库凭据的解密失败（R-03 迁移面）—— 已修并验证
+
+§15 曾把 `memory extraction failed: Unsupported state or unable to authenticate data`
+列为"未查"。现已定位到根因、修复并验证。
+
+### 18.1 定位过程
+
+| 步骤 | 命令 / 脚本 | 结果 |
+|---|---|---|
+| 1. 找凭据列 | `scripts/_verify_column_names.mts` | **文档写的列名不存在**：三张表都没有 `credentials` |
+| 2. 真实列名 | 同上（`select('*')` 取列） | `model_configs.api_key_encrypted`、`email_accounts.credentials_encrypted` |
+| 3. 试解密 | `scripts/_container_decrypt_check.cjs`（**容器内跑**，密钥不出容器） | 两行密文**只能用 `sha256(COZE_SUPABASE_SERVICE_ROLE_KEY)` 解开** |
+| 4. 关联调用链 | `scripts/_verify_model_assign.mts` | `model_assign.light = deepseek:deepseek-v4-flash` ⟷ `model_configs` 的 `deepseek` 行 |
+
+即：这两行是**在 `ENCRYPTION_SECRET` 存在之前**写入的，当时 `crypto.ts` 的密钥
+回落到 `COZE_SUPABASE_SERVICE_ROLE_KEY`（正是 R-03 描述的"回落不是可能，是一定"）。
+Phase 12 给 `ENCRYPTION_SECRET` 赋了独立新值，于是这两行变成永久不可解 —— 除非按
+`crypto.ts` 的迁移说明提供历史密钥。
+
+### 18.2 修复过程中发现的第二个缺陷：compose 白名单
+
+按文档设置 `ENCRYPTION_SECRET_PREVIOUS` 后**无效** —— 容器里该变量仍为空。
+原因：`docker-compose.yml` 的 web 服务用**显式白名单**注入环境变量，
+`docker/deploy.env` 里新加的变量不会自动进入容器。
+
+这与 §5 的列缺失同属一类：**代码支持的能力，缺少一条把它接通的线**。
+修复：在 compose 的 web 服务下显式加入 `ENCRYPTION_SECRET_PREVIOUS`。
+
+### 18.3 修复效果（实测）
+
+| 检查 | 修复前 | 修复后 |
+|---|---|---|
+| 容器内 `ENCRYPTION_SECRET_PREVIOUS` | 不存在 | 存在（len 219） |
+| 两行 `model_configs` 可解密 | 否 | **是**（密钥 = `ENCRYPTION_SECRET_PREVIOUS[0]`） |
+| Default tenant 的记忆沉淀错误 | `Unsupported state or unable to authenticate data` | **`deepseek 调用失败 (402): Insufficient Balance`** |
+
+最后一行是关键证据：错误**从"解不开"变成了"provider 拒绝"**，
+说明凭据已经真的被解开并送到了 DeepSeek。剩下的 402 是 **DeepSeek 账户余额不足**，
+属账户状态而非代码缺陷。
+
+### 18.4 仍未解决：新注册商家的 AI 完全不可用
+
+`_verify_settings_scope.mts` 实测（8 个 tenant / 仅 1 行 settings）：
+
+| tenant | settings 行 | 生效 `model_assign` |
+|---|---|---|
+| `Default` | 1 | `deepseek:deepseek-v4-flash`（四个能力） |
+| 其余 7 个（含全部 E2E 新注册） | **0** | 视为 `auto` → **平台内置** |
+
+`/api/auth/signup` 建 tenant、business、auth user、public.users，
+但**不建 `settings` 行**。`resolveModelDetailed` 对 `auto` 走
+`platformResolution()`，该分支**不携带 `apiKey`**，而本环境未配置平台密钥 ——
+于是新商家在配置任何 provider 之前，AI 一律回
+`API key is required. Set COZE_API_TOKEN or provide apiKey in config.`
+
+| 层面 | 判定 |
+|---|---|
+| 代码缺陷？ | **否** —— `auto` 回落平台内置是设计行为 |
+| 产品缺口？ | **是** —— 新商家开箱即用的路径依赖"平台密钥"，自部署场景下没有 |
+| 报错质量？ | 差 —— 面向老板的提示应说明"尚未配置 AI 服务商"，而不是 SDK 的原始报错 |
+
+未做改动（产品决策）。建议二选一：注册后引导配置 provider；
+或让 `auto` 在没有平台密钥时给出明确的可操作提示。
+
+### 18.5 顺带修正：文档中的列名
+
+`AGENTS.md` 与 Phase 12 报告称 `model_configs.credentials` /
+`email_accounts.credentials` / `integration_configs.credentials` 为加密凭据列。
+实测三张表**均无此列**；真实列名为 `api_key_encrypted` 与 `credentials_encrypted`。
+`integration_configs` 的 10 列里没有任何疑似凭据列。

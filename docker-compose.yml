@@ -114,6 +114,19 @@ services:
       # would otherwise make every stored credential permanently undecryptable).
       ENCRYPTION_SECRET: ${ENCRYPTION_SECRET:?set ENCRYPTION_SECRET (must differ from the Supabase service key)}
 
+      # R-03 migration path, DECRYPTION ONLY. Credentials written before
+      # ENCRYPTION_SECRET existed were encrypted with the OLD derivation
+      # sha256(COZE_SUPABASE_SERVICE_ROLE_KEY), so they are unreadable until that
+      # key is supplied here. This list is never used to encrypt, so new writes
+      # immediately use ENCRYPTION_SECRET. Comma-separated for multi-step rotations.
+      #
+      # Phase 15: this row was MISSING, so setting the variable in
+      # docker/deploy.env had no effect — compose passes an explicit whitelist and
+      # silently drops anything not named here. Measured symptom: the two
+      # model_configs rows failed to decrypt under the current key, and
+      # `ENCRYPTION_SECRET_PREVIOUS` never reached the container.
+      ENCRYPTION_SECRET_PREVIOUS: ${ENCRYPTION_SECRET_PREVIOUS:-}
+
       # --- Link to the runtime ------------------------------------------------
       ROVEAGENT_API_URL: http://roveagent:8788
 

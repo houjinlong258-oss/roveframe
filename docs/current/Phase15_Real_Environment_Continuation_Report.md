@@ -528,7 +528,7 @@ health 里的 `scheduler` 字段**不代表真实调度器**。因为 `degraded`
 | 修复 scheduler 健康可见性 | **已修** —— 见 §19（心跳落库 + health 读心跳） |
 | APM / 指标导出 / 告警 / 日志聚合 / 备份调度 | **未做** —— 需引入外部系统 |
 | 新注册商家的平台内置模型回落 | **已修（代码）** —— 见 §20。行为已单测覆盖；**端到端未验证**（本环境没有可用余额的 provider 密钥） |
-| 测试残留 tenant/business 清理 | **计划已生成，未执行** —— 见 §21 |
+| 测试残留 tenant/business 清理 | **已执行** —— 见 §21。1 tenant / 1 business / 0 孤儿，与文档锚点一致 |
 | `agent_tasks` 10 行 `active` | **未查** —— 观察到未消费的任务队列，未判断是积压还是正常在途 |
 | `gateway/` 死代码处置 | **未做** —— 沿用 Phase 13 结论（活跃依赖，未删） |
 | P1-3 沙箱 L4 | **未做** |
@@ -759,18 +759,19 @@ non-blocking 并捕获。
 
 ---
 
-## 21. 测试残留清理计划（已生成，未执行）
+## 21. 测试残留清理 —— 已执行
 
-`scripts/_cleanup_test_residue.mts` 默认**零写入**，只打印计划；`--apply` 才删除。
+`scripts/_cleanup_test_residue.mts` 默认**零写入**（只打印计划），`--apply` 才删除。
+锚点显式排除：tenant `000…000` / business `000…001`。
 
-计划范围（**锚点显式排除**：tenant `000…000` / business `000…001`）：
+### 21.1 执行前计划
 
 | 对象 | 数量 | 命名 |
 |---|---|---|
-| tenant | 7 | `rls-probe`、`424323`、5 个 `E2E Phase15 …` |
-| business | 6 | 同上（`rls-probe` 没有 business） |
+| tenant | 8 | `rls-probe`、`424323`、6 个 `E2E Phase15 …` / `NewTenant …` |
+| business | 7 | 同上（`rls-probe` 没有 business） |
 
-引用清点（删除顺序的依据，非零引用全部列出，不静默级联）：
+引用清点（删除顺序依据，非零引用全部列出，不静默级联）：
 
 | tenant | 引用 |
 |---|---|
@@ -778,8 +779,42 @@ non-blocking 并捕获。
 | `424323` | businesses=1, agent_tasks=2, agent_task_runs=19 |
 | 每个 `E2E Phase15 …` | businesses=1, users=1, chat_sessions=1, audit_events=3, agent_tasks=2, agent_approvals=1, agent_task_runs=3, inventory_items=1, ai_usage_ledger=1 |
 
-删除顺序：先删 `agent_task_runs`（`agent_tasks` 的子表，按 business 逐条），
-再按 `tenant_id` 删其余表（含 `businesses`），最后删 `tenants`。
-顺序反了会撞外键 23503。
+### 21.2 执行结果
 
-**未执行**：该操作不可逆，等确认。注意本轮验收又新增了 2 条（共 7 条 tenant）。
+```
+完成：132 次删除调用成功，0 次失败（表/列不存在不计）
+```
+
+清理后计数：
+
+| 表 | 清理前 | 清理后 | 文档锚点 |
+|---|---|---|---|
+| `tenants` | 8(+1) | **1** | 1 ✓ |
+| `businesses` | 7(+1) | **1** | 1 ✓ |
+| 计划外 tenant / business | 9 / 8 | **0 / 0** | 0 ✓ |
+| `products` / `customers` / `orders` | 10 / 10 / 43 | **10 / 10 / 43** | 种子数据完好 ✓ |
+
+**数据库现在与文档锚点一致，可作为干净基线。**
+
+### 21.3 过程中撞到的两个真实问题（都不是"删除条件写错"）
+
+**① 外键删除顺序**：`users.business_id`、`agent_tasks.business_id` 都指向 `businesses`。
+只按 `tenant_id` 删不够 —— 必须先把**所有** business 维度的子表按 `business_id` 删掉，
+再删 `businesses` 本体，最后删 `tenants`。顺序或条件错一个就撞 23503。
+`agent_task_runs` 还必须在 `agent_tasks` **之前**删（子表）。
+
+**② 与调度器的竞态**：最后一次删除报
+`violates foreign key constraint "agent_tasks_business_id_fkey"`，
+但事后查 `agent_tasks` 该 business 已是 **0 行**。
+
+根因：**调度器每 tick 都会为每个 tenant 建 `agent_tasks` 行**，于是"删子行 → 删本体"
+之间存在竞态窗口，删除被并发插入打断。修法是重试（清子行 + 删本体，最多 5 轮），
+不是放宽约束。这也是本轮第二次遇到"调度器在跑"这个事实带来的副作用。
+
+### 21.4 残留（本次未处理）
+
+| 项 | 说明 |
+|---|---|
+| `auth.users` 行 | 上述 8 个测试账号在 Supabase Auth 里仍存在。本脚本只处理 `public` schema，**未触碰 auth schema**。数量 UNVERIFIED |
+| `cron_state` 21 行 | 其中含已删 tenant 的 `imap_sync.*` / `square_sync_throttle.*` 水位线；这些表没有 `tenant_id` 列（是 `key` 文本），本脚本不处理。无功能影响（孤儿水位线不会被读到） |
+| 本轮又新增 1 条 | 验收脚本再跑会再建 tenant —— §7 的 `_verify_e2e_journey.mts` 每次注册都留一条链 |

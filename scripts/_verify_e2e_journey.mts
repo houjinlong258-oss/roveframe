@@ -22,6 +22,17 @@
  * 目标地址取 WEB_PORT（docker/deploy.env），缺省 5055。
  * 会向真实库写入：1 个 tenant、1 个 business、1 个 auth 用户、1 个审批单
  * 及一条 inventory_items 行（审批执行产物）。用户已确认当前为测试环境。
+ *
+ * ## 跑完请清理（每次运行都会留下一条孤儿链）
+ *
+ * `/api/auth/signup` 的设计就是"每次注册建一个新 tenant + 一个新 business"，
+ * 因此本脚本每跑一次就多一条计划外记录。跑完执行：
+ *
+ *   npx tsx scripts/_cleanup_test_residue.mts          # 先看计划（零写入）
+ *   npx tsx scripts/_cleanup_test_residue.mts --apply  # 确认后删除
+ *
+ * 注意清理脚本只处理 `public` schema，**不动 `auth.users`** ——
+ * 测试账号会留在 Supabase Auth 里。
  */
 import * as supabaseModule from '../src/storage/database/supabase-client';
 import * as approvalModule from '../src/lib/agent/approvals';

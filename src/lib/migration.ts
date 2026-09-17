@@ -35,6 +35,21 @@ const MIGRATION_FILES = [
   //
   // 该文件全部使用 ADD COLUMN IF NOT EXISTS，幂等，可安全加入执行链。
   'scripts/migrate-runtime-metadata.sql',
+  // Phase 15：以下 4 个迁移此前同样不在清单里，但它们创建的对象**正被现网功能使用**。
+  // 实测（scripts/_verify_fresh_deploy_gap.mts）：当前库里这些对象存在，
+  // 只是因为有人**手工应用**过；全新部署不会创建它们，相关功能直接不可用：
+  //
+  //   platform-admin       → /api/admin/* 平台管理台、订阅（subscription 在 src 下 78 处引用）
+  //   production-hardening → coding-agent 审批流、error_events、audit_logs（17 处引用）
+  //   customer-favorites   → 顾客端收藏（公开接口）
+  //   ai-provider-views    → ai_providers / ai_credentials / ai_usage_logs 三个视图
+  //
+  // 四个文件均已核实幂等（create table if not exists / create or replace view）。
+  // 顺序放在基础迁移之后：它们依赖 public.tenants / businesses 等前置对象。
+  'scripts/migrate-platform-admin.sql',
+  'scripts/migrate-production-hardening.sql',
+  'scripts/migrate-customer-favorites.sql',
+  'scripts/migrate-ai-provider-views.sql',
 ] as const;
 
 /** 供回归测试断言"自动迁移覆盖了代码真正读写的列"。 */

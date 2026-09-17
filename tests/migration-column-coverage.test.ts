@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -99,5 +99,90 @@ describe('migration column coverage (Phase 15)', () => {
         `migrate-runtime-metadata.sql 未定义 ${col}`,
       );
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 15：把守卫从"某一个迁移"扩展到"这一类缺陷"。
+  //
+  // runtime-metadata 只是被发现的**一个实例**。同类缺陷是：
+  // 仓库里存在一个迁移，它创建的对象被代码使用，但它不在自动迁移清单里。
+  //
+  // ## 第一版守卫是错的（记录在此，避免重犯）
+  //
+  // 第一版写的是"每个 migrate*.sql 创建的表都必须被自动清单覆盖"。
+  // **它无法失败**：把 migrate-platform-admin.sql 从清单里删掉，它照样通过。
+  // 原因实测如下 —— 所有非自动迁移创建的表，`migrate.sql` 本来就都创建了：
+  //
+  //   migrate.sql 创建 31 张，其中已包含
+  //     platform-admin 的 9 张全部、production-hardening 的 audit_logs、
+  //     feature_entitlements / invoices / subscription_* / support_access_grants 等
+  //     customer-favorites 的 customer_favorites
+  //
+  // 也就是说那 4 个迁移在**建表**这件事上是冗余的，真正的缺口在**列**上
+  // （这正是 runtime-metadata 的情况，也是这类缺陷的真实形态）。
+  //
+  // ## 现在断言的是真实且可失败的不变量
+  //
+  // 由一个**不在**自动清单里的迁移创建的表，必须也能在自动清单的 SQL 中找到。
+  // 一旦某个非自动迁移出现**独有**的表，本测试立刻变红 —— 那正是缺口。
+  // 负向对照已验证：从清单移除 migrate-platform-admin.sql 会使其变红。
+  // ---------------------------------------------------------------------------
+
+  /** 取某个 SQL 里 `create table if not exists public.<name>` 的表名 */
+  function tablesCreatedBy(sql: string): string[] {
+    return [...sql.matchAll(/create table if not exists\s+public\.(\w+)/gi)].map((m) => m[1]);
+  }
+
+  test('非自动迁移不得创建"只有它才有"的表', async () => {
+    const mod = await import('../src/lib/migration');
+    const covered = new Set(mod.MIGRATION_FILE_LIST);
+    const autoSql = mod.MIGRATION_FILE_LIST.map((rel) => read(rel)).join('\n');
+    const autoTables = new Set(tablesCreatedBy(autoSql));
+
+    const allMigrations = readdirSync(join(ROOT, 'scripts'))
+      .filter((f) => f.startsWith('migrate') && f.endsWith('.sql'));
+
+    const orphans: string[] = [];
+    for (const file of allMigrations) {
+      if (covered.has(`scripts/${file}`)) continue;
+      for (const t of tablesCreatedBy(read(`scripts/${file}`))) {
+        if (!autoTables.has(t)) orphans.push(`${file} → public.${t}`);
+      }
+    }
+
+    assert.deepEqual(
+      orphans, [],
+      '这些表**只**由不在自动迁移清单里的迁移创建 —— 全新部署不会创建它们，'
+      + '相关功能直接不可用。要么把该迁移纳入 MIGRATION_FILES，'
+      + '要么把该表的 DDL 并入基础迁移：\n  ' + orphans.join('\n  '),
+    );
+  });
+
+  test('自动清单内的每个文件都真的创建/修改了对象（防止塞入空文件充数）', async () => {
+    const mod = await import('../src/lib/migration');
+    const empty: string[] = [];
+    for (const rel of mod.MIGRATION_FILE_LIST) {
+      const sql = read(rel);
+      const creates = /create table if not exists/i.test(sql);
+      const columns = /add column if not exists/i.test(sql);
+      const views = /create or replace view/i.test(sql);
+      const indexes = /create (unique )?index if not exists/i.test(sql);
+      if (!creates && !columns && !views && !indexes) empty.push(rel);
+    }
+    assert.deepEqual(empty, [], `这些文件在自动迁移清单里却什么都没做：${empty.join(', ')}`);
+  });
+
+  test('CI 的 verify-migrations.mjs 不再维护第二份手写清单', () => {
+    const src = read('scripts/verify-migrations.mjs');
+    assert.match(
+      src, /MIGRATION_FILES/,
+      'verify-migrations.mjs 没有从 src/lib/migration.ts 读取事实源 —— '
+      + '两份手写清单必然漂移（此前它包含从不执行的 migrate-rls.sql，'
+      + '又漏掉真正要执行的几个），断言会在一份并非实际执行的清单上通过',
+    );
+    assert.doesNotMatch(
+      src, /const sqlFiles = \[\s*'scripts\//,
+      'verify-migrations.mjs 又写回了一份硬编码的迁移清单',
+    );
   });
 });

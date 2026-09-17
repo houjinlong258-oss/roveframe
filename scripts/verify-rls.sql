@@ -8,15 +8,22 @@
 begin;
 
 -- 1) 测试夹具（两租户、两门店、两用户、两订单）
-insert into public.tenants (id) values ('rls-tA'), ('rls-tB')
+--
+-- Phase 15 修复：夹具此前缺少 `tenants.name` / `tenants.slug`，插入即报
+--   null value in column "name" of relation "tenants" violates not-null constraint
+-- 与 migrate-rls.sql 一样，本文件在第一次真正执行前从未验证过。
+-- 其余列经实测确认可空或有默认值（scripts/_verify_fixture_columns.mts）。
+insert into public.tenants (id, name, slug) values
+    ('rls-tA', 'RLS Tenant A', 'rls-ta'),
+    ('rls-tB', 'RLS Tenant B', 'rls-tb')
   on conflict (id) do nothing;
 insert into public.businesses (id, tenant_id, name) values
   ('rls-bA', 'rls-tA', 'RLS Business A'),
   ('rls-bB', 'rls-tB', 'RLS Business B')
   on conflict (id) do nothing;
 insert into public.users (id, tenant_id, business_id, email, role) values
-  ('rls-uA', 'rls-tA', 'rls-bA', 'rls-a@example.com', 'owner'),
-  ('rls-uB', 'rls-tB', 'rls-bB', 'rls-b@example.com', 'owner')
+  ('aaaaaaaa-0000-4000-8000-000000000001', 'rls-tA', 'rls-bA', 'rls-a@example.com', 'owner'),
+  ('bbbbbbbb-0000-4000-8000-000000000002', 'rls-tB', 'rls-bB', 'rls-b@example.com', 'owner')
   on conflict (id) do nothing;
 insert into public.orders (tenant_id, business_id, order_no, source, total, items, status) values
   ('rls-tA', 'rls-bA', 'RLS-A-1', 'square', 10, '[]'::jsonb, 'completed'),
@@ -24,7 +31,7 @@ insert into public.orders (tenant_id, business_id, order_no, source, total, item
 
 -- 2) 以用户 A 身份（authenticated JWT 模拟）
 set local role authenticated;
-set local request.jwt.claims = '{"sub":"rls-uA","role":"authenticated"}';
+set local request.jwt.claims = '{"sub":"aaaaaaaa-0000-4000-8000-000000000001","role":"authenticated"}';
 
 do $$
 declare n int;
@@ -57,7 +64,7 @@ reset role;
 
 -- 3) 以用户 B 身份复验（对称）
 set local role authenticated;
-set local request.jwt.claims = '{"sub":"rls-uB","role":"authenticated"}';
+set local request.jwt.claims = '{"sub":"bbbbbbbb-0000-4000-8000-000000000002","role":"authenticated"}';
 
 do $$
 declare n int;

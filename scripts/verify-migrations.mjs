@@ -16,12 +16,34 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(path.join(root, p), 'utf8');
 
 const schemaSource = read('src/storage/database/shared/schema.ts');
-const sqlFiles = [
-  'scripts/migrate.sql',
-  'scripts/migrate-business-tables.sql',
-  'scripts/migrate-pilot-ready.sql',
-  'scripts/migrate-rls.sql',
-].map((p) => ({ name: p, content: read(p) }));
+
+/**
+ * Phase 15：迁移清单**只有一个事实源** —— `src/lib/migration.ts` 的 MIGRATION_FILES。
+ *
+ * 此前本文件自己维护第二份手写清单，已经漂移：
+ *   · 它包含 `migrate-rls.sql`，而自动迁移**从不执行**该文件；
+ *   · 它漏掉 `migrate-runtime-metadata.sql`、`migrate-platform-admin.sql` 等，
+ *     于是"表是否被迁移覆盖"的断言在一份**并非实际执行**的清单上通过。
+ *
+ * 两份清单 = 两个真相。现在从源码里解析出唯一的真相。
+ */
+function autoMigrateFiles() {
+  const src = read('src/lib/migration.ts');
+  const block = src.match(/const\s+MIGRATION_FILES\s*=\s*\[([\s\S]*?)\]\s*as const;/);
+  if (!block) {
+    console.error('无法从 src/lib/migration.ts 解析 MIGRATION_FILES —— 迁移事实源已变更，请更新本脚本。');
+    process.exit(1);
+  }
+  const files = [...block[1].matchAll(/'([^']+\.sql)'/g)].map((m) => m[1]);
+  if (files.length === 0) {
+    console.error('MIGRATION_FILES 解析结果为空 —— 拒绝在空清单上宣布通过。');
+    process.exit(1);
+  }
+  return files;
+}
+
+const migrationList = autoMigrateFiles();
+const sqlFiles = migrationList.map((p) => ({ name: p, content: read(p) }));
 const sqlAll = sqlFiles.map((f) => f.content).join('\n');
 
 const failures = [];

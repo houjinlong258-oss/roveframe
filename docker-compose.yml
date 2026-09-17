@@ -42,7 +42,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.roveagent
-    image: roveframe/roveagent-runtime:phase11
+    image: roveframe/roveagent-runtime:phase12
     restart: unless-stopped
     environment:
       <<: *roveagent-secrets

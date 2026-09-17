@@ -139,7 +139,12 @@ EXPOSE 5000
 # exactly when this container should NOT be routed traffic.
 #
 # Node 22 global fetch, so no curl and no apt layer are needed.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+# Phase 14：timeout 从 5s 提到 20s。
+# /api/health 会查 11+ 张表，而生产库是**跨公网的远程 Supabase**；5s 是照本地库
+# 设的，实测在真实库上稳定超时（docker inspect 报 "Health check exceeded timeout
+# (5s)"），使一个功能完全正常的容器被标记 unhealthy。
+# 这是只有把容器连到真实远程库才会暴露的缺陷 —— 本地/占位凭据下永远看不到。
+HEALTHCHECK --interval=30s --timeout=20s --start-period=90s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||5000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 # Documented production command (scripts/start.sh ends in the same invocation).

@@ -94,7 +94,7 @@ services:
       dockerfile: Dockerfile
       args:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
-    image: roveframe/web:phase11
+    image: roveframe/web:phase13
     restart: unless-stopped
     depends_on:
       roveagent:

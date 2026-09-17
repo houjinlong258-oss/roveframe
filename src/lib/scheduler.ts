@@ -43,7 +43,12 @@ async function ensureCronState(): Promise<boolean> {
   if (_cronStateReady !== null) return _cronStateReady;
   try {
     const client = getSupabaseClient();
-    const { error } = await client.from('cron_state').select('key', { count: 'exact', head: true });
+    // 探测 cron_state 是否存在。必须用列投影而不是 `head: true`：
+    // Phase 15 实测，`select('*', {count:'exact', head:true})` 对**不存在的表**
+    // 返回 204 且 error 为 null，于是 `!error` 恒成立 → `_cronStateReady` 永远
+    // 为 true，`schedulerHealth().degraded` 永远为 false，健康检查会漏报调度器降级。
+    // `key` 是 cron_state 的主键列（该表没有 id），投影后 404 才能被检出。
+    const { error } = await client.from('cron_state').select('key', { count: 'exact' });
     if (!error) {
       _cronStateReady = true;
       return true;

@@ -17,13 +17,21 @@
 // 用命名空间导入后在运行时取，避免依赖 loader 的具名导出探测。
 import * as supabaseModule from '../src/storage/database/supabase-client';
 
+/** Rows come back untyped here: the script only reads `id` / `name` off them. */
+type Row = Record<string, unknown>;
+
+type CountResult = { count: number | null; data: unknown; error: { message: string } | null };
+type LimitResult = { data: Row[] | null; error: { message: string } | null };
+
 type SupabaseLike = {
   from(table: string): {
-    select(columns: string, opts?: { count?: string; head?: boolean }): Promise<{
-      count: number | null;
-      data: unknown;
-      error: { message: string } | null;
-    }> & { limit(n: number): Promise<{ data: unknown; error: { message: string } | null }> };
+    // The `limit` overload must be declared FIRST. supabase-js returns a
+    // thenable builder from `select()`, so both signatures have to live on one
+    // call target; with the counting overload first, TypeScript picked it for
+    // `await ... .limit(5)` and inferred `data` as `unknown` — which is what
+    // made `for (const b of businesses ?? [])` fail to type-check.
+    select(columns: string, opts: { count: 'exact'; head: true }): Promise<CountResult>;
+    select(columns: string): { limit(n: number): Promise<LimitResult> };
   };
 };
 
@@ -127,7 +135,7 @@ async function main(): Promise<number> {
     .from('businesses').select('id,name').limit(5);
   console.log('[4] businesses 前若干行:');
   for (const b of businesses ?? []) {
-    console.log(`    ${String(b.id).slice(0, 12)}…  ${b.name}`);
+    console.log(`    ${String(b.id).slice(0, 12)}…  ${String(b.name)}`);
   }
 
   console.log('');

@@ -24,7 +24,21 @@ const MIGRATION_FILES = [
   'scripts/migrate.sql',
   'scripts/migrate-business-tables.sql',
   'scripts/migrate-pilot-ready.sql',
+  // Phase 15：本文件一直在仓库里，却**不在**这份清单中，于是
+  // `chat_sessions` 的 5 个 runtime_* 列在任何自动迁移路径下都不会被创建，
+  // 而 `src/app/api/agent/chat/route.ts` 每轮对话都要写它们 →
+  // 生产日志持续出现 "runtime metadata columns unavailable"，
+  // 「这条回答是 Runtime 出的还是降级出的」在数据层无从查证（正是该迁移要解决的问题）。
+  //
+  // CI 的 verify-migrations.mjs 没拦住，因为它只比对**表名**与索引口径，
+  // 从不比对列。已在 tests/migration-column-coverage.test.ts 补上列级守卫。
+  //
+  // 该文件全部使用 ADD COLUMN IF NOT EXISTS，幂等，可安全加入执行链。
+  'scripts/migrate-runtime-metadata.sql',
 ] as const;
+
+/** 供回归测试断言"自动迁移覆盖了代码真正读写的列"。 */
+export const MIGRATION_FILE_LIST: readonly string[] = MIGRATION_FILES;
 
 /** 读取迁移 SQL 文件；cwd=仓库根或打包产物上一级均可命中。 */
 function migrationSql(): string {

@@ -552,11 +552,38 @@ create table if not exists public.notifications (
 create index if not exists notifications_tenant_business_status_idx on public.notifications (tenant_id, business_id, status, created_at desc);
 
 -- 任务 claim 必须在数据库事务中完成，避免多实例 scheduler 重复执行
-create or replace function public.claim_agent_task_runs(p_worker_id text, p_limit integer default 10)
+--
+-- ⚠️ Phase 15 修复：本函数的 OUT 参数名此前是 id / tenant_id / business_id /
+-- task_id / task_type / payload / attempt / max_attempts / idempotency_key，
+-- 与表列名**重名**，于是 PL/pgSQL 里出现二义性，函数**每次调用都报错**：
+--
+--   ERROR: 42702: column reference "attempt" is ambiguous
+--   DETAIL: It could refer to either a PL/pgSQL variable or a table column.
+--
+-- 受影响的点有两处：
+--   1. 租约回收的 `set status = case when attempt >= max_attempts …`
+--      —— attempt/max_attempts 既可能是表列也可能是 OUT 变量；
+--   2. `returning r.attempt, r.max_attempts` —— 同上。
+--
+-- 后果不是"偶尔失败"，而是**永久失败**：21 行 agent_task_runs 满足全部认领条件
+-- 却全部停在 pending，最久 11 天。而调用方 `claimTaskRuns()` 里写着
+-- `if (error) return []`（静默兜底），把每次失败都变成"本轮没有任务"——
+-- 与浏览器无关的调度器看起来一切正常，实际队列从未被消费过。
+--
+-- 修法：OUT 参数统一加 `out_` 前缀，彻底消除与列名的冲突。这样函数体内的
+-- `attempt` 只可能指表列，不需要到处加限定符（加了也容易漏）。
+-- 调用方按返回字段名读取，因此 TS 侧同步改为 run.out_attempt / run.out_max_attempts。
+--
+-- ⚠️ 必须先 drop 再 create：Postgres 不允许 `create or replace` 改变
+-- OUT 参数（即行的类型），会报
+--   42P13: cannot change return type of existing function
+-- 因此这里显式 drop。仍然幂等：重复执行 = drop 后重建。
+drop function if exists public.claim_agent_task_runs(text, integer);
+create function public.claim_agent_task_runs(p_worker_id text, p_limit integer default 10)
 returns table (
-  id varchar(36), tenant_id varchar(36), business_id varchar(36), task_id varchar(36),
-  task_type varchar(64), payload jsonb, attempt integer, max_attempts integer,
-  idempotency_key varchar(255)
+  out_id varchar(36), out_tenant_id varchar(36), out_business_id varchar(36),
+  out_task_id varchar(36), out_task_type varchar(64), out_payload jsonb,
+  out_attempt integer, out_max_attempts integer, out_idempotency_key varchar(255)
 )
 language plpgsql security definer set search_path = public
 as $$
@@ -588,8 +615,13 @@ begin
       started_at = coalesce(r.started_at, now())
   from candidates c, public.agent_tasks t
   where r.id = c.id and t.id = r.task_id
-  returning r.id, r.tenant_id, r.business_id, r.task_id, t.task_type, t.payload,
-    r.attempt, r.max_attempts, r.idempotency_key;
+  -- 外层列别名显式写全：返回的字段名即 out_*，与 OUT 参数名一致，
+  -- 调用方（src/lib/agent/tasks/worker.ts）按这些名字读取。
+  returning r.id as out_id, r.tenant_id as out_tenant_id,
+    r.business_id as out_business_id, r.task_id as out_task_id,
+    t.task_type as out_task_type, t.payload as out_payload,
+    r.attempt as out_attempt, r.max_attempts as out_max_attempts,
+    r.idempotency_key as out_idempotency_key;
 end;
 $$;
 

@@ -274,15 +274,44 @@ async function enqueueDueTaskRuns(): Promise<number> {
   return enqueued;
 }
 
-/** Claims pending task runs atomically via the DB lease function. */
+/**
+ * 认领待执行的任务运行（数据库租约函数原子完成）。
+ *
+ * ⚠️ Phase 15：这里此前是 `if (error) return []` —— **静默兜底**，
+ * 正是本项目明令禁止的模式。后果实测：`claim_agent_task_runs` 因为
+ * OUT 参数与列名二义性**每次调用都失败**（42702），而失败被这行代码
+ * 变成"本轮没有任务"，于是调度器 tick 全部显示正常、队列 21 行
+ * 最久 11 天从未被消费。
+ *
+ * 现在改为：把错误**抛出**。调用方 `pollAndExecuteTasks` 已由
+ * `runScheduledJobsInner` 包裹在 try/catch 里并 `console.error` 记录，
+ * 因此抛出会让故障可见，而不是被吞掉。
+ */
 async function claimTaskRuns(workerId: string, limit: number): Promise<ClaimedTaskRun[]> {
   const { data, error } = await getSupabaseClient().rpc('claim_agent_task_runs', {
     p_worker_id: workerId,
     p_limit: Math.max(1, Math.min(limit, 100)),
   });
 
-  if (error) return [];
-  return (data ?? []) as ClaimedTaskRun[];
+  if (error) {
+    throw new Error(
+      `claim_agent_task_runs failed: ${error.message}`
+      + `${error.code ? ` (code ${error.code})` : ''}`
+      + ' — 队列未被消费；不要把它降级成"本轮没有任务"',
+    );
+  }
+  // OUT 参数已改为 out_* 前缀（见 types.ts 的说明），字段名不匹配会让 worker
+  // 拿到 undefined 并静默跑偏，因此这里显式校验一次形状。
+  const rows = (data ?? []) as ClaimedTaskRun[];
+  for (const r of rows) {
+    if (typeof r?.out_id !== 'string' || typeof r?.out_task_id !== 'string') {
+      throw new Error(
+        'claim_agent_task_runs returned rows without out_* fields — '
+        + 'SQL 的 returns table 列表与 types.ts 的 ClaimedTaskRun 不一致',
+      );
+    }
+  }
+  return rows;
 }
 
 /** Transitions the run to completed（任务保持 active，回写 last_run_at）。 */
@@ -302,24 +331,24 @@ async function completeTaskRun(
     claimed_at: null,
     locked_by: null,
     locked_at: null,
-  }).eq('id', run.id)
-    .eq('tenant_id', run.tenant_id)
-    .eq('business_id', run.business_id);
+  }).eq('id', run.out_id)
+    .eq('tenant_id', run.out_tenant_id)
+    .eq('business_id', run.out_business_id);
 
   await supabase.from('agent_tasks').update({
     last_run_at: now,
     updated_at: now,
-  }).eq('id', run.task_id)
-    .eq('tenant_id', run.tenant_id)
-    .eq('business_id', run.business_id);
+  }).eq('id', run.out_task_id)
+    .eq('tenant_id', run.out_tenant_id)
+    .eq('business_id', run.out_business_id);
 }
 
 /** Fail and retry / final fail transition（权威词汇 pending/failed，attempt 计数）。 */
 async function failTaskRun(workerId: string, run: ClaimedTaskRun, error: unknown): Promise<void> {
   const supabase = getSupabaseClient();
   const message = error instanceof Error ? error.message : 'Task execution failed';
-  const currentAttempt = run.attempt || 1;
-  const maxAttempts = run.max_attempts || DEFAULT_MAX_ATTEMPTS;
+  const currentAttempt = run.out_attempt || 1;
+  const maxAttempts = run.out_max_attempts || DEFAULT_MAX_ATTEMPTS;
   const retryable = currentAttempt < maxAttempts;
   const nextAttempt = currentAttempt + 1;
   const backoffMinutes = calculateTaskRetryDelayMinutes(currentAttempt);
@@ -335,21 +364,21 @@ async function failTaskRun(workerId: string, run: ClaimedTaskRun, error: unknown
     claimed_at: null,
     locked_by: null,
     locked_at: null,
-  }).eq('id', run.id)
-    .eq('tenant_id', run.tenant_id)
-    .eq('business_id', run.business_id);
+  }).eq('id', run.out_id)
+    .eq('tenant_id', run.out_tenant_id)
+    .eq('business_id', run.out_business_id);
 
   if (retryable) {
     // 重试插新运行行（attempt+1）；claim RPC 的租约回收也会把本行重新置 pending，
     // 但显式插入保证退避语义确定。
     await supabase.from('agent_task_runs').insert({
-      tenant_id: run.tenant_id,
-      business_id: run.business_id,
-      task_id: run.task_id,
+      tenant_id: run.out_tenant_id,
+      business_id: run.out_business_id,
+      task_id: run.out_task_id,
       attempt: nextAttempt,
       max_attempts: maxAttempts,
       status: 'pending',
-      idempotency_key: `${run.idempotency_key}:retry:${nextAttempt}`,
+      idempotency_key: `${run.out_idempotency_key}:retry:${nextAttempt}`,
       available_at: nextAvailableAt,
       input: {},
     });
@@ -418,33 +447,33 @@ export async function pollAndExecuteTasks(workerId = `worker-${randomUUID().slic
   let executedCount = 0;
 
   for (const run of runs) {
-    const handler = taskHandlers.get(run.task_type);
+    const handler = taskHandlers.get(run.out_task_type);
     if (!handler) {
-      await failTaskRun(workerId, run, new Error(`No handler registered for task type: ${run.task_type}`));
+      await failTaskRun(workerId, run, new Error(`No handler registered for task type: ${run.out_task_type}`));
       continue;
     }
 
     // claim RPC 不返回 input：按运行行回读（tenant/business 双 scope，失败回落任务 payload）。
-    let input: Record<string, unknown> = run.payload ?? {};
+    let input: Record<string, unknown> = run.out_payload ?? {};
     const { data: runRow, error: runRowError } = await getSupabaseClient()
       .from('agent_task_runs')
       .select('input')
-      .eq('id', run.id)
-      .eq('tenant_id', run.tenant_id)
-      .eq('business_id', run.business_id)
+      .eq('id', run.out_id)
+      .eq('tenant_id', run.out_tenant_id)
+      .eq('business_id', run.out_business_id)
       .maybeSingle();
     if (!runRowError && runRow) {
-      input = (runRow as { input?: Record<string, unknown> | null }).input ?? run.payload ?? {};
+      input = (runRow as { input?: Record<string, unknown> | null }).input ?? run.out_payload ?? {};
     }
 
     const context: TaskHandlerContext = {
-      tenantId: run.tenant_id,
-      businessId: run.business_id,
-      taskId: run.task_id,
-      runId: run.id,
+      tenantId: run.out_tenant_id,
+      businessId: run.out_business_id,
+      taskId: run.out_task_id,
+      runId: run.out_id,
       input,
-      payload: run.payload ?? {},
-      context: run.payload ?? {},
+      payload: run.out_payload ?? {},
+      context: run.out_payload ?? {},
     };
 
     try {

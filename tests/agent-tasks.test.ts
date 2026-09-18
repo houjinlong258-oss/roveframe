@@ -35,14 +35,44 @@ describe('P0-20 worker ↔ 迁移 schema 契约（真实 schema 断言）', () =
     assert.match(worker, /payload,\s*\n\s*next_run_at: scheduledAt/);
   });
 
-  test('claim RPC 语义对齐：run.pending + task.active + attempt + 15min 租约', () => {
+  test('claim RPC 语义对齐：run.pending + task.active + out_* 返回列 + 15min 租约', () => {
     const sql = read('scripts/migrate.sql');
     assert.match(sql, /where r\.status = 'pending'/);
     assert.match(sql, /and t\.status = 'active'/);
-    assert.match(sql, /r\.attempt, r\.max_attempts, r\.idempotency_key/);
+    // Phase 15：返回列必须带 out_ 前缀别名。
+    // 旧写法 `returning r.id, …, r.attempt, …` 与同名的 OUT 参数冲突，
+    // PL/pgSQL 每次调用都报 42702 ambiguous —— 而且只在**真正调用时**才炸，
+    // 因此 `pnpm validate` 曾长期全绿而队列从未被消费过。
+    assert.match(sql, /r\.attempt as out_attempt, r\.max_attempts as out_max_attempts/);
+    assert.match(sql, /returns table \(\s*out_id varchar\(36\)/);
+    // 反例：不得再出现与 OUT 参数同名的裸返回列
+    assert.doesNotMatch(
+      sql,
+      /returning r\.id, r\.tenant_id, r\.business_id, r\.task_id, t\.task_type, t\.payload,\s*\n\s*r\.attempt/,
+      'claim_agent_task_runs 又写回了会与 OUT 参数冲突的裸返回列',
+    );
     assert.match(sql, /status = 'running'[\s\S]{0,120}coalesce\(claimed_at, locked_at\) < now\(\) - interval '15 minutes'/);
     const worker = read('src/lib/agent/tasks/worker.ts');
     assert.match(worker, /rpc\('claim_agent_task_runs'/);
+  });
+
+  test('claim 失败必须抛出，不得静默降级为"本轮没有任务"', () => {
+    const worker = read('src/lib/agent/tasks/worker.ts');
+    // 旧代码是 `if (error) return [];` —— 把每次 RPC 失败都变成"队列为空"，
+    // 于是调度器看起来一切正常而任务永不执行（实测最久积压 11 天）。
+    assert.doesNotMatch(
+      worker,
+      /if \(error\) return \[\];/,
+      'claimTaskRuns 又静默吞掉了 RPC 错误 —— 队列故障会再次变成"没有任务"',
+    );
+    assert.match(
+      worker,
+      /claim_agent_task_runs failed/,
+      'claimTaskRuns 需要把 RPC 失败抛出并带上原因',
+    );
+    // 字段名与 SQL 的 out_* 必须一致，否则 worker 拿到 undefined 静默跑偏
+    assert.match(worker, /run\.out_id/);
+    assert.match(worker, /run\.out_task_id/);
   });
 
   test('schema.ts 与迁移 SQL 任务表口径一致', () => {

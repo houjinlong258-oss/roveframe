@@ -1368,5 +1368,92 @@
         "pendingApprovals": "Pending approvals"
       }
     }
+  },
+  "landing": {
+    "badge": "AI Chief Operating Officer for small business",
+    "heroTitle": "Your business, run by an AI COO that actually does the work",
+    "heroSubtitle": "RoveFrame reads your real business data, finds what needs attention, proposes the fix, and — once you approve — executes it. Every action is frozen, approved and audited.",
+    "startFree": "Start free",
+    "signIn": "Sign in",
+    "noCard": "No credit card required. Connect your own AI provider or use the platform model.",
+    "loopTitle": "The loop the product actually closes",
+    "loopSubtitle": "Not a chat window bolted onto a dashboard. Each step below is a real component you can inspect.",
+    "loop": {
+      "data": "Business data",
+      "insight": "AI insight",
+      "recommend": "Recommendation",
+      "approve": "Your approval",
+      "execute": "Real execution",
+      "audit": "Audit trail"
+    },
+    "featuresTitle": "What it does",
+    "features": {
+      "agent": {
+        "title": "Ask in plain language",
+        "body": "A real agent runtime with tools. It queries your orders, customers and inventory instead of guessing."
+      },
+      "insight": {
+        "title": "Operating dashboard",
+        "body": "Revenue, channels, top items and anomalies, computed from your own records."
+      },
+      "approval": {
+        "title": "Approve before it acts",
+        "body": "Risky actions are frozen with their exact arguments and wait for a human decision."
+      },
+      "mail": {
+        "title": "Real email, per customer",
+        "body": "Individualised campaigns over your own SMTP or Gmail/Outlook, with delivery state per recipient."
+      },
+      "customers": {
+        "title": "Customer intelligence",
+        "body": "360 view, churn risk and win-back candidates segmented from real spending history."
+      },
+      "reviews": {
+        "title": "Review handling",
+        "body": "Classify reviews, draft replies, and post them after approval."
+      },
+      "store": {
+        "title": "QR ordering storefront",
+        "body": "A public menu per table code, with orders priced server-side against your product list."
+      },
+      "audit": {
+        "title": "Everything is auditable",
+        "body": "Every tool call passes a policy gate and is recorded, alongside a per-business audit trail."
+      }
+    },
+    "pricingTitle": "Pricing",
+    "pricingSubtitle": "Per business, not per seat. Bring your own AI provider key and pay them directly.",
+    "popular": "Most popular",
+    "perMonth": "/mo",
+    "pricing": {
+      "starter": {
+        "name": "Starter",
+        "price": "$29",
+        "blurb": "One location getting started with AI operations.",
+        "a": "1 business, 1 storefront",
+        "b": "AI agent with business tools",
+        "c": "Approval workflow and audit trail"
+      },
+      "growth": {
+        "name": "Growth",
+        "price": "$79",
+        "blurb": "For operators who want campaigns and inventory in the loop.",
+        "a": "Everything in Starter",
+        "b": "Campaigns, inventory and review handling",
+        "c": "Scheduled briefings and alerts"
+      },
+      "scale": {
+        "name": "Scale",
+        "price": "$199",
+        "blurb": "Multi-location and integration-heavy operations.",
+        "a": "Everything in Growth",
+        "b": "POS / ERP connectivity",
+        "c": "Priority support and onboarding"
+      }
+    },
+    "pricingNote": "Indicative pricing — confirm before publishing. Figures are placeholders pending a business decision.",
+    "ctaTitle": "Start with your own data",
+    "ctaSubtitle": "Create an account, connect a provider, and ask your first question about the business in minutes.",
+    "footer": "RoveFrame — AI Business OS"
   }
 }

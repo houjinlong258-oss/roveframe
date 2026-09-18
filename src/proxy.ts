@@ -70,6 +70,29 @@ async function handleApiRequest(request: NextRequest, requestId: string): Promis
     return NextResponse.next({ request: { headers } });
   }
 
+  /**
+   * 指标抓取（Phase 15）：监控系统没有浏览器会话，因此这里额外接受
+   * **服务间共享密钥** `X-RoveAgent-Key`。
+   *
+   * 为什么不把 `/api/metrics` 放进公开白名单：那会让边界完全放开，
+   * 之后路由内若写错鉴权就等于公开暴露运行状况数据。
+   * 这里**在边界上就校验密钥**，路由内再校验一次 —— 两层。
+   *
+   * 只有真的配置了密钥且请求头与其相等才放行；未配置密钥时一律走会话校验
+   * （即路由内 `isAuthorized` 的非生产放行分支不能绕过边界）。
+   */
+  if (pathname === '/api/metrics') {
+    const sharedKey = process.env.ROVEAGENT_API_KEY;
+    const provided = request.headers.get('x-roveagent-key');
+    if (sharedKey && provided && provided === sharedKey) {
+      const headers = new Headers(request.headers);
+      stripRfHeaders(headers);
+      headers.set(REQUEST_ID_HEADER, requestId);
+      return NextResponse.next({ request: { headers } });
+    }
+    // 无密钥则继续走下面的会话校验（管理员在浏览器里查看时可命中）
+  }
+
   const resolved = await resolveRequestUser(request);
   if (!resolved.ok) {
     return unauthorized(resolved.error);

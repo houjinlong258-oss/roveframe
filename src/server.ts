@@ -4,7 +4,12 @@ import next from 'next';
 import { startScheduler } from '@/lib/scheduler';
 import { runBootChecks } from '@/lib/boot-check';
 import { autoMigrate } from '@/lib/migration';
-import { assertRateLimitContract, rateLimitBackend } from '@/lib/rate-limit';
+// ⚠️ 必须从 rate-limit-contract 导入，**不能**从 rate-limit 导入。
+// rate-limit.ts 顶部 import { NextResponse } from 'next/server'，那会把 Next 的
+// 请求上下文机器拉进启动期依赖图 —— 实测让容器启动即崩：
+//   Error: Invariant: AsyncLocalStorage accessed in runtime where it is not available
+// rate-limit-contract 零依赖，启动期加载安全。
+import { assertRateLimitContract, rateLimitBackend } from '@/lib/rate-limit-contract';
 
 const dev = process.env.COZE_PROJECT_ENV !== 'PROD';
 const hostname = process.env.HOSTNAME || 'localhost';

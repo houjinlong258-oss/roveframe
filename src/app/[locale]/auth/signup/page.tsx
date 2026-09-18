@@ -28,7 +28,7 @@ export default function SignupPage() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (session) router.replace('/');
+    if (session) router.replace('/dashboard');
   }, [session, router]);
 
   async function onSubmit(e: React.FormEvent) {
@@ -41,7 +41,7 @@ export default function SignupPage() {
       setError(res.error);
       return;
     }
-    router.replace('/');
+    router.replace('/dashboard');
   }
 
   return (

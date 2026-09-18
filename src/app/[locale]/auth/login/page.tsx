@@ -19,11 +19,15 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   // 登录成功后回跳：仅接受站内路径（防开放式重定向），事件期读 window 无 hydration 风险
+  //
+  // Phase 15：默认目标从 `/` 改为 `/dashboard` ——
+  // `/` 现在是面向访客的落地页，登录后落在那里会被再跳一次（落地页检测到会话后
+  // 自动进仪表盘），多一次往返。直接指向仪表盘更干净。
   function getPostLoginTarget(): string {
-    if (typeof window === 'undefined') return '/';
+    if (typeof window === 'undefined') return '/dashboard';
     const next = new URLSearchParams(window.location.search).get('next');
     if (next && next.startsWith('/') && !next.startsWith('//')) return next;
-    return '/';
+    return '/dashboard';
   }
 
   useEffect(() => {

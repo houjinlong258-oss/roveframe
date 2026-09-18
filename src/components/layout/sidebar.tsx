@@ -15,7 +15,8 @@ const NAV_GROUPS = [
   {
     key: 'workspace',
     items: [
-      { href: '/', key: 'dashboard', icon: LayoutDashboard },
+      // Phase 15：仪表盘从 `/` 移到 `/dashboard` —— `/` 现在是面向访客的落地页
+      { href: '/dashboard', key: 'dashboard', icon: LayoutDashboard },
       { href: '/agent', key: 'agent', icon: Bot },
       { href: '/files', key: 'files', icon: FolderOpen },
     ],

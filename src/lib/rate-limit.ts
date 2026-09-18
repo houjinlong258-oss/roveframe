@@ -26,44 +26,24 @@ import { NextResponse } from 'next/server';
  * 单副本：什么都不用做（默认）。
  * 多副本：设置 `ROVEFRAME_RATE_LIMIT_SHARED=1` **仅在你确实接入了共享后端之后**。
  * 若设置了它却没有共享后端，启动时会报错 —— 这个变量是声明，不是开关。
- */
-
-/** 当前限流状态所在的存储类型 */
-export type RateLimitBackend = 'process-memory' | 'shared';
-
-/**
- * 当前的限流后端。
  *
- * 只有真的接入了共享后端才应返回 `'shared'`。
- * 环境变量 `ROVEFRAME_RATE_LIMIT_SHARED=1` 是**部署方的声明**：
- * 声明了却仍是进程内实现时，`assertRateLimitContract()` 会失败。
- */
-export function rateLimitBackend(): RateLimitBackend {
-  return process.env.ROVEFRAME_RATE_LIMIT_SHARED === '1' ? 'shared' : 'process-memory';
-}
-
-/** 本进程内是否已是共享后端（当前实现恒为 false，接入后改为 true） */
-function hasSharedBackend(): boolean {
-  // 进程内 Map 就是当前唯一实现；接入 Redis 等之后这里改为探测连接。
-  return false;
-}
-
-/**
- * 校验部署契约。**在启动时调用**（`src/server.ts`）。
+ * ## ⚠️ 本模块会引入 `next/server`
  *
- * 返回 null 表示契约成立；返回字符串表示违反，调用方应记录为错误级别。
- * 之所以做成"返回原因"而不是抛错：限流状态不对不应阻止服务启动
- * （那会把一个降级问题升级成不可用），但必须大声说出来。
+ * 顶部 `import { NextResponse } from 'next/server'` 意味着**任何** import 本模块的
+ * 代码都会把 Next 的请求上下文机器拉进依赖图。启动期代码（`src/server.ts`）
+ * 绝不能这样做：实测会让容器启动即崩
+ * （`Invariant: AsyncLocalStorage accessed in runtime where it is not available`）。
+ *
+ * 因此纯逻辑（部署契约）已拆到 `./rate-limit-contract`，那个模块零依赖、
+ * 任何上下文都能安全加载。`server.ts` 只 import 那一个。
  */
-export function assertRateLimitContract(): string | null {
-  const backend = rateLimitBackend();
-  if (backend === 'shared' && !hasSharedBackend()) {
-    return 'ROVEFRAME_RATE_LIMIT_SHARED=1 已设置，但当前实现仍是进程内 Map。'
-      + '该变量是"已接入共享后端"的声明，不是开关 —— 现在多副本下限流会成倍放宽。'
-      + '要么接入共享后端，要么去掉这个变量。';
-  }
-  return null;
-}
+
+// 纯逻辑从无依赖模块转出（保持既有 import 路径可用）
+export {
+  assertRateLimitContract,
+  rateLimitBackend,
+  type RateLimitBackend,
+} from './rate-limit-contract';
 
 export interface RateDecision {
   ok: boolean;

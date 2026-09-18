@@ -58,6 +58,15 @@ const ALERT_TONE: Record<string, ActivityItem['tone']> = {
   email: 'default',
 };
 
+/**
+ * 经营仪表盘，路径 `/<locale>/dashboard`。
+ *
+ * Phase 15：本文件此前是 `[locale]/page.tsx`。为了给未登录访客一个真正的落地页，
+ * `/` 改由 `(marketing)` 路由组承担；仪表盘整体搬到这里，**组件体未改动**。
+ *
+ * 仍然套在 `[locale]/layout.tsx` 的 AppShell 里，因此侧栏、顶栏、
+ * 会话守卫（401 → 登录页）行为与搬迁前完全一致。
+ */
 export default function DashboardPage() {
   const t = useTranslations('dashboard');
   const locale = useLocale();

@@ -1368,5 +1368,92 @@
         "pendingApprovals": "Aprobaciones pendientes"
       }
     }
+  },
+  "landing": {
+    "badge": "Director de Operaciones con IA para pymes",
+    "heroTitle": "Tu negocio, dirigido por un COO de IA que realmente hace el trabajo",
+    "heroSubtitle": "RoveFrame lee los datos reales de tu negocio, detecta lo que requiere atención, propone la solución y —tras tu aprobación— la ejecuta. Cada acción queda congelada, aprobada y auditada.",
+    "startFree": "Empezar gratis",
+    "signIn": "Iniciar sesión",
+    "noCard": "Sin tarjeta de crédito. Conecta tu propio proveedor de IA o usa el modelo de la plataforma.",
+    "loopTitle": "El ciclo que el producto realmente cierra",
+    "loopSubtitle": "No es un chat añadido a un panel. Cada paso de abajo es un componente real que puedes inspeccionar.",
+    "loop": {
+      "data": "Datos del negocio",
+      "insight": "Análisis con IA",
+      "recommend": "Recomendación",
+      "approve": "Tu aprobación",
+      "execute": "Ejecución real",
+      "audit": "Registro de auditoría"
+    },
+    "featuresTitle": "Qué hace",
+    "features": {
+      "agent": {
+        "title": "Pregunta en lenguaje natural",
+        "body": "Un runtime de agente real con herramientas: consulta tus pedidos, clientes e inventario en vez de adivinar."
+      },
+      "insight": {
+        "title": "Panel operativo",
+        "body": "Ingresos, canales, productos destacados y anomalías, calculados desde tus propios registros."
+      },
+      "approval": {
+        "title": "Aprueba antes de actuar",
+        "body": "Las acciones de riesgo se congelan con sus argumentos exactos y esperan una decisión humana."
+      },
+      "mail": {
+        "title": "Correo real, por cliente",
+        "body": "Campañas individualizadas por tu propio SMTP o Gmail/Outlook, con estado por destinatario."
+      },
+      "customers": {
+        "title": "Inteligencia de clientes",
+        "body": "Vista 360, riesgo de abandono y candidatos de recuperación según el historial real de gasto."
+      },
+      "reviews": {
+        "title": "Gestión de reseñas",
+        "body": "Clasifica reseñas, redacta respuestas y publícalas tras la aprobación."
+      },
+      "store": {
+        "title": "Tienda con pedido por QR",
+        "body": "Menú público por código de mesa, con precios calculados en el servidor según tu catálogo."
+      },
+      "audit": {
+        "title": "Todo es auditable",
+        "body": "Cada llamada a herramienta pasa por una política y queda registrada, con trazabilidad por negocio."
+      }
+    },
+    "pricingTitle": "Precios",
+    "pricingSubtitle": "Por negocio, no por usuario. Usa tu propia clave de proveedor de IA y págale directamente.",
+    "popular": "Más elegido",
+    "perMonth": "/mes",
+    "pricing": {
+      "starter": {
+        "name": "Inicial",
+        "price": "$29",
+        "blurb": "Un local que empieza con operaciones de IA.",
+        "a": "1 negocio, 1 tienda",
+        "b": "Agente de IA con herramientas de negocio",
+        "c": "Flujo de aprobación y auditoría"
+      },
+      "growth": {
+        "name": "Crecimiento",
+        "price": "$79",
+        "blurb": "Para quien quiere campañas e inventario dentro del ciclo.",
+        "a": "Todo lo de Inicial",
+        "b": "Campañas, inventario y gestión de reseñas",
+        "c": "Informes programados y alertas"
+      },
+      "scale": {
+        "name": "Escala",
+        "price": "$199",
+        "blurb": "Operaciones con varias sedes y muchas integraciones.",
+        "a": "Todo lo de Crecimiento",
+        "b": "Conectividad POS / ERP",
+        "c": "Soporte prioritario y puesta en marcha"
+      }
+    },
+    "pricingNote": "Precio indicativo: confírmalo antes de publicar. Las cifras son provisionales.",
+    "ctaTitle": "Empieza con tus propios datos",
+    "ctaSubtitle": "Crea una cuenta, conecta un proveedor y haz tu primera pregunta en minutos.",
+    "footer": "RoveFrame — AI Business OS"
   }
 }

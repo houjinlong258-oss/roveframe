@@ -1368,5 +1368,92 @@
         "pendingApprovals": "待审批"
       }
     }
+  },
+  "landing": {
+    "badge": "面向中小企业的 AI 首席运营官",
+    "heroTitle": "让一个真正干活的 AI COO 替你经营",
+    "heroSubtitle": "RoveFrame 读取你的真实经营数据，找出需要处理的事，给出方案；你批准之后它才执行。每一步都被冻结、审批、留痕。",
+    "startFree": "免费开始",
+    "signIn": "登录",
+    "noCard": "无需信用卡。可接入你自己的模型服务商，也可使用平台内置模型。",
+    "loopTitle": "产品真正闭环的那条链路",
+    "loopSubtitle": "不是给仪表盘加一个聊天框。下面每一步都是你可以查验的真实组件。",
+    "loop": {
+      "data": "经营数据",
+      "insight": "AI 洞察",
+      "recommend": "行动建议",
+      "approve": "你的审批",
+      "execute": "真实执行",
+      "audit": "审计留痕"
+    },
+    "featuresTitle": "能力",
+    "features": {
+      "agent": {
+        "title": "用大白话提问",
+        "body": "真实 Agent 运行时带工具。它去查你的订单、客户与库存，而不是猜。"
+      },
+      "insight": {
+        "title": "经营仪表盘",
+        "body": "营收、渠道、热销与异常，全部由你自己的记录算出来。"
+      },
+      "approval": {
+        "title": "先批准，再动手",
+        "body": "高风险动作连同**确切参数**一起冻结，等人决定。"
+      },
+      "mail": {
+        "title": "真实邮件，逐人个性化",
+        "body": "走你自己的 SMTP 或 Gmail/Outlook，每个收件人都有投递状态。"
+      },
+      "customers": {
+        "title": "客户智能",
+        "body": "360 视图、流失风险与召回名单，按真实消费历史切分。"
+      },
+      "reviews": {
+        "title": "评论处理",
+        "body": "自动分类、起草回复，批准后再发布。"
+      },
+      "store": {
+        "title": "扫码点餐商城",
+        "body": "一桌一码的公开菜单，订单在服务端按你的商品表计价。"
+      },
+      "audit": {
+        "title": "全程可审计",
+        "body": "每次工具调用都过一个策略闸门并被记录，另有按商家分开的审计流水。"
+      }
+    },
+    "pricingTitle": "价格",
+    "pricingSubtitle": "按商家计费，不按人头。自带模型服务商 Key，直接付给服务商。",
+    "popular": "最常见的选择",
+    "perMonth": "/月",
+    "pricing": {
+      "starter": {
+        "name": "入门",
+        "price": "$29",
+        "blurb": "单店起步，先把 AI 经营跑起来。",
+        "a": "1 个商家、1 个店面",
+        "b": "带业务工具的 AI Agent",
+        "c": "审批流与审计留痕"
+      },
+      "growth": {
+        "name": "成长",
+        "price": "$79",
+        "blurb": "要把营销与库存也纳入闭环的经营者。",
+        "a": "含入门版全部",
+        "b": "营销活动、库存与评论处理",
+        "c": "定时经营简报与异常告警"
+      },
+      "scale": {
+        "name": "规模",
+        "price": "$199",
+        "blurb": "多门店、重集成的经营场景。",
+        "a": "含成长版全部",
+        "b": "POS / ERP 对接",
+        "c": "优先支持与上线协助"
+      }
+    },
+    "pricingNote": "参考价，发布前请确认。当前数字为占位，待业务方定价。",
+    "ctaTitle": "用你自己的数据开始",
+    "ctaSubtitle": "注册、接入服务商，几分钟内问出第一个关于经营的问题。",
+    "footer": "RoveFrame — AI Business OS"
   }
 }

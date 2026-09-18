@@ -31,10 +31,23 @@ const DEFAULT_BUSINESS = '00000000-0000-0000-0000-000000000001';
  *
  *  `NewTenant …` 由 `_verify_newtenant_error.mts` 创建（新商家报错验证）。
  *  `ERP probe …` 由 `_verify_erp_status_http.mts` 创建（集成状态语义验证）。
+ *  `Landing probe …` 由 `_verify_landing_http.mts` 创建（落地页验证）。
  *
  *  **新增验收脚本时请沿用其中之一**，否则清理会漏掉它 ——
  *  本项目要求显式清理，不做静默级联。 */
-const RESIDUE_NAME = /^(rls-probe|424323|E2E Phase15|NewTenant |ERP probe )/;
+const RESIDUE_NAME = /^(rls-probe|424323|E2E Phase15|NewTenant |ERP probe |Landing probe )/;
+
+/**
+ * 无法用命名特征安全识别、但确认是测试残留的对象，**按精确名字**列出。
+ *
+ * 为什么不用更宽的正则：像 `B` 这样的短名在真实商家命名里完全可能出现，
+ * 放宽规则会误删真实数据。**宁可显式列举，也不放宽匹配。**
+ *
+ * `B` 的来源：`tests/high-risk-routes.test.ts` 的早期版本用
+ * `business_name: 'B'` 真的走完了注册。该测试已改为只断言拒绝侧、
+ * 不再产生副作用；这条是为了清掉它当初留下的那一个。
+ */
+const EXTRA_NAMES: readonly string[] = ['B'];
 
 const APPLY = process.argv.includes('--apply');
 
@@ -116,12 +129,15 @@ async function main(): Promise<number> {
   const extraTenants = (tenants ?? []).filter((t) => {
     const id = String(t.id);
     if (id === DEFAULT_TENANT) return false;
-    return RESIDUE_NAME.test(String(t.name ?? ''));
+    const name = String(t.name ?? '');
+    // 命名特征匹配，或**精确**命中显式列举的历史残留名
+    return RESIDUE_NAME.test(name) || EXTRA_NAMES.includes(name);
   });
   const extraBusinesses = (businesses ?? []).filter((b) => {
     const id = String(b.id);
     if (id === DEFAULT_BUSINESS) return false;
-    return RESIDUE_NAME.test(String(b.name ?? ''));
+    const name = String(b.name ?? '');
+    return RESIDUE_NAME.test(name) || EXTRA_NAMES.includes(name);
   });
 
   console.log(`锚点保留: tenant ${DEFAULT_TENANT.slice(0, 8)}… / business ${DEFAULT_BUSINESS.slice(0, 8)}…`);

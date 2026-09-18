@@ -23,10 +23,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const isStore = /\/store(\/|$)/.test(pathname);
   const isAuth = /\/auth(\/|$)/.test(pathname);
+  /**
+   * 落地页（`/<locale>`）也不带后台框架（Phase 15）。
+   *
+   * 为什么在这里判断而不是靠 `(marketing)` 路由组：Next 的嵌套布局是**叠加**的，
+   * 路由组只能"加"，不能把父级 `[locale]/layout.tsx` 里的 AppShell 去掉。
+   * 落地页面向还没有账号的访客，给它一个经营仪表盘侧栏既无意义，
+   * 又会触发下面的会话守卫把人踢去登录页 —— 那正是要修的行为。
+   *
+   * 匹配两种形态：`usePathname()` 在本项目里可能返回带 locale 的
+   * `/en`，也可能是去掉 locale 的 `/`（next-intl 的导航包装会影响它）。
+   * 只认一种会漏判 —— 实测漏判的后果是首屏仍带侧栏。
+   */
+  const isLanding = pathname === '/' || /^\/(en|zh|es)\/?$/.test(pathname);
 
   // 会话守卫：进入管理后台时验证会话，失效即 401 跳登录页
   useEffect(() => {
-    if (isStore || isAuth) return;
+    if (isStore || isAuth || isLanding) return;
     let cancelled = false;
     fetch('/api/auth/me')
       .then((res) => {
@@ -38,7 +51,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [isStore, isAuth]);
+  }, [isStore, isAuth, isLanding]);
 
   // 折叠偏好：刷新后保持用户习惯
   useEffect(() => {
@@ -86,6 +99,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
   // 登录/注册页独立全屏（不带后台框架）
   if (isAuth) {
+    return <>{children}</>;
+  }
+  // 落地页独立全屏：面向未登录访客，不套后台侧栏（Phase 15）
+  if (isLanding) {
     return <>{children}</>;
   }
 

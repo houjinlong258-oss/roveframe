@@ -54,7 +54,16 @@ def build_workforce() -> list[AIEmployee]:
             responsibilities=["经营分析", "战略建议", "审批高风险动作", "每日经营总结"],
             skills=["daily-briefing", "business-analysis"],
             permissions=["analytics:read"],
-            tools=["read_*", "*_sales", "memory", "session_search"],
+            # Phase 15：加入 web_search / web_extract。
+            #
+            # 这两个工具在运行时**早已注册**（roveagent-webhook toolset），
+            # 此前 ceo 用不到只是因为白名单 glob 不匹配它们：
+            # `read_*` 不匹配 `web_search`，`*_sales` 也不匹配。
+            # 也就是说"Agent 不能联网搜索"不是能力缺失，是**一行配置**没开。
+            #
+            # 覆盖场景：老板问"附近同类店人均消费多少""这个食材现在什么行情"
+            # —— 这类问题靠库内数据回答不了，此前只能答"我查不到"。
+            tools=["read_*", "*_sales", "memory", "session_search", "web_search", "web_extract"],
             kpis=[KPI("月营收增长率", ">=15%", "revenue_growth"),
                   KPI("审批响应时长", "<=2h", "approval_latency")],
             escalation="owner",

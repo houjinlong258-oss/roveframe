@@ -36,10 +36,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
    * 只认一种会漏判 —— 实测漏判的后果是首屏仍带侧栏。
    */
   const isLanding = pathname === '/' || /^\/(en|zh|es)\/?$/.test(pathname);
+  /**
+   * 商户官网（`/<locale>/site/<slug>`）同样是公开页面（Phase 17）。
+   *
+   * 它由搜索引擎、名片、二维码进入，访客没有会话。不旁路的话下面的守卫会
+   * 把每一个官网访客弹到登录页 —— 那等于官网不存在。
+   */
+  const isPublicSite = /\/site(\/|$)/.test(pathname);
+  /**
+   * 员工端（`/<locale>/staff`）是**独立的 PWA**，不复用后台外壳（Phase 18）。
+   *
+   * 订正：施工简报里写过"app-shell 已经旁路了 /staff" —— 那是错的。
+   * 实测（从源码提取正则逐个求值，阳性对照 `/en/store` → BYPASSED）显示
+   * `/en/staff` 会落进后台框架并触发会话守卫。此前加的是 `/site`（Phase 17 官网），
+   * 两者记串了。
+   *
+   * 为什么连**守卫**一起旁路，而不只是外壳：员工 PWA 自带登录界面。
+   * 守卫先跳商家登录页的话，员工永远看不到自己那个入口。
+   * 这不是放宽安全边界 —— 真正的边界在 API 侧
+   * （`staffRequestContext` 返回 401/403/409，见 src/lib/workforce.ts），
+   * 本文件头部也写明"proxy 是网络边界而非唯一鉴权点"。
+   */
+  const isStaff = /\/staff(\/|$)/.test(pathname);
 
   // 会话守卫：进入管理后台时验证会话，失效即 401 跳登录页
   useEffect(() => {
-    if (isStore || isAuth || isLanding) return;
+    if (isStore || isAuth || isLanding || isPublicSite || isStaff) return;
     let cancelled = false;
     fetch('/api/auth/me')
       .then((res) => {
@@ -51,7 +73,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [isStore, isAuth, isLanding]);
+  }, [isStore, isAuth, isLanding, isPublicSite, isStaff]);
 
   // 折叠偏好：刷新后保持用户习惯
   useEffect(() => {
@@ -103,6 +125,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
   // 落地页独立全屏：面向未登录访客，不套后台侧栏（Phase 15）
   if (isLanding) {
+    return <>{children}</>;
+  }
+  // 商户官网独立全屏：公开页面，无会话（Phase 17）
+  if (isPublicSite) {
+    return <>{children}</>;
+  }
+  // 员工端独立全屏：自带登录界面与底部导航，不复用后台外壳（Phase 18）
+  if (isStaff) {
     return <>{children}</>;
   }
 

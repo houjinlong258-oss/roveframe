@@ -183,6 +183,47 @@ export async function createPublicUserRow(opts: {
   return { ok: true, data: { userId: opts.id } };
 }
 
+/**
+ * 为新租户建一条 trialing 订阅（Phase 16 任务 2）。
+ *
+ * ## 为什么必须建
+ *
+ * 权益门禁是 **fail-closed** 的：`tenant_subscriptions` 里没有行的租户，
+ * 写操作一律被拒（`subscription_missing`）。因此"注册不建订阅"等价于
+ * "新商家注册完就是只读" —— 那不是门禁，那是坏掉的产品。
+ *
+ * ## 为什么在注册流程里同步建、并且失败就整体失败
+ *
+ * 这条写入是**用户可感知状态**的一部分：它的失败必须变成注册失败，
+ * 而不是"账号建好了但用不了"。因此调用点放在**建 auth 用户之前** ——
+ * 失败时只留下一个没有登录凭据的 tenant+business，用户重试即可，
+ * 不会出现"能登录却是只读"的黑洞账号。
+ */
+export async function createTrialSubscriptionRow(opts: {
+  tenantId: string;
+  planId: string;
+  trialEndsAt: string;
+}): Promise<Result<{ subscriptionId: string | null }>> {
+  const client = getSupabaseClient();
+  const { data, error } = await client
+    .from('tenant_subscriptions')
+    .insert({
+      tenant_id: opts.tenantId,
+      plan_id: opts.planId,
+      status: 'trialing',
+      current_period_end: opts.trialEndsAt,
+      renewal_source: 'offline',
+      currency: 'USD',
+      last_payment_status: 'trial',
+    })
+    .select('id')
+    .single();
+  if (error || !data) {
+    return { ok: false, error: error?.message ?? 'insert tenant_subscriptions failed' };
+  }
+  return { ok: true, data: { subscriptionId: (data as { id: string }).id } };
+}
+
 /** 登录并取 access_token */
 export async function signInAndGetToken(opts: {
   email: string;

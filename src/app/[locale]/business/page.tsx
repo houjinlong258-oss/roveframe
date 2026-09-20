@@ -221,7 +221,11 @@ export default function BusinessPage() {
     // 为每个码生成二维码图片
     const images: Record<string, string> = {};
     for (const c of codes) {
-      const url = `${window.location.origin}/store?token=${encodeURIComponent(c.public_token)}`;
+    // Phase 16 任务 5：补上 locale 前缀。i18n 配置是 localePrefix: 'always'，
+    // 而这里原先生成 `/store?token=…` —— 少一层 locale 会先被中间件重定向，
+    // 二维码扫出来的第一条请求就是一次 307。query 由重定向保留，但
+    // 顾客端的首屏会因此变慢，且二维码里存的是一个并非最终地址的 URL。
+    const url = storeUrlFor(c.public_token);
       images[c.id] = await QRCode.toDataURL(url, { width: 512, margin: 1, color: { dark: '#131B2E', light: '#FFFFFF' } });
     }
     setQrImages(images);
@@ -368,7 +372,17 @@ export default function BusinessPage() {
     await loadQrCodes();
   };
 
-  const storeUrl = (token: string) => `${origin}/store?token=${encodeURIComponent(token)}`;
+  /**
+   * 顾客端门店地址（含 locale 前缀，Phase 16 任务 5）。
+   *
+   * `localePrefix: 'always'` ⇒ 最终地址形如 `/{locale}/store?token=…`。
+   * 这里用 `useLocale()` 的当前语言：老板生成二维码时界面是哪种语言，
+   * 顾客打开就是哪种（二维码里存的是同一个语言变体，不会因语言而失效）。
+   */
+  const storeUrlFor = (token: string) =>
+    `${origin}/${locale}/store?token=${encodeURIComponent(token)}`;
+
+  const storeUrl = (token: string) => storeUrlFor(token);
 
   const copyText = async (key: string, text: string) => {
     try {

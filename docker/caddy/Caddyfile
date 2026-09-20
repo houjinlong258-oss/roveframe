@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------
+# RoveFrame AI Business OS — public edge (Caddy)
+#
+# Two catch-all site blocks, on purpose:
+#
+#   `https://` with `tls { on_demand }` means "accept any hostname, but ask the
+#   app before spending a certificate on it". That single rule covers both the
+#   platform's own domain and every merchant custom domain, with no per-tenant
+#   config and no restart when a merchant binds a new domain.
+#
+#   `http://` is served too, and deliberately does NOT redirect. An install with
+#   no domain (bare IP) can never obtain a certificate, and an unconditional
+#   redirect would make that deployment unreachable. Use the https:// URL when a
+#   domain is configured.
+#
+# Only one path is allowed to reach the internal database gateway:
+# /storage/v1/object/public/* (product images and videos). PostgREST and GoTrue
+# are NOT exposed here at all, so they are unreachable from the internet even if
+# the gateway is misconfigured later. See docker/gateway/nginx.conf.
+# ---------------------------------------------------------------------------
+
+{
+	email {$ACME_EMAIL}
+	on_demand_tls {
+		# Approved hostnames only. The endpoint answers 200 for the platform's
+		# own SITE_DOMAIN and for any custom_domain that is active in
+		# public_sites, and 404 for everything else (fail-closed).
+		ask http://web:5000/api/site/domain/authorize
+	}
+}
+
+https:// {
+	tls {
+		on_demand
+	}
+
+	@public_media path /storage/v1/object/public/*
+	handle @public_media {
+		reverse_proxy gateway:80
+	}
+
+	handle {
+		reverse_proxy web:5000
+	}
+}
+
+http:// {
+	@public_media path /storage/v1/object/public/*
+	handle @public_media {
+		reverse_proxy gateway:80
+	}
+
+	handle {
+		reverse_proxy web:5000
+	}
+}

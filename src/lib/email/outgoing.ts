@@ -10,6 +10,12 @@ import nodemailer from 'nodemailer';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { decrypt } from '@/lib/crypto';
 import { recordCampaignMemory } from '@/lib/agent/recovery-campaign';
+import { evaluateEmailAccount, resolveSmtpTransport } from '@/lib/email/eligibility';
+import {
+  appendUnsubscribeFooter,
+  loadUnsubscribedAddresses,
+  unsubscribeHeaders,
+} from '@/lib/email/unsubscribe';
 
 interface EmailAccountRow {
   id: string;
@@ -18,6 +24,7 @@ interface EmailAccountRow {
   smtp_host: string | null;
   smtp_port: number | null;
   credentials_encrypted: string | null;
+  status?: string | null;
 }
 
 interface OutgoingTaskRow {
@@ -33,6 +40,8 @@ interface OutgoingTaskRow {
   content: string;
   attempts: number | null;
   max_attempts: number | null;
+  unsubscribe_token?: string | null;
+  unsubscribe_url?: string | null;
 }
 
 interface SmtpCredentials {
@@ -40,10 +49,17 @@ interface SmtpCredentials {
   smtp_pass?: string;
 }
 
+/**
+ * 取默认（或指定）发件账号。
+ *
+ * Phase 16 任务 4：判定改为调用 `@/lib/email/eligibility` 的**同一函数**，
+ * UI 与 worker 不再各写一套条件 —— 此前 UI 只查 `is_default`，
+ * 于是"按钮可用但每封都失败"。
+ */
 export async function loadDefaultAccount(tenantId: string, businessId: string, accountId: string | null): Promise<EmailAccountRow | null> {
   const supabase = getSupabaseClient();
   let query = supabase.from('email_accounts')
-    .select('id, email, display_name, smtp_host, smtp_port, credentials_encrypted')
+    .select('id, email, display_name, smtp_host, smtp_port, credentials_encrypted, status')
     .eq('tenant_id', tenantId).eq('business_id', businessId).eq('status', 'active');
   query = accountId
     ? query.eq('id', accountId)
@@ -51,31 +67,53 @@ export async function loadDefaultAccount(tenantId: string, businessId: string, a
   const { data, error } = await query.maybeSingle();
   if (error || !data) return null;
   const row = data as EmailAccountRow;
-  return row.smtp_host && row.credentials_encrypted ? row : null;
+  const eligibility = evaluateEmailAccount(row);
+  if (!eligibility.usable) {
+    console.warn(
+      `[email/outgoing] account ${row.id} is not usable (${eligibility.reason}): ${eligibility.message}`,
+    );
+    return null;
+  }
+  return row;
 }
 
-async function sendViaSmtp(account: EmailAccountRow, to: string, subject: string, content: string): Promise<string> {
+/**
+ * 真实发送一封。可选带上退订头与页脚 —— 批量商业邮件必须带（合规硬要求）。
+ */
+async function sendViaSmtp(
+  account: EmailAccountRow,
+  to: string,
+  subject: string,
+  content: string,
+  unsubscribe?: { url: string; businessName?: string },
+): Promise<string> {
   const host = account.smtp_host;
   if (!host) throw new Error('SMTP host is not configured');
+  // 端口 → TLS 模式由单一事实源决定：465 是 implicit TLS，587 等是 STARTTLS。
+  // 原实现写死 `secure: port === 465`，配合 Outlook 预设的 465 端口导致
+  // Office 365 直接拒绝连接。
+  const transport = resolveSmtpTransport(account.smtp_port);
   let creds: SmtpCredentials = {};
   try {
     creds = JSON.parse(decrypt(account.credentials_encrypted ?? '')) as SmtpCredentials;
   } catch {
     throw new Error('SMTP credentials could not be decrypted');
   }
-  const transport = nodemailer.createTransport({
+  const mailer = nodemailer.createTransport({
     host,
-    port: account.smtp_port ?? 465,
-    secure: (account.smtp_port ?? 465) === 465,
+    port: transport.port,
+    secure: transport.secure,
     auth: { user: creds.smtp_user ?? account.email, pass: creds.smtp_pass ?? '' },
   });
-  const info = await transport.sendMail({
+  const body = unsubscribe ? appendUnsubscribeFooter(content, unsubscribe.url, unsubscribe.businessName) : content;
+  const info = await mailer.sendMail({
     from: account.display_name
       ? '"' + account.display_name + '" <' + account.email + '>'
       : account.email,
     to,
     subject,
-    text: content,
+    text: body,
+    ...(unsubscribe ? { headers: unsubscribeHeaders(unsubscribe.url) } : {}),
   });
   return String(info.messageId ?? '');
 }
@@ -171,17 +209,18 @@ export async function sendEmailWithDefaultAccount(
   to: string,
   subject: string,
   text: string,
+  unsubscribe?: { url: string; businessName?: string },
 ): Promise<string> {
   const account = await loadDefaultAccount(tenantId, businessId, null);
   if (!account) throw new Error('No active SMTP email account configured for this business');
-  return sendViaSmtp(account, to, subject, text);
+  return sendViaSmtp(account, to, subject, text, unsubscribe);
 }
 
 /**
  * 出件主循环：认领到期任务 → 真实 SMTP 发送 → 状态回写。
  * 返回本轮处理统计。
  */
-export async function processEmailSendQueue(limit = 20): Promise<{ processed: number; sent: number; failed: number; requeued: number }> {
+export async function processEmailSendQueue(limit = 20): Promise<{ processed: number; sent: number; failed: number; requeued: number; skipped: number }> {
   const supabase = getSupabaseClient();
   const nowIso = new Date().toISOString();
 
@@ -197,14 +236,62 @@ export async function processEmailSendQueue(limit = 20): Promise<{ processed: nu
   if (error) throw new Error('email send queue claim failed: ' + error.message);
   const tasks = (data ?? []) as OutgoingTaskRow[];
 
+  // Phase 16 任务 4：退订过滤。**发送前**批量预取本批涉及的 (tenant,business)
+  // 下的退订地址，一次查询覆盖整批，避免逐封查库。
+  //
+  // 退订是"必须被持续遵守"的义务，因此命中退订的任务不是失败、也不是重试，
+  // 而是终态 `skipped_optout` —— 重试只会把它永远留在队列里。
+  const unsubscribed = new Map<string, Set<string>>();
+  const scopeKeys = [...new Set(tasks.map((t) => `${t.tenant_id}\u0000${t.business_id}`))];
+  for (const key of scopeKeys) {
+    const [tenantId, businessId] = key.split('\u0000');
+    try {
+      const addresses = tasks
+        .filter((t) => t.tenant_id === tenantId && t.business_id === businessId)
+        .map((t) => t.to_addr);
+      unsubscribed.set(key, await loadUnsubscribedAddresses(tenantId, businessId, addresses));
+    } catch (lookupError) {
+      // fail-closed：查不到退订名单时**不发**。宁可延迟，不可违反退订。
+      console.error(
+        '[email/outgoing] unsubscribe lookup failed; holding this scope:',
+        lookupError instanceof Error ? lookupError.message : String(lookupError),
+      );
+      unsubscribed.set(key, null as unknown as Set<string>);
+    }
+  }
+
   let sent = 0;
   let failed = 0;
   let requeued = 0;
+  let skipped = 0;
   const touchedCampaigns = new Set<string>();
 
   for (const task of tasks) {
     const attempts = Number(task.attempts ?? 0);
     const maxAttempts = Number(task.max_attempts ?? 3);
+
+    const scopeKey = `${task.tenant_id}\u0000${task.business_id}`;
+    const blocked = unsubscribed.get(scopeKey);
+    if (!blocked) {
+      // 该范围查不到退订名单：本轮跳过（保持 queued 让下一 tick 重试），不发送。
+      requeued += 1;
+      continue;
+    }
+    if (blocked.has(task.to_addr.trim().toLowerCase())) {
+      if (task.campaign_id) touchedCampaigns.add(task.campaign_id);
+      await supabase.from('email_send_tasks')
+        .update({
+          status: 'skipped_optout',
+          last_error: 'recipient has unsubscribed',
+        })
+        .eq('id', task.id)
+        .eq('tenant_id', task.tenant_id)
+        .eq('business_id', task.business_id)
+        .eq('status', 'queued');
+      skipped += 1;
+      continue;
+    }
+
     // CAS：仅当仍为 queued 时认领，避免多 worker 重复发送。
     const { data: claimed, error: claimError } = await supabase.from('email_send_tasks')
       .update({ status: 'sending', claimed_at: nowIso })
@@ -219,7 +306,12 @@ export async function processEmailSendQueue(limit = 20): Promise<{ processed: nu
     try {
       const account = await loadDefaultAccount(task.tenant_id, task.business_id, task.account_id);
       if (!account) throw new Error('No active SMTP email account configured for this business');
-      const messageId = await sendViaSmtp(account, task.to_addr, task.subject, task.content);
+      // 退订链接在入队时已定稿（随任务落库）；老任务没有令牌则不带头 ——
+      // 但仍会在下面的合规守卫里被拦下，不会静默发出无退订的批量邮件。
+      const unsubscribe = task.unsubscribe_url
+        ? { url: task.unsubscribe_url, businessName: account.display_name ?? undefined }
+        : undefined;
+      const messageId = await sendViaSmtp(account, task.to_addr, task.subject, task.content, unsubscribe);
       const { error: sentUpdateError } = await supabase.from('email_send_tasks')
         .update({ status: 'sent', sent_at: nowIso, provider_message_id: messageId || null, attempts: attempts + 1, error: null })
         .eq('id', task.id)
@@ -261,7 +353,7 @@ export async function processEmailSendQueue(limit = 20): Promise<{ processed: nu
   for (const campaignId of touchedCampaigns) {
     await finalizeCampaignIfComplete(campaignId);
   }
-  return { processed: tasks.length, sent, failed, requeued };
+  return { processed: tasks.length, sent, failed, requeued, skipped };
 }
 
 interface CampaignRow {

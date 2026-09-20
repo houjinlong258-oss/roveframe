@@ -17,11 +17,14 @@ import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { resolveUserByToken } from '@/lib/auth';
 import { getTenantContext } from '@/lib/tenant';
 import { protectTenantMutation } from '@/lib/mutation-guard';
+import { resolveAppOrigin } from '@/lib/app-origin';
 
 interface InviteBody {
   email: string;
   role: 'manager' | 'staff';
   business_id?: string;
+  /** 邀请链接落地页的语言（localePrefix: 'always'，缺省 en） */
+  locale?: string;
 }
 
 async function inviteUser(request: Request) {
@@ -73,9 +76,25 @@ async function inviteUser(request: Request) {
   }
 
   // 1) Supabase 生成 invite link（admin API，需 service_role）
+  //
+  // Phase 16 任务 6 修掉三个缺陷：
+  //   a) **没有写 app_metadata.tenant_id** —— 而被邀请人能不能通过鉴权，
+  //      取决于 `verifyJwtLocally` / `auth-guard` 读 `app_metadata.tenant_id`
+  //      （`auth.ts:219`、`auth-guard.ts:164`）。缺了它，被邀请人**永远无法认证**：
+  //      邮件能收到、点开能设密码，然后每次请求 401。这是本功能一直不可用的根因。
+  //   b) `redirectTo` 指向 `<origin>/auth/callback`，而该路由**不存在**；
+  //      且站点是 `localePrefix: 'always'`，不带 locale 的地址还要多一次 307。
+  //   c) 返回 `invite_url: null`，调用方拿不到链接 —— 而注释写着"调用方用现有邮件通道
+  //      发送 invite_url"。返回 null 等于让调用方无法完成这件事。
+  const origin = resolveAppOrigin(request);
+  const locale = ['en', 'zh', 'es'].includes(body.locale ?? '') ? body.locale! : 'en';
   const { data, error } = await client.auth.admin.inviteUserByEmail(body.email, {
-    redirectTo: `${request.headers.get('origin') ?? ''}/auth/callback`,
-    data: { business_id: targetBusinessId, role: body.role },
+    redirectTo: `${origin}/${locale}/auth/login`,
+    data: {
+      tenant_id: ctx.tenantId,
+      business_id: targetBusinessId,
+      role: body.role,
+    },
   });
   if (error || !data.user) {
     return jsonError(`invite failed: ${error?.message ?? 'unknown'}`, 500);
@@ -99,8 +118,14 @@ async function inviteUser(request: Request) {
       email: body.email,
       role: body.role,
       business_id: targetBusinessId,
-      // 完整版应该走 email 通道发送 invite link；此处仅返回占位
-      invite_url: null,
+      tenant_id: ctx.tenantId,
+      // Supabase 生成的邀请链接：调用方可以直接发给被邀请人，
+      // 也可以用现有邮件通道（/api/emails/send）发出。
+      // SDK 的类型声明里 User 没有 invite_link（它随版本变化），运行时存在；
+      // 因此显式断言而不是改类型定义。
+      invite_url: (data.user as unknown as { invite_link?: string | null }).invite_link ?? null,
+      // 说明链接的有效性依赖平台侧的邮件模板配置，避免调用方以为一定能拿到
+      invite_url_source: 'supabase_admin_invite',
     },
     201,
   );

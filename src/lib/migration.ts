@@ -50,6 +50,47 @@ const MIGRATION_FILES = [
   'scripts/migrate-production-hardening.sql',
   'scripts/migrate-customer-favorites.sql',
   'scripts/migrate-ai-provider-views.sql',
+  // Phase 16 任务 2：订阅套餐种子 + 存量租户的计费归属 + 平台默认 entitlement。
+  // 之所以必须是迁移（而不是一个"记得跑"的脚本）：权益门禁是 fail-closed 的，
+  // 没有订阅行的租户会被降为只读。若迁移不在链上，一次全新部署就会把**所有**
+  // 商家锁成只读。种子里的存量回填语句用 `on conflict (tenant_id) do nothing`，
+  // 因此重复执行不会把已 suspended 的租户重置回 active。
+  'scripts/migrate-subscriptions-seed.sql',
+  // Phase 16 任务 4：退订表 + 出件任务的退订令牌列。
+  // 没有它，外发链路就没有退订能力（欧美市场批量邮件不可合法使用）。
+  'scripts/migrate-email-compliance.sql',
+  // Phase 16 任务 4：邮箱账号的连接验证证据列（last_test_ok / last_tested_at / last_test_error）
+  'scripts/migrate-email-account-verification.sql',
+  // Phase 17：商户官网。没有它，"Agent 生成官网 + 域名证书 + 官网下单/预约入口"
+  // 这几件事在**全新部署**上全部不可用（表不存在 ⇒ 官网页 500），而本地开发库
+  // 因为手工建过表看不出问题 —— 与 runtime-metadata 那次是同一类缺陷。
+  'scripts/migrate-public-sites.sql',
+  // Phase 18 / P18-1：员工账号与员工档案的关联（staff.user_id）。
+  // 没有它，"这个登录的人对应哪条员工记录"查不出来 —— 员工端的排班、考勤、
+  // 外卖派单全部没有归属。
+  'scripts/migrate-staff-identity.sql',
+  // Phase 18 / P18-4：外卖配送单 + settings.delivery + **外卖专用幂等唯一索引**。
+  // 最后那条索引是必须的：既有索引带 `where source='qr'`（见
+  // scripts/migrate-business-tables.sql:496），外卖 source='web' 落不进去，
+  // 并发同 key 会落两张单（详见该文件注释）。
+  'scripts/migrate-delivery-orders.sql',
+  // Phase 18 / P18-6：员工排班与考勤。
+  // 考勤表里那条**部分唯一索引**（staff_id where clock_out_at is null）是并发安全的关键：
+  // 员工连点两次打卡，第二次撞索引报错，而不是产生两条进行中的记录。
+  'scripts/migrate-workforce.sql',
+  // Phase 18 / P18-7：员工关怀（记录 + 待办）。待办表在 signal_key 上有唯一索引，
+  // 让每分钟跑一次的调度器可以幂等地重复计算信号，而不会把同一个生日提醒刷成十条。
+  'scripts/migrate-workforce-care.sql',
+  // Phase 18 / P18-9：顾客账号与会话。
+  // 顾客是**与商家隔离的第二套身份**：自建 scrypt 口令 + 独立 cookie，
+  // 刻意不复用 GoTrue —— 把顾客塞进商家用户池会重演 AGENTS.md 陷阱 8
+  // （共享 client 被用户 session 污染，service_role 静默失效）。
+  'scripts/migrate-customer-accounts.sql',
+  // Phase 18 / P18-10：骑手轨迹（delivery_positions）+ delivery_orders 的
+  // 收货坐标列（dest_lat / dest_lng）。
+  // 后者是 ETA 的**唯一诚实来源**：地址是文本，没有地理编码服务就换不出坐标；
+  // 顾客下单时由本人设备定位提供，取不到就为 NULL，ETA 返回 null 而不是编一个。
+  'scripts/migrate-delivery-positions.sql',
 ] as const;
 
 /** 供回归测试断言"自动迁移覆盖了代码真正读写的列"。 */
@@ -101,6 +142,28 @@ function projectRef(): string {
 }
 
 /**
+ * 直连 DSN 的 SSL 决策（纯函数，可单测）。
+ *
+ * 为什么需要它：node-postgres 只要收到**显式** `ssl` 选项就无视连接串里的 `sslmode`。
+ * 原实现无条件传 `{ rejectUnauthorized: false }`，对远程 Supabase 是对的，但对
+ * **同机/内置 Postgres**（默认不开 SSL）会在握手阶段直接报
+ * "The server does not support SSL connections" —— 开机自动迁移永远失败，
+ * 而失败只体现在启动日志里，容器照样 healthy。
+ *
+ * 规则刻意保持既有行为不变（不自作主张放宽）：
+ *   · DSN 里写 `sslmode=disable`，或显式 `DATABASE_SSL=disable` → 不启用 SSL
+ *   · 其余一切情况 → 沿用旧行为：SSL + 不校验证书
+ */
+export function resolveMigrationSsl(
+  dsn: string,
+  env: Record<string, string | undefined> = process.env,
+): false | { rejectUnauthorized: boolean } {
+  if (env.DATABASE_SSL === 'disable') return false;
+  if (/(?:\?|&)sslmode=disable(?:&|$)/.test(dsn)) return false;
+  return { rejectUnauthorized: false };
+}
+
+/**
  * 自动建表：优先用 Postgres DSN；否则用 Supabase Management API。
  * 两者都缺失时返回 method=none（由调用方决定是否告警）。
  */
@@ -110,7 +173,7 @@ export async function autoMigrate(): Promise<MigrateResult> {
   // 1) Postgres 直连（pg）
   const dsn = DSN_KEYS.map((k) => process.env[k]).find((v): v is string => Boolean(v));
   if (dsn) {
-    const pool = new Pool({ connectionString: dsn, ssl: { rejectUnauthorized: false } });
+    const pool = new Pool({ connectionString: dsn, ssl: resolveMigrationSsl(dsn) });
     try {
       await pool.query(sql);
       return { ok: true, method: 'pg-dsn' };

@@ -32,10 +32,16 @@ const DEFAULT_BUSINESS = '00000000-0000-0000-0000-000000000001';
  *  `NewTenant …` 由 `_verify_newtenant_error.mts` 创建（新商家报错验证）。
  *  `ERP probe …` 由 `_verify_erp_status_http.mts` 创建（集成状态语义验证）。
  *  `Landing probe …` 由 `_verify_landing_http.mts` 创建（落地页验证）。
+ *  `Phase16 Dash …` / `Phase16 Cafe …` 由 Phase 16 的
+ *  `_verify_dashboard_no_fabrication.mts` 与 `_verify_phase16_core.mts` 创建
+ *  （仪表盘不编造 + 订阅门禁 + 首日路径 + 订单幂等验收）。
  *
  *  **新增验收脚本时请沿用其中之一**，否则清理会漏掉它 ——
- *  本项目要求显式清理，不做静默级联。 */
-const RESIDUE_NAME = /^(rls-probe|424323|E2E Phase15|NewTenant |ERP probe |Landing probe )/;
+ *  本项目要求显式清理，不做静默级联。
+ *
+ *  Phase 16 的教训：我最初用了 `Phase16 …` 这种**没有登记**的名字，
+ *  清理计划里看不到它。命名不是小事：它决定了残留能否被安全识别。 */
+const RESIDUE_NAME = /^(rls-probe|424323|E2E Phase15|NewTenant |ERP probe |Landing probe |Phase16 )/;
 
 /**
  * 无法用命名特征安全识别、但确认是测试残留的对象，**按精确名字**列出。

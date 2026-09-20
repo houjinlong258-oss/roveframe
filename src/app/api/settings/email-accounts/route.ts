@@ -3,6 +3,7 @@ import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { encrypt } from '@/lib/crypto';
 import { getTenantContext, requireBusinessContext, requirePermission } from '@/lib/tenant';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
+import { presetForHost, verifySmtpConnection } from '@/lib/email/eligibility';
 
 // 邮箱账号接入（Gmail/Outlook OAuth 占位 + 自定义 SMTP/IMAP 真实收发）
 export async function GET(request: NextRequest) {
@@ -11,7 +12,9 @@ export async function GET(request: NextRequest) {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from('email_accounts')
-    .select('id, provider, email, display_name, auth_type, smtp_host, smtp_port, imap_host, imap_port, is_default, status, created_at')
+    // Phase 16：同时返回上次连接验证结果 —— UI 显示的"已连接"必须有证据，
+    // 不能因为"有一行记录"就宣称可用。
+    .select('id, provider, email, display_name, auth_type, smtp_host, smtp_port, imap_host, imap_port, is_default, status, created_at, last_test_ok, last_tested_at, last_test_error')
     .eq('tenant_id', context.tenantId)
     .eq('business_id', context.businessId)
     .order('created_at', { ascending: false });
@@ -25,6 +28,45 @@ async function saveEmailAccount(request: NextRequest) {
   const body = await request.json();
   const supabase = getSupabaseClient();
 
+  // Phase 16 任务 4：保存前**真的连一次** SMTP。
+  //
+  // 原实现保存即返回成功，UI 随即显示"已连接" —— 而从未连接过。
+  // 商家据此发整批营销邮件，然后每一封都失败。宁可保存这一步失败。
+  const smtpUser = String(body.smtpUser ?? body.email ?? '');
+  const smtpPass = String(body.smtpPass ?? '');
+  const requestedHost = typeof body.smtpHost === 'string' ? body.smtpHost.trim() : '';
+  // 服务商预设会纠正端口：Outlook/Office 365 不接受 465（见 smtp-presets 注释）
+  const preset = presetForHost(requestedHost);
+  const requestedPort = Number(body.smtpPort) || preset?.port || null;
+
+  if (!requestedHost) {
+    return NextResponse.json({ error: 'smtpHost is required', code: 'missing_smtp_host' }, { status: 400 });
+  }
+
+  const verification = await verifySmtpConnection({
+    host: requestedHost,
+    port: requestedPort,
+    user: smtpUser,
+    pass: smtpPass,
+  });
+  if (!verification.ok) {
+    console.warn(
+      `[settings/email-accounts] SMTP verification failed host=${requestedHost} port=${verification.port} ` +
+      `secure=${verification.secure}: ${verification.error}`,
+    );
+    // 不落库：一个连不上的账号写进去只会让后续每一次发送都失败。
+    return NextResponse.json(
+      {
+        error: `SMTP connection failed: ${verification.error ?? 'unknown error'}`,
+        code: 'smtp_verification_failed',
+        port: verification.port,
+        secure: verification.secure,
+        hint: preset?.hint ?? null,
+      },
+      { status: 400 },
+    );
+  }
+
   if (body.isDefault) {
     const reset = await supabase.from('email_accounts')
       .update({ is_default: false })
@@ -35,8 +77,8 @@ async function saveEmailAccount(request: NextRequest) {
   }
 
   const credentials = JSON.stringify({
-    smtp_user: body.smtpUser ?? body.email,
-    smtp_pass: body.smtpPass ?? '',
+    smtp_user: smtpUser,
+    smtp_pass: smtpPass,
     imap_user: body.imapUser ?? body.smtpUser ?? body.email,
     imap_pass: body.imapPass ?? body.smtpPass ?? '',
     access_token: body.accessToken ?? '',
@@ -51,16 +93,24 @@ async function saveEmailAccount(request: NextRequest) {
       display_name: body.displayName ?? null,
       auth_type: body.authType ?? 'password',
       credentials_encrypted: encrypt(credentials),
-      smtp_host: body.smtpHost ?? null,
-      smtp_port: body.smtpPort ?? null,
+      smtp_host: requestedHost,
+      smtp_port: verification.port,
       imap_host: body.imapHost ?? null,
       imap_port: body.imapPort ?? null,
       is_default: body.isDefault ?? false,
+      last_test_ok: true,
+      last_tested_at: new Date().toISOString(),
+      last_test_error: null,
     })
     .select('id')
     .single();
   if (error) throw new Error(error.message);
-  return NextResponse.json({ id: data.id });
+  return NextResponse.json({
+    id: data.id,
+    verified: true,
+    port: verification.port,
+    secure: verification.secure,
+  });
 }
 
 async function deleteEmailAccount(request: NextRequest) {

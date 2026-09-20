@@ -97,7 +97,18 @@ describe('P0-8 时区/聚合接线契约', () => {
   });
 
   test('store 页币种随菜单数据传入 fmtCurrency', () => {
-    const src = read('src/app/[locale]/store/page.tsx');
-    assert.match(src, /fmtCurrency\(amount, menu\?\.store\.currency \?\? 'USD', locale\)/);
+    // Phase 18：/store 改成服务端页面 + CustomerPwa，币种不再由页面内的 fmt 闭包
+    // 组装，而是 CustomerPwa 从站点配置 / 菜单数据里取。守卫的**目标**跟着搬家，
+    // 意图不变：币种必须来自后端数据，不能写死 USD。
+    const page = read('src/app/[locale]/store/page.tsx');
+    assert.match(page, /<CustomerPwa/, 'store 页必须渲染 CustomerPwa');
+
+    const src = read('src/components/customer/CustomerPwa.tsx');
+    assert.match(
+      src,
+      /const currency = .*store\.currency.*\|\| menuData\?\.store\.currency/,
+      '币种必须从站点配置或菜单数据取',
+    );
+    assert.ok(!/fmtCurrency\(\s*[^,]+,\s*'USD'/.test(src), '币种不得写死 USD');
   });
 });

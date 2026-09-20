@@ -12,6 +12,7 @@ import {
 import { fmtDateTime } from '@/lib/format';
 import { saveJson } from '@/lib/fetch-utils';
 import { CHANNEL_PRESETS, type ChannelKey } from '@/lib/channels-presets';
+import { SMTP_PRESETS } from '@/lib/email/smtp-presets';
 import { useTheme, type ThemeMode } from '@/components/theme/theme-provider';
 
 type Group = 'business' | 'locale' | 'appearance' | 'models' | 'mailbox' | 'integrations' | 'channels' | 'ai' | 'data';
@@ -184,7 +185,7 @@ export default function SettingsPage() {
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
   const [mailModal, setMailModal] = useState(false);
   const [mailType, setMailType] = useState<'gmail' | 'outlook' | 'smtp'>('smtp');
-  const [mailForm, setMailForm] = useState({ email: '', displayName: '', smtpHost: '', smtpPort: '465', imapHost: '', imapPort: '993', pass: '' });
+  const [mailForm, setMailForm] = useState({ email: '', displayName: '', smtpHost: '', smtpPort: String(SMTP_PRESETS.outlook.port), imapHost: '', imapPort: '993', pass: '' });
   const [mailSaving, setMailSaving] = useState(false);
   // 集成
   const [integrations, setIntegrations] = useState<Integration[]>([]);
@@ -385,7 +386,10 @@ export default function SettingsPage() {
           email: mailForm.email,
           displayName: mailForm.displayName || null,
           smtpHost: mailForm.smtpHost || (mailType === 'gmail' ? 'smtp.gmail.com' : mailType === 'outlook' ? 'smtp.office365.com' : null),
-          smtpPort: Number(mailForm.smtpPort) || 465,
+          // Phase 16 任务 4：端口不再统一默认 465。Office 365 **不接受** implicit TLS
+          // 的 465，只接受 587 + STARTTLS —— 原先的 465 会让 Outlook 账号永远发不出去。
+          // 具体端口由 smtpHost 对应的服务商决定（见 lib/email/eligibility 的 SMTP_PRESETS）。
+          smtpPort: Number(mailForm.smtpPort) || SMTP_PRESETS.outlook.port,
           imapHost: mailForm.imapHost || (mailType === 'gmail' ? 'imap.gmail.com' : mailType === 'outlook' ? 'outlook.office365.com' : null),
           imapPort: Number(mailForm.imapPort) || 993,
           smtpPass: mailForm.pass,
@@ -393,7 +397,7 @@ export default function SettingsPage() {
         },
       });
       setMailModal(false);
-      setMailForm({ email: '', displayName: '', smtpHost: '', smtpPort: '465', imapHost: '', imapPort: '993', pass: '' });
+      setMailForm({ email: '', displayName: '', smtpHost: '', smtpPort: String(SMTP_PRESETS.outlook.port), imapHost: '', imapPort: '993', pass: '' });
       await loadAccounts();
       flashSaved();
     } catch (error) {

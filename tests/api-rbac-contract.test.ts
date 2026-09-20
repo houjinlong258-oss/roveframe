@@ -55,6 +55,28 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionRule>> = {
     methods: ['POST'],
     verify: (source) => source.includes('adminHandler(request'),
   },
+  // Phase 16 任务 4：邮件退订是**公开**边界 —— 收件人没有本站会话，
+  // 凭 32 字节随机令牌证明身份（令牌即能力，且只能退订它对应的那一个地址）。
+  // 它不是"忘了加守卫"，而是"必须没有会话"：要求登录才能退订等于没有退订。
+  'email/unsubscribe/route.ts': {
+    reason: 'public unsubscribe boundary authenticated by a per-recipient random token',
+    methods: ['POST'],
+    verify: (source) => source.includes('findUnsubscribeByToken')
+      && source.includes('recordUnsubscribe')
+      && source.includes('invalid token'),
+  },
+  // Phase 17：官网预约。访客没有会话，是公开写入口。
+  // verify 要求三件事同时出现，缺一不可：
+  //   · 租户由 slug 服务端解析（resolvePublishedSiteBySlug）—— 客户端不得指定 tenant
+  //   · 限流（checkFixedWindow）—— 公开写接口必须有
+  //   · 落库状态固定为 pending —— 官网不能直接把桌子占掉
+  'site/reservations/route.ts': {
+    reason: 'public booking boundary; tenant resolved server-side from the site slug, rate limited, always pending',
+    methods: ['POST'],
+    verify: (source) => source.includes('resolvePublishedSiteBySlug')
+      && source.includes('checkFixedWindow')
+      && source.includes("status: 'pending'"),
+  },
   'agent/approvals/events/route.ts': {
     reason: 'RoveAgent service authentication with exact business-scope verification',
     methods: ['POST'],
@@ -85,6 +107,40 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionRule>> = {
     verify: (source) => source.includes('getDeviceIdFromRequest')
       && source.includes('device_id'),
   },
+  // Phase 18：顾客账号边界。顾客是与商家**隔离的第二套身份**，不持有商家 JWT，
+  // 因此不能走中央守卫（它认的是商家会话）。
+  //
+  // 这里 verify 强制要求两件事同时出现，缺一不可：
+  //   · `resolveCustomerSession(request)` —— 身份只从顾客自己的 cookie 解析，
+  //     不接受任何客户端传入的 account_id / tenant_id
+  //   · `jsonError('unauthorized', 401)` —— 无会话时显式拒绝
+  // 只写其中一条的实现会被拦下：前者保证"有校验"，后者保证"校验失败是拒绝"。
+  'customer/addresses/route.ts': {
+    reason: 'public customer-account boundary resolved from the customer session cookie',
+    methods: ['POST', 'DELETE'],
+    verify: (source) => source.includes('resolveCustomerSession(request)')
+      && source.includes("jsonError('unauthorized', 401)"),
+  },
+  'customer/auth/login/route.ts': {
+    reason: 'public customer login boundary; no session exists yet',
+    methods: ['POST'],
+    verify: (source) => source.includes('verifyPassword')
+      && source.includes('createCustomerSession')
+      && source.includes('checkFixedWindow'),
+  },
+  'customer/auth/logout/route.ts': {
+    reason: 'public idempotent customer session revocation',
+    methods: ['POST'],
+    verify: (source) => source.includes('revokeCustomerSession')
+      && source.includes('clearCustomerSessionHeader'),
+  },
+  'customer/auth/register/route.ts': {
+    reason: 'public customer self-registration; tenant resolved server-side from the site slug',
+    methods: ['POST'],
+    verify: (source) => source.includes('hashPassword')
+      && source.includes('resolvePublishedSiteBySlug')
+      && source.includes('createCustomerSession'),
+  },
   'internal/agent/business-data/route.ts': {
     reason: 'RoveAgent service authentication and mandatory tenant/business adapter scope',
     methods: ['POST'],
@@ -102,6 +158,18 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionRule>> = {
     methods: ['POST', 'PATCH'],
     verify: (source) => source.includes('resolvePublicStore')
       && source.includes('isValidIdempotencyKey'),
+  },
+  // Phase 18：外卖下单与堂食同属"公开 + 不透明 token"边界，但**多一层**：
+  // 配送费与起送价必须由服务端按 settings.delivery 计算，因此 verify 额外要求
+  // 出现 quoteDelivery / getDeliveryRules —— 只写 resolvePublicStore 是不够的，
+  // 那会把"金额由客户端决定"的实现也放行。
+  'store/delivery-orders/route.ts': {
+    reason: 'public opaque-store-token boundary with server-side pricing, delivery rules and idempotency',
+    methods: ['POST'],
+    verify: (source) => source.includes('resolvePublicStore')
+      && source.includes('isValidIdempotencyKey')
+      && source.includes('quoteDelivery')
+      && source.includes('getDeliveryRules'),
   },
   'webhooks/[provider]/route.ts': {
     reason: 'provider-signed webhook boundary with replay/idempotency controls',

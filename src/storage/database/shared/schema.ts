@@ -599,6 +599,9 @@ export const settings = pgTable("settings", {
   locale: jsonb("locale").$type<Record<string, unknown>>().notNull().default({}),
   ai_prefs: jsonb("ai_prefs").$type<Record<string, unknown>>().notNull().default({}),
   model_assign: jsonb("model_assign").$type<Record<string, string>>().notNull().default({}),
+  // Phase 18 / P18-4：外卖配送规则（起送价 / 配送费 / 免配送门槛 / 备餐分钟数）。
+  // 规则是配置不是事实数据，所以留在 settings 单行里，不建表。
+  delivery: jsonb("delivery").$type<Record<string, unknown>>().notNull().default({}),
   updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   uniqueIndex("settings_tenant_business_idx").on(table.tenant_id, table.business_id),
@@ -616,6 +619,9 @@ export const staff = pgTable("staff", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   tenant_id: varchar("tenant_id", { length: 36 }).notNull().references(() => tenants.id),
   business_id: varchar("business_id", { length: 36 }).notNull().references(() => businesses.id),
+  // Phase 18 / P18-1：与登录账号的关联。刻意不加外键 —— 离职销号时 users 行可能
+  // 先删；关联有效性由 GET /api/staff/me 读取时判定（查不到即 409）。
+  user_id: varchar("user_id", { length: 36 }),
   name: varchar("name", { length: 128 }).notNull(),
   role: varchar("role", { length: 50 }),
   photo_url: text("photo_url"),
@@ -624,6 +630,44 @@ export const staff = pgTable("staff", {
 }, (table) => [
   index("staff_tenant_business_idx").on(table.tenant_id, table.business_id, table.is_active),
 ]);
+
+// ---------- Phase 18 / P18-4：外卖配送单 ----------
+/**
+ * 配送单。金额与商品在 `orders` 里，这里**只存配送这件事**（地址 / 骑手 / 配送费快照），
+ * 一对一挂在 order_id 上。金额不复制：复制就会漂移。
+ * `on delete cascade` 是必要的：/api/settings/wipe 清空订单时不能因为外键而失败。
+ */
+export const deliveryOrders = pgTable(
+  "delivery_orders",
+  {
+    id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+    tenant_id: varchar("tenant_id", { length: 36 }).notNull(),
+    business_id: varchar("business_id", { length: 36 }).notNull(),
+    order_id: varchar("order_id", { length: 36 }).notNull().references(() => orders.id, { onDelete: "cascade" }),
+    recipient_name: varchar("recipient_name", { length: 80 }).notNull(),
+    recipient_phone: varchar("recipient_phone", { length: 40 }).notNull(),
+    address_line: varchar("address_line", { length: 240 }).notNull(),
+    address_note: varchar("address_note", { length: 240 }),
+    // 下单那一刻的规则快照：商家事后改配送费，不应改写历史订单的金额
+    fee: numeric("fee", { precision: 10, scale: 2 }).notNull().default("0"),
+    min_order_amount: numeric("min_order_amount", { precision: 10, scale: 2 }).notNull().default("0"),
+    promised_at: timestamp("promised_at", { withTimezone: true }),
+    rider_staff_id: varchar("rider_staff_id", { length: 36 }),
+    // pending | claimed | picked_up | delivered | cancelled（白名单在 src/lib/delivery.ts）
+    rider_status: varchar("rider_status", { length: 20 }).notNull().default("pending"),
+    claimed_at: timestamp("claimed_at", { withTimezone: true }),
+    picked_up_at: timestamp("picked_up_at", { withTimezone: true }),
+    delivered_at: timestamp("delivered_at", { withTimezone: true }),
+    cancelled_reason: varchar("cancelled_reason", { length: 200 }),
+    created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("delivery_orders_order_key").on(table.order_id),
+    index("delivery_orders_queue_idx").on(table.tenant_id, table.business_id, table.rider_status, table.created_at),
+    index("delivery_orders_rider_idx").on(table.rider_staff_id, table.rider_status),
+  ],
+);
 
 // ---------- 企业长期记忆（AI COO 沉淀的经营事实/经验） ----------
 export const businessMemories = pgTable(

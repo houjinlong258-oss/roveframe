@@ -158,18 +158,102 @@ describe('migration column coverage (Phase 15)', () => {
     );
   });
 
-  test('自动清单内的每个文件都真的创建/修改了对象（防止塞入空文件充数）', async () => {
+  /**
+   * 允许的删除：**以"父行不存在"为唯一条件的有界过期行 GC**。
+   *
+   * 为什么需要这一条：`migrate-subscriptions-seed.sql` 第一次执行时给当时存在的
+   * 租户都回填了订阅（实测 11 行），随后测试残留清理删掉了 10 个 tenant，
+   * **订阅行留了下来**。那是真的垃圾（指向不存在的租户，且对账脚本会读到）。
+   *
+   * 但"允许删除"必须是有界的，因此这里**逐条显式登记**，并同时要求：
+   *   1. 删除条件必须是 `not exists (select 1 from <父表> ...)` 形式 ——
+   *      即"父行不存在"，不可能删到在营对象的行；
+   *   2. 在下面的白名单里。
+   * 任何"无条件 delete"或"按业务条件 delete"仍然会被拦。
+   */
+  const ALLOWED_ORPHAN_GC: ReadonlyArray<{ file: string; predicate: RegExp; why: string }> = [
+    {
+      file: 'scripts/migrate-subscriptions-seed.sql',
+      predicate: /delete\s+from\s+public\.tenant_subscriptions[\s\S]*?not\s+exists\s*\(\s*select\s+1\s+from\s+public\.tenants/i,
+      why: '删除指向已不存在租户的订阅行（测试残留清理留下的孤儿）',
+    },
+  ];
+
+  /** 把已登记的孤儿 GC 语句从文本里摘掉，剩下的删除才是"没登记的删除" */
+  function unregisteredDeletes(rel: string, sql: string): boolean {
+    let remainder = sql;
+    for (const allowed of ALLOWED_ORPHAN_GC) {
+      if (allowed.file !== rel) continue;
+      if (!allowed.predicate.test(remainder)) continue;
+      remainder = remainder.replace(allowed.predicate, '');
+    }
+    return /\b(delete\s+from|truncate\s+table)\b/i.test(remainder);
+  }
+
+  test('自动清单内的每个文件都真的创建/修改了对象，或是**幂等的**数据种子', async () => {
     const mod = await import('../src/lib/migration');
     const empty: string[] = [];
+    /**
+     * Phase 16：多了一类合法的自动迁移 —— **幂等数据种子**。
+     *
+     * `migrate-subscriptions-seed.sql` 只做 `insert`（+ 一条已登记的有界孤儿 GC）：
+     * 它不建表、不改列，但 `subscription_plans` 没有数据时，权益门禁（fail-closed）
+     * 会把**所有**租户降为只读。数据种子因此是迁移，不是"记得跑一次的脚本"。
+     */
+    const isIdempotentSeed = (rel: string, sql: string): boolean => {
+      if (!/insert\s+into/i.test(sql)) return false;
+      if (!/on\s+conflict[\s\S]*?do\s+nothing/i.test(sql)) return false;
+      if (unregisteredDeletes(rel, sql)) return false;
+      return true;
+    };
+
     for (const rel of mod.MIGRATION_FILE_LIST) {
       const sql = read(rel);
       const creates = /create table if not exists/i.test(sql);
       const columns = /add column if not exists/i.test(sql);
       const views = /create or replace view/i.test(sql);
       const indexes = /create (unique )?index if not exists/i.test(sql);
-      if (!creates && !columns && !views && !indexes) empty.push(rel);
+      if (!creates && !columns && !views && !indexes && !isIdempotentSeed(rel, sql)) {
+        empty.push(rel);
+      }
     }
-    assert.deepEqual(empty, [], `这些文件在自动迁移清单里却什么都没做：${empty.join(', ')}`);
+    assert.deepEqual(
+      empty, [],
+      '这些文件在自动迁移清单里却什么都没做（既没有幂等 DDL，也不是幂等数据种子）：'
+      + empty.join(', '),
+    );
+  });
+
+  test('清单里的删除语句只能是已登记的有界孤儿 GC', async () => {
+    const mod = await import('../src/lib/migration');
+    const offenders: string[] = [];
+    for (const rel of mod.MIGRATION_FILE_LIST) {
+      const sql = read(rel);
+      if (!/\b(delete\s+from|truncate\s+table)\b/i.test(sql)) continue;
+      if (unregisteredDeletes(rel, sql)) offenders.push(rel);
+    }
+    assert.deepEqual(
+      offenders, [],
+      '这些迁移含**未登记**的删除语句。自动迁移不得做无界删除；'
+      + '如果确实需要清理过期行，必须是以"父行不存在"为条件的有界 GC，'
+      + `并在 ALLOWED_ORPHAN_GC 里显式登记：${offenders.join(', ')}`,
+    );
+  });
+
+  test('孤儿 GC 的登记条目确实被用上（防止白名单腐烂成免死金牌）', () => {
+    const stale = ALLOWED_ORPHAN_GC.filter((allowed) => {
+      let found = false;
+      try {
+        found = allowed.predicate.test(read(allowed.file));
+      } catch {
+        found = false;
+      }
+      return !found;
+    });
+    assert.deepEqual(
+      stale.map((s) => `${s.file} (${s.why})`), [],
+      'ALLOWED_ORPHAN_GC 里有条目已不匹配任何文件内容 —— 白名单必须随代码一起清理',
+    );
   });
 
   test('CI 的 verify-migrations.mjs 不再维护第二份手写清单', () => {

@@ -1,4 +1,4 @@
-import { jsonError } from '@/lib/api-helpers';
+import { jsonError, subscriptionRequiredResponse } from '@/lib/api-helpers';
 import { writeRequiredAudit } from '@/lib/audit';
 import {
   AuthenticationError,
@@ -44,6 +44,15 @@ function scopeErrorResponse(error: unknown): Response | null {
   if (error instanceof AuthenticationError) return jsonError('unauthorized', 401);
   if (error instanceof AuthorizationError) return jsonError('forbidden', 403);
   if (error instanceof BusinessScopeError) return jsonError('business scope required', 409);
+  // Phase 16 任务 2：订阅门禁抛出的 402 必须原样保留。
+  //
+  // 实测（_verify_phase16_core.mts 第一次运行）：漏了这一条时，
+  // 被停用的商户在门禁路径上拿到的是 **401 "authentication failed"** ——
+  // 而它的凭据完全有效。商家会以为自己密码错了，去重置密码，
+  // 真正的原因（订阅被停用）永远不会显示出来。
+  // 这是"错误语义丢失"，比拒绝本身更糟。
+  const subscriptionResponse = subscriptionRequiredResponse(error);
+  if (subscriptionResponse) return subscriptionResponse;
   return null;
 }
 

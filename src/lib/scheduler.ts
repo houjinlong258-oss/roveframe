@@ -9,6 +9,7 @@ import { dispatchNotificationOutbox } from '@/lib/notifications/outbox';
 import { syncImapAccount } from '@/lib/email/imap-sync';
 import { processEmailSendQueue } from '@/lib/email/outgoing';
 import { syncSquareBusiness } from '@/lib/connectors/square-sync';
+import { purgeOldPositions } from '@/lib/delivery-position';
 
 const DEFAULT_BRIEFING_TIME = '08:00';
 const TICK_SKIPPED_MSG =
@@ -533,6 +534,33 @@ async function runScheduledJobsInner(): Promise<void> {
           await pollTelegram(tenant.id, business.id, cfg);
           await maybeSyncInboundEmail(tenant.id, business.id);
           await maybeSyncSquare(tenant.id, business.id);
+
+          // Phase 18 / P18-10：骑手位置的保留期清理。
+          //
+          // 位置是**员工位置数据**，只在配送进行中由骑手设备显式上报，因此必须
+          // 有到期删除的机制，而不是"先留着以后再说"。清理放在这个已有的
+          // tenants → businesses 循环里，不另起调度器：这里本来每 tick 就会走到
+          // 每个门店，多一条 DELETE（`purgeOldPositions` 单条语句删完，
+          // 保留期默认 24 小时，可由 settings.delivery.positionRetentionHours 覆盖）。
+          //
+          // 幂等：删的都是 recorded_at 早于截止点的行，重复执行只会是第二次数到 0。
+          try {
+            const purgedPositions = await purgeOldPositions(tenant.id, business.id);
+            // 0 才是常态（绝大多数 tick 没有任何过期行），逐 tick 打 0 会把日志里
+            // 真正有意义的那一行淹掉；只有真的删了行才留证据。
+            if (purgedPositions > 0) {
+              console.log(
+                `[scheduler] purged ${purgedPositions} expired delivery position(s) for ${tenant.id}/${business.id}`,
+              );
+            }
+          } catch (positionPurgeError) {
+            // 清理失败不得中断本门店的其余任务，但也绝不静默：位置超期留存是
+            // 隐私问题，必须能在日志里看见。
+            console.error(
+              `[scheduler] delivery position purge failed for ${tenant.id}/${business.id}:`,
+              positionPurgeError instanceof Error ? positionPurgeError.message : positionPurgeError,
+            );
+          }
         } catch (businessError) {
           console.error(
             `[scheduler] tick failed for business ${tenant.id}/${business.id}:`,

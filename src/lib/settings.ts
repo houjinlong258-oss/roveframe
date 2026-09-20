@@ -6,6 +6,8 @@ export interface AppSettings {
   locale: Record<string, unknown>;
   ai_prefs: Record<string, unknown>;
   model_assign: Record<string, string>;
+  /** Phase 18：外卖配送规则（起送价 / 配送费 / 免配送门槛 / 备餐分钟数） */
+  delivery: Record<string, unknown>;
 }
 
 const cache = new Map<string, { data: AppSettings; at: number }>();
@@ -21,12 +23,12 @@ export async function getSettings(tenantId: string, businessId: string): Promise
   const client = getSupabaseClient();
   const { data, error } = await client
     .from('settings')
-    .select('id, business, locale, ai_prefs, model_assign')
+    .select('id, business, locale, ai_prefs, model_assign, delivery')
     .eq('tenant_id', tenantId)
     .eq('business_id', businessId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  const row: AppSettings = data ?? { id: '', business: {}, locale: {}, ai_prefs: {}, model_assign: {} };
+  const row: AppSettings = data ?? { id: '', business: {}, locale: {}, ai_prefs: {}, model_assign: {}, delivery: {} };
   cache.set(key, { data: row, at: Date.now() });
   return row;
 }

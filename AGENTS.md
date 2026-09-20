@@ -1,10 +1,10 @@
-﻿# 项目上下文
+# 项目上下文
 
 ## 项目概述
 
 **RoveFrame AI Business OS** — 面向中小企业的 AI COO 智能经营平台。通过集成 AI Agent、知识库、商业数据分析，为商家提供 24/7 智能运营助手。
 
-当前阶段：Phase 1 已完成——10 个管理页全部按原型实现，Supabase 数据链路、AI 路由层、RAG、真实邮件发送、多语言（en/zh/es）均已打通并通过 test_run 全量验收。Phase 2 已完成——扫码点餐闭环：商品媒体（图片/视频上传至 Supabase Storage）、自动生成的店铺菜单 API、H5 点餐商城（/store）、一桌一码点餐二维码（store_qr_codes 表，商家可备注）。
+当前阶段：Phase 1 已完成——10 个管理页全部按原型实现，Supabase 数据链路、AI 路由层、RAG、真实邮件发送、多语言（en/zh/es）均已打通并通过 test_run 全量验收。Phase 2 已完成——扫码点餐闭环：商品媒体（图片/视频上传至 Supabase Storage）、自动生成的店铺菜单 API、顾客端 PWA 点餐商城（/store，可安装）、一桌一码点餐二维码（store_qr_codes 表，商家可备注）。
 
 详细产品规划见 `RoveFrame_AI_Business_OS_Fused_Blueprint.md`。
 
@@ -40,7 +40,7 @@
 │   │   │   ├── business/           # 经营数据（产品/订单/库存/点餐二维码四 Tab；产品弹窗支持图片视频上传与编辑）
 │   │   │   ├── reservations/       # 预约管理
 │   │   │   ├── settings/           # 设置（7 分组）
-│   │   │   ├── store/              # H5 点餐商城（面向顾客，AppShell 对其旁路，桌号经 ?table= 绑定）
+│   │   │   ├── store/              # 顾客端 PWA 点餐商城（面向顾客，AppShell 对其旁路，桌号经 ?table= 绑定）
 │   │   │   └── layout.tsx          # html/body + NextIntlClientProvider + AppShell
 │   │   └── api/            # API 路由（与页面一一对应；api/store/* 为公开接口，api/upload 为媒体上传）
 │   ├── components/
@@ -79,7 +79,7 @@
 - RAG：`match_doc_chunks(query_embedding vector(1024), match_count int)` RPC，余弦距离
 - 加密凭据：model_configs.credentials / email_accounts.credentials / integration_configs.credentials 均为 AES-256-GCM JSON 字符串（`@/lib/crypto`）
 - seed 数据约定：邮件分类 inquiry/business/complaint/supplier/other；预约状态 pending/confirmed/arrived/cancelled/completed；桌位 A1-A4 包间、B1-B8 大厅（与 store_qr_codes 一一对应）
-- **扫码点餐**：`api/store/menu`（公开，商品含 image_url/video_url，带 ?table= 时累计桌码 scan_count）、`api/store/orders`（服务端按商品表计价，source='qr'，orders.table_no/notes）、`api/store/qr-codes`（一桌一码 upsert）；H5 商城 `[locale]/store` 由 AppShell 正则旁路后台框架
+- **扫码点餐**：`api/store/menu`（公开，商品含 image_url/video_url，带 ?table= 时累计桌码 scan_count）、`api/store/orders`（服务端按商品表计价，source='qr'，orders.table_no/notes）、`api/store/qr-codes`（一桌一码 upsert）；顾客端 PWA `[locale]/store` 由 AppShell 正则旁路后台框架
 - **媒体上传**：`api/upload`（multipart）→ Supabase Storage 公共桶 `product-media`（首次上传自动建桶），图片 ≤5MB、视频 ≤50MB；二维码图用 `qrcode` 包前端转 dataURL
 - **连接真相（2026-09-09 修复注册全挂）**：`loadEnv()` 见进程环境已有 `COZE_SUPABASE_*`（平台注入，指向平台默认库）就直接跳过 `.env`——服务曾一直连平台库而非用户库。修复双层：① `scripts/dev.sh`/`start.sh` 启动前 `set -a; source .env(deploy.env); set +a`；② **代码级兜底**（关键）：`supabase-client.ts` 的 `loadEnv()` 最先调 `loadDeployEnvFile()`——存在 `scripts/deploy.env` 就 `dotenv.config({ override: true })` 强制覆盖进程环境，并打日志 `[supabase-client] credentials loaded from scripts/deploy.env -> <host>`。不依赖启动脚本和 cwd，任何启动方式（含部署平台绕过 start.sh 的重启）都生效。改完必须重启服务，并用"直查用户库 auth.users/新增行"验证真实落库，curl 200 不足以证明连对库
 - **运行模式**：`COZE_PROJECT_ENV` 由脚本强制（dev.sh=DEV、start.sh=PROD），`.env` 里不要再写该变量（曾导致 dev server 走生产模式崩在缺 `.next`）

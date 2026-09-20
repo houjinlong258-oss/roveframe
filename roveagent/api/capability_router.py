@@ -83,12 +83,24 @@ AGENT_CAPABILITIES: Final[dict[str, AgentCapability]] = {
     ),
     "marketing": AgentCapability(
         agent="marketing", role="executive",
-        # CMO：业务只读 + 内部知识库 + 检索趋势 + 生成媒体 + 社交发布（发布必须审批）
+        # CMO：业务只读 + 内部知识库 + 检索趋势 + 生成媒体。
+        #
+        # Phase 16 更正：这里此前还写着 "社交发布（发布必须审批）"，并在 summary 里
+        # 对用户重复了一遍。**运行时没有任何社交发布工具** —— 实测（容器内）：
+        #   resolved toolsets = ['safe','memory','business','knowledge','search','web','media','social']
+        #   available_tools   = 15 个（web_search/web_extract/memory/read_*/analyze_churn_customers/
+        #                        send_customer_recovery_campaign/search_knowledge/text_to_speech）
+        #   其中**没有**任何发布到社交平台的工具。
+        # 也就是说 `social` 是一个空 toolset：能力清单在承诺一个未交付的功能。
+        # 声明与交付必须一致，因此把措辞改成"仅生成、不发布"。
         # 注意必须并上 safe/memory/business —— Phase 1 是 Step 1.75 的**超集**，
         # 不得因为扩展能力而收回既有只读能力（由一致性测试锁定）。
         toolsets=("safe", "memory", "business", "knowledge", "search", "web", "media", "social"),
         max_iterations=8,
-        summary="客户增长与留存：内部知识库与趋势检索、内容与媒体生成、社交发布（需审批）。",
+        summary=(
+            "客户增长与留存：内部知识库与趋势检索、内容与媒体生成。"
+            "注意：社交平台发布**尚未实现**，本角色只能生成内容，不能代发。"
+        ),
     ),
     "developer": AgentCapability(
         agent="developer", role="engineering",

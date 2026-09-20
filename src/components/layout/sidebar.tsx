@@ -5,7 +5,7 @@ import { Link, usePathname } from '@/i18n/navigation';
 import {
   LayoutDashboard, Bot, Brain, Star, Users, Megaphone, Mail, Database,
   CalendarDays, Settings, X, ShieldCheck, GitPullRequest, ScrollText, FolderOpen,
-  PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen, Globe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { RoveFrameLogo } from '@/components/layout/brand-logo';
@@ -31,6 +31,8 @@ const NAV_GROUPS = [
       { href: '/emails', key: 'emails', icon: Mail },
       { href: '/business', key: 'business', icon: Database },
       { href: '/reservations', key: 'reservations', icon: CalendarDays },
+      // Phase 17：商户官网（AI 起草 → 预览 → 绑定域名 → 发布）
+      { href: '/website', key: 'website', icon: Globe },
     ],
   },
   {

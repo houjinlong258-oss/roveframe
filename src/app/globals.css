@@ -2,6 +2,12 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
+/* Phase 18：三端 PWA 的设计层（apple-* / rf-* 类与 --rf-* 变量）。
+   由 scripts/_vendor_pwa_assets.mjs 从原型提取，已剥离 tailwind 导入与 base 层。
+   放在这里而不是各自 import，是为了让它与 globals.css 走同一条 PostCSS 管线，
+   @apply / @layer 才有意义。 */
+@import './pwa-tier.css';
+
 @custom-variant dark (&:is(.dark *));
 
 /*

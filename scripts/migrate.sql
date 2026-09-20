@@ -246,8 +246,19 @@ begin
       on public.orders (tenant_id, business_id, external_id)
       where source = 'qr' and external_id is not null;
     create index if not exists orders_tenant_business_created_idx on public.orders (tenant_id, business_id, created_at desc);
-    create unique index if not exists orders_adapter_external_idx
-      on public.orders (tenant_id, business_id, source, external_id);
+    -- Phase 18：先 drop 再 create（而不是 `if not exists`），让这里的定义成为权威 ——
+    -- `if not exists` 在旧索引已存在时会静默跳过，改了定义也不生效。
+    --
+    -- 必须排除空串：种子数据与部分历史行用 `''` 表示"没有外部来源"而不是 NULL，
+    -- 于是同店所有这类行塌成同一个键，唯一索引建不出来。实测：
+    --   products 汇总 total=10, null_ext=0, distinct_keys=1
+    -- 后果不只是少一个索引 —— `autoMigrate` 每次启动都跑整条链，任何有商品的库
+    -- 每次重启都会在这一句失败（错误码 23505）。空串的语义本就是"不来自外部系统"，
+    -- 因此它不该参与唯一性。
+    drop index if exists public.orders_adapter_external_idx;
+    create unique index orders_adapter_external_idx
+      on public.orders (tenant_id, business_id, source, external_id)
+      where external_id is not null and external_id <> '';
   end if;
   if to_regclass('public.reservations') is not null then
     -- P0-6：预约权威应缴金额（checkout 服务端比对用；为空则拒绝预约支付模式）
@@ -255,12 +266,16 @@ begin
   end if;
   if to_regclass('public.products') is not null then
     create index if not exists products_tenant_business_idx on public.products (tenant_id, business_id);
-    create unique index if not exists products_adapter_external_idx
-      on public.products (tenant_id, business_id, source, external_id);
+    drop index if exists public.products_adapter_external_idx;
+    create unique index products_adapter_external_idx
+      on public.products (tenant_id, business_id, source, external_id)
+      where external_id is not null and external_id <> '';
   end if;
   if to_regclass('public.customers') is not null then
-    create unique index if not exists customers_adapter_external_idx
-      on public.customers (tenant_id, business_id, source, external_id);
+    drop index if exists public.customers_adapter_external_idx;
+    create unique index customers_adapter_external_idx
+      on public.customers (tenant_id, business_id, source, external_id)
+      where external_id is not null and external_id <> '';
   end if;
   if to_regclass('public.reviews') is not null then
     create index if not exists reviews_tenant_business_created_idx on public.reviews (tenant_id, business_id, created_at desc);
@@ -363,6 +378,8 @@ update public.users set role = 'owner' where role is null or role not in ('owner
 alter table public.users alter column role set default 'owner';
 alter table public.users alter column role set not null;
 do $$ begin
+  -- 补：先删自己，否则第二次执行会报 constraint already exists
+  alter table public.users drop constraint if exists users_role_check;
   alter table public.users add constraint users_role_check check (role in ('owner', 'manager', 'staff'));
 exception when duplicate_object or duplicate_table then null;
 end $$;
@@ -407,10 +424,14 @@ do $$ begin
     alter table public.store_qr_codes drop constraint if exists store_qr_codes_table_no_key;
     alter table public.store_qr_codes drop constraint if exists store_qr_codes_tenant_table_no_key;
     begin
+      -- 补：先删自己，否则第二次执行会报 constraint already exists
+      alter table public.store_qr_codes drop constraint if exists store_qr_codes_tenant_business_table_no_key;
       alter table public.store_qr_codes add constraint store_qr_codes_tenant_business_table_no_key unique (tenant_id, business_id, table_no);
     exception when duplicate_object or duplicate_table then null;
     end;
     begin
+      -- 补：先删自己，否则第二次执行会报 constraint already exists
+      alter table public.store_qr_codes drop constraint if exists store_qr_codes_public_token_key;
       alter table public.store_qr_codes add constraint store_qr_codes_public_token_key unique (public_token);
     exception when duplicate_object or duplicate_table then null;
     end;
@@ -428,10 +449,14 @@ do $$ begin
   if to_regclass('public.integration_configs') is not null then
     alter table public.integration_configs drop constraint if exists integration_configs_provider_key;
     drop index if exists public.integration_configs_tenant_provider_key;
+    -- 补：先删自己，否则第二次执行会报 relation already exists（autoMigrate 每次启动都跑）
+    drop index if exists public.integration_configs_tenant_business_provider_key;
     create unique index integration_configs_tenant_business_provider_key on public.integration_configs (tenant_id, business_id, provider);
   end if;
   if to_regclass('public.settings') is not null then
     drop index if exists public.settings_tenant_id_key;
+    -- 补：先删自己，否则第二次执行会报 relation already exists（autoMigrate 每次启动都跑）
+    drop index if exists public.settings_tenant_business_key;
     create unique index settings_tenant_business_key on public.settings (tenant_id, business_id);
   end if;
 end $$;

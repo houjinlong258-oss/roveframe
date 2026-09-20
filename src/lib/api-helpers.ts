@@ -17,13 +17,33 @@ export function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Preserve explicit authorization failures instead of returning an indistinguishable 500. */
+/**
+ * Preserve explicit authorization failures instead of returning an indistinguishable 500.
+ *
+ * Phase 16：这条路径必须保留错误自带的 `status`，否则订阅门禁抛出的
+ * `SubscriptionError`（402）会被路由的 `catch { return errorResponse(error) }`
+ * 变成 500 —— 商家看到"服务器错误"，而真实原因是"订阅到期，只能读"。
+ * 402 Payment Required 是这里唯一正确的语义。
+ */
 export function errorResponse(error: unknown, fallbackStatus = 500): Response {
   const maybeStatus = error instanceof Error && 'status' in error ? error.status : null;
   const status = typeof maybeStatus === 'number' && maybeStatus >= 400 && maybeStatus < 600
     ? maybeStatus
     : fallbackStatus;
   return jsonError(getErrorMessage(error), status);
+}
+
+/** 402 响应体里额外带上机器可读的原因码，便于前端区分"到期/停用/未开通"。 */
+export function subscriptionRequiredResponse(error: unknown): Response | null {
+  if (!(error instanceof Error) || !('status' in error) || error.status !== 402) return null;
+  const code = 'code' in error && typeof error.code === 'string' ? error.code : 'subscription_required';
+  const subscriptionStatus = 'subscriptionStatus' in error && typeof error.subscriptionStatus === 'string'
+    ? error.subscriptionStatus
+    : 'unknown';
+  return Response.json(
+    { error: getErrorMessage(error), code, subscriptionStatus },
+    { status: 402 },
+  );
 }
 
 /** 将 AsyncGenerator 文本流包装为 SSE Response（data: {text} 行格式） */

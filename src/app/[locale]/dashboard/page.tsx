@@ -20,9 +20,18 @@ import { RoveCard, RoveCardHeader } from '@/components/rove/rove-card';
 type DashboardData = {
   kpi: {
     todayRevenue: number; todayOrders: number; todayCustomers: number;
-    positiveRate: number; revenueDelta: number; ordersDelta: number;
-    customersDelta: number; ratingDelta: number;
+    positiveRate: number; avgRating: number;
+    // null = 没有对比依据（对比期无数据），UI 显示 —，不得回落成 0
+    revenueDelta: number | null; ordersDelta: number | null;
+    customersDelta: number | null; ratingDelta: number | null;
   };
+  basis?: {
+    periodStart: string; periodEnd: string;
+    priorPeriodStart: string; priorPeriodEnd: string;
+    hasPriorBasis: boolean;
+  };
+  /** 仅演示模式返回；真实路径不返回此字段 */
+  demo?: boolean;
   revenueTrend: { date: string; amount: number }[];
   channels: { channel: string; count: number; pct: number }[];
   topDishes: { name: string; quantity: number; revenue: number }[];
@@ -261,10 +270,10 @@ export default function DashboardPage() {
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
         {(data
           ? [
-              { label: t('kpiRevenue'), value: fmtCurrency(kpi?.todayRevenue ?? 0), delta: kpi?.revenueDelta ?? 0, icon: Banknote },
-              { label: t('kpiOrders'), value: String(kpi?.todayOrders ?? 0), delta: kpi?.ordersDelta ?? 0, icon: Receipt },
-              { label: t('kpiCustomers'), value: String(kpi?.todayCustomers ?? 0), delta: kpi?.customersDelta ?? 0, icon: Footprints },
-              { label: t('kpiRating'), value: `${kpi?.positiveRate ?? 0}%`, delta: kpi?.ratingDelta ?? 0, icon: Heart },
+              { label: t('kpiRevenue'), value: fmtCurrency(kpi?.todayRevenue ?? 0), delta: kpi?.revenueDelta, icon: Banknote },
+              { label: t('kpiOrders'), value: String(kpi?.todayOrders ?? 0), delta: kpi?.ordersDelta, icon: Receipt },
+              { label: t('kpiCustomers'), value: String(kpi?.todayCustomers ?? 0), delta: kpi?.customersDelta, icon: Footprints },
+              { label: t('kpiRating'), value: `${kpi?.positiveRate ?? 0}%`, delta: kpi?.ratingDelta, icon: Heart },
             ]
           : Array(4).fill(null)
         ).map((card, i) =>
@@ -274,8 +283,10 @@ export default function DashboardPage() {
               rise={(i + 1) as 1 | 2 | 3 | 4}
               label={card.label}
               value={card.value}
-              delta={card.delta}
+              // 不写 `?? 0`：null 必须保持 null，否则零数据账户会看到 "+0%"（一个假断言）
+              delta={card.delta ?? null}
               deltaLabel={t('vsLastWeek')}
+              noBasisLabel={t('noComparison')}
               icon={card.icon}
             />
           ) : (

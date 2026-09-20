@@ -61,7 +61,27 @@ async function uploadProductMedia(request: NextRequest) {
     if (error) return jsonError(error.message, 500);
 
     const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
-    return json({ url: data.publicUrl, type: isImage ? 'image' : 'video' });
+
+    /**
+     * `getPublicUrl` is a pure string join against the client's base URL, so it
+     * hands out whatever host the SERVER uses to reach the storage API.
+     *
+     * On Supabase Cloud those are the same host, and the default below keeps
+     * that behaviour byte-for-byte. On a self-hosted install they are NOT: the
+     * app talks to `http://gateway` (see docker-compose.selfhosted.yml), a
+     * container name no browser can resolve — every product image would 404.
+     * There, STORAGE_PUBLIC_BASE_URL is set to the public origin and the stored
+     * URL stays correct.
+     *
+     * Deliberately not a silent fallback: the variable is documented in
+     * docker/deploy.env.example and set by install.sh.
+     */
+    const publicBase = process.env.STORAGE_PUBLIC_BASE_URL?.trim().replace(/\/+$/, '');
+    const url = publicBase
+      ? `${publicBase}/storage/v1/object/public/${BUCKET}/${path}`
+      : data.publicUrl;
+
+    return json({ url, type: isImage ? 'image' : 'video' });
   } catch (e) {
     return errorResponse(e);
   }

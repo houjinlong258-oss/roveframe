@@ -55,6 +55,42 @@ export const PUBLIC_API_PREFIXES: readonly string[] = [
   '/api/internal/agent/business-data', // RoveAgent 服务间业务数据适配器（无会话凭据，handler 内共享密钥 + HMAC + 租户配对校验）
   '/api/onboarding/parse', // 自然语言解析草稿（纯函数无副作用，确认写入走 /api/onboarding/confirm 需登录）
   '/api/health', // 部署 preflight / 健康检查（无会话凭据，仅返回缺表与降级状态）
+  // Phase 16 任务 4：邮件退订。收件人没有本站会话，凭随机令牌证明身份。
+  // 必须是公开路径，否则退订需要登录 —— 那等于没有退订。
+  '/api/email/unsubscribe',
+  // Phase 17：商户官网的公开面。刻意**逐条列出**而不是放行 `/api/site`——
+  // 前缀放行意味着以后任何加在 `/api/site/` 下的路由（比如将来的管理接口）
+  // 都会**静默**变成公开，而这类扩大没有任何症状。
+  '/api/site/authorize',    // Caddy on_demand_tls.ask：证书签发前的放行判断
+  '/api/site/reservations', // 官网预约（租户由 slug 服务端解析，限流按 IP+slug）
+  // Phase 18：顾客端 PWA 的外卖。顾客没有会话，身份由不透明桌码 token 证明
+  // （与 /api/store/menu、/api/store/orders 同一套机制），因此必须公开；
+  // 服务端按 token 定租户、按 products 表计价、按 token 限流。
+  '/api/site/config',
+  '/api/store/delivery-orders',
+  // Phase 18：顾客账号。顾客是**与商家隔离的第二套身份** —— 他们不持有商家 JWT，
+  // 因此不能走下面 resolveRequestUser 那条会话校验：proxy 会在 handler 之前
+  // 返回 401，注册/登录接口永远调不通（这正是集成时实测到的阻塞点）。
+  //
+  // 权限由 handler 内的 `resolveCustomerSession(request)` 判定
+  // （src/lib/customer-auth.ts）。cookie 名 `roveframe_customer_session`
+  // 与商家会话 cookie 不同名、不互通。
+  //
+  // 仍然逐条列出，不放行 `/api/customer` 前缀：前缀放行会让将来加在该目录下的
+  // 任何路由静默变成公开。注意 `/api/customer/favorites` 早就在列 —— 那是
+  // 设备 cookie 边界，与账号无关，不能因为名字相近就合并成一条。
+  '/api/customer/auth/register',
+  '/api/customer/auth/login',
+  '/api/customer/auth/logout',
+  '/api/customer/me',
+  '/api/customer/orders',
+  '/api/customer/addresses',
+  // Phase 18 / P18-10：骑手轨迹查询。顾客凭二维码 token 证明身份，
+  // 与 /api/store/menu、/api/store/delivery-orders 同一套边界。
+  //
+  // 注意这里放行的是 `/api/store/deliveries` 而**不是** `/api/store`——
+  // 后者会把整个 store 命名空间静默变成公开。
+  '/api/store/deliveries',
 ];
 
 export function isPublicApiPath(pathname: string): boolean {

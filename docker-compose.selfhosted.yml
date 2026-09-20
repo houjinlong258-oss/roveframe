@@ -1,0 +1,283 @@
+# ---------------------------------------------------------------------------
+# RoveFrame AI Business OS — self-hosted database overlay
+#
+# Adds a complete, self-contained database plane so that a fresh server needs
+# NO external Supabase project and NO credential typed by hand:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.selfhosted.yml \
+#     --env-file docker/deploy.env up -d --build
+#
+# (`install.sh` does exactly that, after generating docker/deploy.env.)
+#
+# Services added here — and why each one is not optional:
+#
+#   db       Postgres. `supabase/postgres` is used instead of plain `postgres`
+#            because it already ships pgvector (scripts/migrate-business-tables.sql
+#            needs `create extension vector`), the `auth` and `storage` schemas,
+#            and the roles PostgREST / GoTrue / Storage API log in as.
+#   rest     PostgREST            → /rest/v1     (every `.from()` in src/)
+#   auth     GoTrue               → /auth/v1     (src/lib/auth.ts:100,
+#                                                 src/app/api/auth/invite/route.ts:76)
+#   storage  Storage API          → /storage/v1  (src/app/api/upload/route.ts:17,57,63)
+#   gateway  nginx: one origin for the three prefixes above, because supabase-js
+#            derives every path from a single base URL.
+#   edge     Caddy: ports 80/443 and automatic certificates (see
+#            docs/current/SelfHosted_Deploy_And_Merchant_Site_Plan.md §4).
+#
+# Boundary: `gateway` is NOT published to the host. The public entry point is
+# `edge`, which forwards only /storage/v1/object/public/* to the gateway.
+# Therefore PostgREST and GoTrue are unreachable from the internet by
+# construction — tighter than Supabase Cloud, where /rest/v1/ is always public.
+#
+# Every image is prefixed with ${IMAGE_REGISTRY:-} (empty = Docker Hub) so a
+# deployment behind a registry mirror needs no edit here: set IMAGE_REGISTRY.
+#
+# HONEST STATUS: the authoring environment could not reach registry-1.docker.io
+# (`docker manifest inspect postgres:16-alpine` → connection timeout), so this
+# overlay has been validated with `docker compose config` only. It has NOT been
+# pulled and started end to end here. First boot on a real server is the
+# verification step.
+# ---------------------------------------------------------------------------
+
+name: roveframe
+
+services:
+
+  # -------------------------------------------------------------------------
+  # Postgres. First boot runs the image's own init scripts (which create the
+  # supabase roles/schemas) plus docker/db/roles.sql (which gives those roles
+  # OUR generated password).
+  # -------------------------------------------------------------------------
+  db:
+    image: ${IMAGE_REGISTRY:-}supabase/postgres:17.6.1.136
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (install.sh generates it)}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: "5432"
+      POSTGRES_PORT: "5432"
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (install.sh generates it)}
+      PGDATABASE: ${POSTGRES_DB:-postgres}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./docker/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    expose:
+      - "5432"
+    networks:
+      - roveframe
+
+  # -------------------------------------------------------------------------
+  # PostgREST — the REST surface every `.from()` / `.rpc()` call in src/ uses.
+  # `storage` must be in PGRST_DB_SCHEMAS: the Storage API container reads and
+  # writes its own metadata through this PostgREST instance.
+  # -------------------------------------------------------------------------
+  rest:
+    image: ${IMAGE_REGISTRY:-}postgrest/postgrest:v14.17
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+      PGRST_DB_SCHEMAS: ${PGRST_DB_SCHEMAS:-public,storage}
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_DB_EXTRA_SEARCH_PATH: public
+      PGRST_DB_MAX_ROWS: ${PGRST_DB_MAX_ROWS:-1000}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (install.sh generates it)}
+      PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXPIRY:-3600}
+    healthcheck:
+      test: ["CMD", "postgrest", "--ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    expose:
+      - "3000"
+    networks:
+      - roveframe
+
+  # -------------------------------------------------------------------------
+  # GoTrue — auth.admin.createUser / inviteUserByEmail and password sign-in.
+  # `GOTRUE_MAILER_AUTOCONFIRM=true` is deliberate: a self-hosted install has
+  # no SMTP relay, and without it every signup lands unconfirmed and cannot log
+  # in — the installer's first-owner step would fail on a healthy-looking stack.
+  # -------------------------------------------------------------------------
+  auth:
+    image: ${IMAGE_REGISTRY:-}supabase/gotrue:v2.196.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: ${NEXT_PUBLIC_APP_URL:?set NEXT_PUBLIC_APP_URL (public origin)}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+      GOTRUE_SITE_URL: ${NEXT_PUBLIC_APP_URL:?set NEXT_PUBLIC_APP_URL (public origin)}
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (install.sh generates it)}
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY:-3600}
+      GOTRUE_JWT_ISSUER: ${NEXT_PUBLIC_APP_URL:?set NEXT_PUBLIC_APP_URL (public origin)}
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    expose:
+      - "9999"
+    networks:
+      - roveframe
+
+  # -------------------------------------------------------------------------
+  # Storage API — product image/video uploads (src/app/api/upload/route.ts).
+  # Image transformation (imgproxy) is deliberately NOT enabled: the app only
+  # ever calls createBucket/upload/getPublicUrl, and getPublicUrl is a pure
+  # string join with no upstream call. Running imgproxy would add a container
+  # for a code path nothing uses.
+  # -------------------------------------------------------------------------
+  storage:
+    image: ${IMAGE_REGISTRY:-}supabase/storage-api:v1.74.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    environment:
+      ANON_KEY: ${COZE_SUPABASE_ANON_KEY:?set COZE_SUPABASE_ANON_KEY (install.sh generates it)}
+      SERVICE_KEY: ${COZE_SUPABASE_SERVICE_ROLE_KEY:?set COZE_SUPABASE_SERVICE_ROLE_KEY (install.sh generates it)}
+      AUTH_JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (install.sh generates it)}
+      POSTGREST_URL: http://rest:3000
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+      STORAGE_PUBLIC_URL: ${NEXT_PUBLIC_APP_URL:?set NEXT_PUBLIC_APP_URL (public origin)}
+      REQUEST_ALLOW_X_FORWARDED_PATH: "true"
+      # 50MB, matching the video limit in src/app/api/upload/route.ts.
+      FILE_SIZE_LIMIT: "52428800"
+      STORAGE_BACKEND: file
+      GLOBAL_S3_BUCKET: ${STORAGE_TENANT_ID:-stub}
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: ${STORAGE_TENANT_ID:-stub}
+      REGION: ${STORAGE_REGION:-stub}
+      ENABLE_IMAGE_TRANSFORMATION: "false"
+      S3_PROTOCOL_ACCESS_KEY_ID: ${S3_PROTOCOL_ACCESS_KEY_ID:?set S3_PROTOCOL_ACCESS_KEY_ID (install.sh generates it)}
+      S3_PROTOCOL_ACCESS_KEY_SECRET: ${S3_PROTOCOL_ACCESS_KEY_SECRET:?set S3_PROTOCOL_ACCESS_KEY_SECRET (install.sh generates it)}
+    volumes:
+      - storage-data:/var/lib/storage
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    expose:
+      - "5000"
+    networks:
+      - roveframe
+
+  # -------------------------------------------------------------------------
+  # One origin for /rest/v1, /auth/v1, /storage/v1. Internal only.
+  # -------------------------------------------------------------------------
+  gateway:
+    image: ${IMAGE_REGISTRY:-}nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      rest:
+        condition: service_started
+      auth:
+        condition: service_started
+      storage:
+        condition: service_started
+    volumes:
+      - ./docker/gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    expose:
+      - "80"
+    networks:
+      - roveframe
+
+  # -------------------------------------------------------------------------
+  # Public edge: TLS termination + automatic certificates.
+  #
+  # `on_demand_tls.ask` points at the app, which approves a hostname only when
+  # it is the platform's own domain or a custom_domain already registered and
+  # active in public_sites. A stranger who points evil.example at this server
+  # gets no certificate (fail-closed).
+  #
+  # Both :80 and :443 serve the app, with no forced redirect. Reason: an install
+  # with no domain (IP only) can never obtain a certificate, and an
+  # unconditional redirect would make that deployment unreachable.
+  # -------------------------------------------------------------------------
+  edge:
+    image: ${IMAGE_REGISTRY:-}caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_started
+      web:
+        condition: service_started
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - roveframe
+
+  # -------------------------------------------------------------------------
+  # Web control plane: wired to the built-in database.
+  # -------------------------------------------------------------------------
+  web:
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_healthy
+      auth:
+        condition: service_started
+      storage:
+        condition: service_started
+      gateway:
+        condition: service_started
+    environment:
+      # Opens the boot migration path (src/lib/migration.ts). `sslmode=disable`
+      # is required: the bundled Postgres does not speak TLS, and the migration
+      # pool forces an SSL handshake unless the DSN opts out.
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (install.sh generates it)}@db:5432/${POSTGRES_DB:-postgres}?sslmode=disable
+
+      # Browser-facing base for uploaded media. COZE_SUPABASE_URL is the
+      # INTERNAL origin (http://gateway) so container→API traffic never leaves
+      # the Docker network, which means getPublicUrl() would hand out a
+      # hostname the browser cannot resolve. This variable overrides only the
+      # URL that gets stored/rendered; unset, behaviour is unchanged.
+      STORAGE_PUBLIC_BASE_URL: ${NEXT_PUBLIC_APP_URL:?set NEXT_PUBLIC_APP_URL (public origin)}
+
+      # Lets /api/site/domain/authorize approve the platform's own hostname.
+      SITE_DOMAIN: ${SITE_DOMAIN:-}
+    # Keep the raw port reachable from the server itself (SSH tunnel) but not
+    # from the internet: everything public must go through `edge`.
+    ports: !override
+      - "127.0.0.1:${WEB_PORT:-5000}:5000"
+
+volumes:
+  db-data:
+  storage-data:
+  caddy-data:
+  caddy-config:

@@ -23,6 +23,27 @@ import { Pool } from 'pg';
 const BASE = process.argv[2] ?? 'http://127.0.0.1:5067';
 const EXISTING_EMAIL = process.argv[3] ?? 'houjinlong258@gmail.com';
 
+/**
+ * 本脚本请求使用的来源 IP（`X-Forwarded-For`）。
+ *
+ * 为什么需要它：注册与登录都按 `auth:signup:ip:<getClientIp()>` /
+ * `auth:login:ip:<…>` 计数，而 `getClientIp`（src/lib/rate-limit.ts:176）先看
+ * `x-forwarded-for`。本机直连时没有代理设置这个头，于是**所有**直连调用方
+ * 共用同一个 IP 桶 —— 反复跑本脚本会把**正确密码**的登录一起锁进 429
+ * （实测：第二次运行时报 `retryAfterSec=862`）。
+ *
+ * 与 `_verify_delivery_chain.mjs` / `_verify_staff_tier.mjs` 同一办法。
+ * 要看"真实来源 IP"下的行为就设 `ROLLBACK_VERIFY_XFF=direct`。
+ */
+const XFF = process.env.ROLLBACK_VERIFY_XFF === 'direct'
+  ? ''
+  : (process.env.ROLLBACK_VERIFY_XFF || `198.51.100.${Math.floor(Math.random() * 200) + 1}`);
+
+/** 带来源 IP 的请求头（所有 fetch 都要经过它，否则限流仍会串桶）。 */
+function headers(extra = {}) {
+  return XFF ? { 'X-Forwarded-For': XFF, ...extra } : { ...extra };
+}
+
 const pool = new Pool({
   host: process.env.PGHOST, user: process.env.PGUSER, password: process.env.PGPASSWORD,
   database: process.env.PGDATABASE ?? 'postgres',
@@ -41,7 +62,7 @@ async function businessCount() {
 async function signup(email, password, name) {
   const r = await fetch(`${BASE}/api/auth/signup`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: headers({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ email, password, business_name: name, industry: 'restaurant' }),
   });
   const text = await r.text();
@@ -85,7 +106,7 @@ let c = { status: 0, raw: '' };
 try {
   const r = await fetch(`${BASE}/api/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: headers({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ email: fresh, password: 'Probe-pass-12345' }),
   });
   c = { status: r.status, raw: (await r.text()).slice(0, 160) };

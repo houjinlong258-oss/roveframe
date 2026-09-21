@@ -116,21 +116,57 @@ export async function createAuthUserWithTenant(opts: {
   return { ok: true, data: { userId: data.user.id } };
 }
 
-/** 创建 tenant 行（slug 自动从 name 生成） */
+/**
+ * 创建 tenant 行（slug 自动从 name 生成）。
+ *
+ * ## 为什么 slug 冲突要重试（Phase 18 实测发现）
+ *
+ * `tenants.slug` 上有唯一索引，而 slug 是从**店名**推出来的。
+ * 于是"第二家叫同样名字的店"注册会直接失败 —— 实测：
+ *
+ *     create tenant failed: duplicate key value violates unique constraint "tenants_slug_key"
+ *
+ * 这是 500，而且把数据库约束名透给了顾客。真实世界里重名完全正常
+ * （"四川人家"在一个城市可以有好几家），所以这不是边界情况，是**正常输入**。
+ *
+ * 处理方式：冲突时给 slug 追加一个短后缀重试（有界，最多 4 次）。
+ * 这是唯一合理的语义 —— 店名是商家的，平台没有理由因为它重复就拒绝注册；
+ * 而**归一化后的 slug 只是内部标识**，加后缀对商家不可见也不影响任何功能。
+ *
+ * 为什么不先查再插：查询与插入之间有竞态窗口，两个并发注册会双双通过检查。
+ * 靠唯一索引拒绝、再重试，是唯一没有竞态的做法。
+ */
+const SLUG_RETRY_LIMIT = 4;
+
 export async function createTenantRow(opts: { name: string; slug?: string }): Promise<
   Result<{ tenantId: string }>
 > {
   const client = getSupabaseClient();
-  const slug = opts.slug ?? slugFromName(opts.name);
-  const { data, error } = await client
-    .from('tenants')
-    .insert({ name: opts.name, slug })
-    .select('id')
-    .single();
-  if (error || !data) {
-    return { ok: false, error: error?.message ?? 'insert tenants failed' };
+  const baseSlug = opts.slug ?? slugFromName(opts.name);
+
+  for (let attempt = 0; attempt < SLUG_RETRY_LIMIT; attempt += 1) {
+    // 第一次用原始 slug；之后每次追加一个短随机后缀。
+    // 后缀取 4 位 base36（约 170 万种），足够避免连续重试撞同一个。
+    const slug = attempt === 0
+      ? baseSlug
+      : `${baseSlug.slice(0, 40)}-${Math.random().toString(36).slice(2, 6)}`;
+    const { data, error } = await client
+      .from('tenants')
+      .insert({ name: opts.name, slug })
+      .select('id')
+      .single();
+    if (!error && data) {
+      return { ok: true, data: { tenantId: (data as { id: string }).id } };
+    }
+    // 23505 = unique_violation。只有它值得重试；其他错误立刻返回（fail-closed）。
+    if (error?.code !== '23505') {
+      return { ok: false, error: error?.message ?? 'insert tenants failed' };
+    }
   }
-  return { ok: true, data: { tenantId: (data as { id: string }).id } };
+  return {
+    ok: false,
+    error: `could not allocate a unique tenant slug after ${SLUG_RETRY_LIMIT} attempts`,
+  };
 }
 
 /** 创建 business 行 */

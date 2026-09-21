@@ -491,7 +491,10 @@ export const StaffPwa: React.FC<StaffPwaProps> = ({ locale, initialTab = 'today'
     try {
       const response = await fetch('/api/auth/logout', { method: 'POST' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      window.location.assign(`/${locale}/auth/login`);
+      // 员工登出后回到**员工**登录页（`/{locale}/staff/login`），不是通用的
+      // `/{locale}/auth/login`：后者默认选中「老板」入口，员工从门店群里点开
+      // 链接登录，登出后再看到老板侧的界面会以为自己走错了地方。
+      window.location.assign(`/${locale}/staff/login`);
     } catch (err: unknown) {
       setIsLoggingOut(false);
       setLogoutError(err instanceof Error ? err.message : '退出登录失败');

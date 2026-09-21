@@ -314,17 +314,33 @@ describe('账号接线：设置页 account 分组', () => {
 // ---------------------------------------------------------------------------
 
 describe('账号接线：登录页双入口', () => {
-  test('登录页同时有老板入口与员工入口，且按服务端返回的 role 分流', () => {
-    const login = read('src', 'app', '[locale]', 'auth', 'login', 'page.tsx');
-    const entries = loginEntries(login);
-    assert.ok(entries.owner, '登录页缺少老板入口');
-    assert.ok(entries.staff, '登录页缺少员工入口');
+  test('登录表单同时有老板入口与员工入口，且按服务端返回的 role 分流', () => {
+    // Phase 18：登录逻辑从 `auth/login/page.tsx` 抽到
+    // `components/auth/staff-login-form.tsx`，因为规格要求
+    // `/{locale}/staff/login` 是**独立路由**，而两条路必须共用同一套登录逻辑
+    // （复制一份页面会让登录逻辑有两份）。契约本身没变，只是换了位置：
+    // 断言仍然检查"双入口 + 按 role 分流 + 同一个登录调用"。
+    const form = read('src', 'components', 'auth', 'staff-login-form.tsx');
+    const entries = loginEntries(form);
+    assert.ok(entries.owner, '登录表单缺少老板入口');
+    assert.ok(entries.staff, '登录表单缺少员工入口');
     assert.ok(
-      loginRedirectsByRole(login),
-      "登录页没有按接口返回的 role 分流（标签只是提示，角色才是事实）",
+      loginRedirectsByRole(form),
+      "登录表单没有按接口返回的 role 分流（标签只是提示，角色才是事实）",
     );
     // 一套认证：两个入口必须打同一个登录接口
-    assert.ok(login.includes("login(email, password)"), '登录页没有复用同一个登录调用');
+    assert.ok(form.includes("login(email, password)"), '登录表单没有复用同一个登录调用');
+
+    // 两个路由都必须真的用这个表单（否则抽出来也白抽）
+    const ownerPage = read('src', 'app', '[locale]', 'auth', 'login', 'page.tsx');
+    const staffPage = read('src', 'app', '[locale]', 'staff', 'login', 'page.tsx');
+    for (const [label, page] of [['老板端', ownerPage], ['员工端', staffPage]] as const) {
+      assert.ok(
+        page.includes("from '@/components/auth/staff-login-form'")
+          && page.includes('<StaffLoginForm'),
+        `${label}登录页没有复用同一个登录表单 —— 登录逻辑出现第二份实现`,
+      );
+    }
 
     // 负向对照
     assert.deepEqual(
@@ -336,6 +352,12 @@ describe('账号接线：登录页双入口', () => {
       loginRedirectsByRole("router.replace('/dashboard')"),
       false,
       '匹配器对"写死跳仪表盘"也报"按角色分流"，负向对照失败',
+    );
+    // 负向对照：一份自己实现登录的页面（不 import 表单）必须被判为没复用
+    assert.equal(
+      ("'use client';\nexport default function P(){ return <input type=\"password\" /> }")
+        .includes("from '@/components/auth/staff-login-form'"),
+      false,
     );
   });
 });

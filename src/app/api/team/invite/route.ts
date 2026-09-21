@@ -32,6 +32,19 @@ import { resolveAppOrigin } from '@/lib/app-origin';
  * `app_metadata`**（`updateUserById` 支持 app_metadata，这是唯一的写入通道），
  * 并且只有在链接与声明**都**就绪时才返回 201。
  *
+ * ## 发信方式（Phase 18 决策，用户已确认）
+ *
+ * 用 `auth.admin.generateLink({ type: 'invite' })` 生成链接，邮件由**商家自己的
+ * SMTP** 发出（`sendEmailWithDefaultAccount`）。
+ *
+ * 不用 `inviteUserByEmail` 的原因：它会让 Supabase Auth 自己发信，而本项目
+ * **没有配平台侧 SMTP**，实测该调用返回 **429** —— 那看起来像限流，实际是
+ * "平台没有发信能力"。而且邀请邮件本来就该用商家的发件身份。
+ *
+ * 两种失败分开报告（`email_sent` / `email_error`）：邮件发不出去时链接仍然
+ * 可用（商家可手动转发），所以不能因为发信失败就说邀请失败；
+ * 也不能因为账号建好了就假装邮件发出去了。
+ *
  * ## 失败时的纪律
  *
  * 不返回 `null`、不返回假链接。任何一步失败都返回明确的错误状态：
@@ -95,31 +108,70 @@ async function inviteStaff(request: NextRequest) {
   }
 
   const origin = resolveAppOrigin(request);
+  // 门店名用于邮件抬头与主题。读失败**不**阻断邀请：拿不到名字就用中性措辞，
+  // 而不是让一条本来能用的邀请因为一个展示字段而失败。
+  let businessName: string | null = null;
+  try {
+    const { getSettings } = await import('@/lib/settings');
+    const settings = await getSettings(context.tenantId, context.businessId);
+    const name = (settings.business as { name?: unknown }).name;
+    businessName = typeof name === 'string' && name.trim() ? name.trim() : null;
+  } catch (settingsError) {
+    console.warn(
+      '[team/invite] business name unavailable, using neutral wording:',
+      settingsError instanceof Error ? settingsError.message : settingsError,
+    );
+  }
   // localePrefix 是 'always'：不带 locale 的地址会多一次 307，而邀请邮件里的
   // 跳转对"多一跳"很敏感（有些邮件客户端会把重定向丢掉）。
   const locale = ['en', 'zh', 'es'].includes(request.nextUrl.searchParams.get('locale') ?? '')
     ? request.nextUrl.searchParams.get('locale')!
     : 'en';
 
-  // ---------- 1) 生成邀请（这一步只写 user_metadata，见文件头说明） ----------
-  const { data: invited, error: inviteError } = await client.auth.admin.inviteUserByEmail(email, {
-    redirectTo: `${origin}/${locale}/auth/login`,
-    data: {
-      // 仍然写一份到 user_metadata：不是鉴权所需（鉴权读 app_metadata），
-      // 而是让被邀请人在首次登录前就能在 Supabase 后台看出"这是给谁、哪个门店的邀请"。
-      tenant_id: context.tenantId,
-      business_id: context.businessId,
-      role: STAFF_ROLE,
-      staff_id: member.id,
+  // ---------- 1) 生成邀请链接（**不**让 Supabase 发信） ----------
+  //
+  // Phase 18 决策（用户已确认）：用 `generateLink` 生成链接，邮件由**商家自己的
+  // SMTP** 发出。
+  //
+  // 为什么不用 `inviteUserByEmail`：它会让 Supabase Auth 自己发那封邀请邮件。
+  // 本项目**没有配自定义 SMTP**（平台侧），实测该调用返回 **429**，于是整条邀请
+  // 链路不可用 —— 而 429 看起来像"限流"，掩盖了真实原因（平台没有发信能力）。
+  // `generateLink` 只生成链接、不发信，正合"邮件走商家自己的通道"这一设计：
+  // 邀请邮件本来就该用**商家的**发件身份，而不是平台的。
+  const { data: invited, error: inviteError } = await client.auth.admin.generateLink({
+    type: 'invite',
+    email,
+    options: {
+      redirectTo: `${origin}/${locale}/auth/login`,
+      data: {
+        // 仍然写一份到 user_metadata：不是鉴权所需（鉴权读 app_metadata），
+        // 而是让被邀请人在首次登录前就能在 Supabase 后台看出"这是给谁、哪个门店的邀请"。
+        tenant_id: context.tenantId,
+        business_id: context.businessId,
+        role: STAFF_ROLE,
+        staff_id: member.id,
+      },
     },
   });
-  if (inviteError || !invited.user) {
+  if (inviteError || !invited?.user) {
     return NextResponse.json(
       { error: `invite failed: ${inviteError?.message ?? 'unknown'}` },
       { status: 500 },
     );
   }
   const invitedUserId = invited.user.id;
+  const inviteUrl = invited.properties?.action_link ?? null;
+  if (!inviteUrl) {
+    // 没有链接就没有这封邮件。宁可 500，也不要发一封点不开的信。
+    return NextResponse.json(
+      {
+        error: 'invite link generation returned no action_link',
+        code: 'no_action_link',
+        invited_user_id: invitedUserId,
+      },
+      { status: 500 },
+    );
+  }
 
   // ---------- 2) 补写 app_metadata —— 鉴权链唯一读取的地方 ----------
   //
@@ -188,6 +240,41 @@ async function inviteStaff(request: NextRequest) {
     );
   }
 
+  // ---------- 4) 用商家自己的 SMTP 发出邀请邮件 ----------
+  //
+  // 放在最后一步：前三步（链接 / 租户声明 / 账号关联）都成了才值得发信。
+  // 若先发信再发现关联失败，员工会收到一封点进去却进不来的邀请。
+  //
+  // 失败**不**回滚已建立的账号（那是可用的：链接仍然有效，商家可以把链接
+  // 手动转给员工），但必须如实报告"邮件没发出去"，而不是报成功。
+  let emailSent = false;
+  let emailError: string | null = null;
+  try {
+    const { sendEmailWithDefaultAccount } = await import('@/lib/email/outgoing');
+    await sendEmailWithDefaultAccount(
+      context.tenantId,
+      context.businessId,
+      email,
+      businessName ? `You are invited to join ${businessName}` : 'You are invited to join the team',
+      [
+        `Hello${member.name ? ` ${member.name}` : ''},`,
+        '',
+        businessName
+          ? `You have been invited to join the team workspace at ${businessName}.`
+          : 'You have been invited to join the team workspace.',
+        'Set your password with the link below, then sign in with this email address.',
+        '',
+        inviteUrl,
+        '',
+        'If you were not expecting this invitation, you can ignore this email.',
+      ].join('\n'),
+    );
+    emailSent = true;
+  } catch (sendError) {
+    emailError = sendError instanceof Error ? sendError.message : String(sendError);
+    console.error('[team/invite] invitation email failed:', emailError);
+  }
+
   return NextResponse.json(
     {
       ok: true,
@@ -195,9 +282,14 @@ async function inviteStaff(request: NextRequest) {
       invited_user_id: invitedUserId,
       email,
       role: STAFF_ROLE,
-      // 必须非 null：调用方用现有邮件通道把这条链接发给被邀请人。
-      invite_url: (invited.user as unknown as { invite_link?: string | null }).invite_link ?? null,
-      invite_url_source: 'supabase_admin_invite',
+      // 链接本身**一定**可用（不是 null）：前三步成功才走到这里。
+      // 邮件发不出去时调用方仍可把它手动转给员工 —— 这也是为什么两者分开报告。
+      invite_url: inviteUrl,
+      invite_url_source: 'supabase_admin_generate_link',
+      email_sent: emailSent,
+      // 明确区分"没配邮箱"与"发送失败"：前者要老板去设置页配 SMTP，
+      // 后者要查 SMTP 自身。含糊其辞会让两者都停在原地。
+      email_error: emailError,
     },
     { status: 201 },
   );

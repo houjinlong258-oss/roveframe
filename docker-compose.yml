@@ -75,6 +75,24 @@ services:
       ROVEAGENT_TEST_MODE: ${ROVEAGENT_TEST_MODE:-false}
       # The production signal that guard binds to.
       ROVEAGENT_ENV: production
+      # --- 命令策略（Phase 18 安全决策，用户已确认开启）------------------------
+      #
+      # `enterprise/gate_hook.py:157-199` 在 `tool_name == "terminal"` 时先做命令级
+      # 判定：非只读命令是否**阻断**取决于本变量。未设为 enforce 时它只分类 + 记日志，
+      # 命令照常执行。
+      #
+      # 为什么必须设：实测 `devops` persona（CTO 的 employee_key）解析出的 toolset
+      # 是 `['terminal','todo']`，而该 persona 持 `admin:process` 权限 ⇒ gate 的权限
+      # 检查会通过。也就是**一次审批之后，CTO Agent 可以执行任意非只读 shell 命令**，
+      # 而原配置不会阻断它。这不是"可能有问题"，是"已有的能力没有被约束"。
+      #
+      # 为什么写在 compose 里而不是只写 deploy.env：本文件的服务用**显式白名单**
+      # 注入环境变量，只加到 deploy.env 的变量不会进容器
+      # （Phase 15 §18.2 与 Phase 16 都踩过这条）。
+      #
+      # 取值：`enforce` 阻断非只读命令；显式写空值可回到旧行为（只记录）。
+      # 默认给 enforce：安全默认应当是"拦"，放行必须显式声明。
+      ROVEAGENT_COMMAND_POLICY: ${ROVEAGENT_COMMAND_POLICY:-enforce}
     volumes:
       - roveagent-data:/data
     expose:

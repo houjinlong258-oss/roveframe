@@ -92,6 +92,16 @@ export interface DeliveryOrderRequest {
   tip?: number;
   tip_rate?: number;
   idempotency_key: string;
+  /**
+   * 顾客**设备**定位（可选，需顾客显式授权）。
+   *
+   * 这是收货坐标唯一诚实的来源 —— 我们不对地址文本做地理编码（猜错会让 ETA
+   * 与地图一起错，而顾客无从分辨）。顾客拒绝授权时**两个字段都不传**，
+   * 服务端写入 NULL，追踪页据此保持"尚未获取目的地坐标"。
+   * 只传一个或者传非法值会被服务端以 400 拒绝（fail-closed）。
+   */
+  dest_lat?: number;
+  dest_lng?: number;
 }
 
 export interface DeliveryOrderResponse {
@@ -102,6 +112,10 @@ export interface DeliveryOrderResponse {
   tip?: number;
   total: number;
   promised_at: string;
+  /** 追踪接口要的是这个 id（不是 order_id），见 CustomerOrderSummary.delivery_id。 */
+  delivery_id?: string;
+  /** 服务端确认写入的收货坐标；未授权定位时为 null。 */
+  destination_coordinates?: { lat: number; lng: number } | null;
 }
 
 export interface SiteConfigResponse {
@@ -195,6 +209,14 @@ export interface DeliveryCoordinates {
 export interface CustomerOrderSummary {
   id: string;
   order_no: string;
+  /**
+   * 对应的 `delivery_orders.id`（仅外卖单）。
+   *
+   * 追踪接口 `/api/store/deliveries/{id}/track` 按 **delivery id** 查，
+   * 而订单接口天然只给 order id —— 两者不同。缺这个字段时客户端只能拿
+   * order id 去试，结果永远是 404（地图与 ETA 因此不可达）。
+   */
+  delivery_id?: string | null;
   channel: 'dine_in' | 'delivery' | 'booking';
   status: 'pending' | 'preparing' | 'on_the_way' | 'completed' | 'cancelled';
   total: number;

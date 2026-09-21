@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { hashFingerprint } from '@/lib/fingerprint';
 import { isValidIdempotencyKey, resolvePublicStore } from '@/lib/storefront';
 import { checkFixedWindow, rateLimitResponse } from '@/lib/rate-limit';
 import { enqueueNotification } from '@/lib/notifications/outbox';
@@ -105,7 +106,18 @@ export function orderContentFingerprint(input: {
     .map((item) => `${item.product_id}x${item.qty}`)
     .sort()
     .join(',');
-  return `${items}|${input.subtotal.toFixed(2)}|${input.tipAmount.toFixed(2)}|${input.tableNo ?? ''}`;
+  /**
+   * Phase 18：返回哈希而非原文。
+   *
+   * 原文在 50 件商品（MAX_ORDER_ITEMS）下可到约 1850 字符，而
+   * `orders.idempotency_fingerprint` 是 varchar(128) —— 同样会把下单打成 500。
+   * 外卖路径已实测复现超宽（147 字符，见 src/lib/fingerprint.ts），堂食只是
+   * 还没人在这一单里塞够商品。
+   *
+   * 拼接规则保持不变，只在最后加一层哈希 —— 于是"同内容必须同指纹"的既有断言
+   * 仍然成立，而长度恒为 64。
+   */
+  return hashFingerprint(`${items}|${input.subtotal.toFixed(2)}|${input.tipAmount.toFixed(2)}|${input.tableNo ?? ''}`);
 }
 
 /** Creates a QR order with server-side prices and strict tenant scope. */

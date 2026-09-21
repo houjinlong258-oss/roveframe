@@ -3,6 +3,7 @@ import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
 import { resolveStaffForUser } from '@/lib/workforce';
 import { claimDeliveryOrder } from '@/lib/delivery';
+import { requireStaffFeature } from '@/lib/staff-access';
 
 /**
  * 认领一张外卖单。**这一个接口是全案最容易写错的地方。**
@@ -30,9 +31,16 @@ import { claimDeliveryOrder } from '@/lib/delivery';
  *   3. `claimDeliveryOrder` 的 WHERE 条件：这一单此刻是否还能被接
  *
  * 三者的职责不重叠：权限矩阵回答"是否允许接单"，但它**不**回答"这一单归谁"。
+ *
+ * 第 0 层是**商家开关**（`delivery`，见 src/lib/staff-access.ts）：不做外卖的店
+ * 由老板关掉这个面，认领一律 403 + `feature_disabled`。它排在中央守卫**之后**，
+ * 因为它不是安全边界 —— 权限矩阵才是；关掉它只是"这家店不做外卖"。
  */
 async function claimHandler(request: NextRequest) {
   const context = requireBusinessContext(await getTenantContext(request));
+
+  const gate = await requireStaffFeature(context.tenantId, context.businessId, 'delivery');
+  if (gate) return gate;
 
   const resolved = await resolveStaffForUser(context.tenantId, context.businessId, context.userId);
   if (!resolved.ok) {

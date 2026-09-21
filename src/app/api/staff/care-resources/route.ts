@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { staffRequestContext } from '@/lib/workforce';
+import { requireStaffFeature } from '@/lib/staff-access';
 
 /**
  * 员工关怀资源**转介目录**（Phase 18 Frontend Spec §5.7）。
@@ -88,10 +89,22 @@ const RESOURCES: readonly CareResource[] = [
  * （矩阵里只有 workforce:self / workforce:manage），现在用它会把 owner 与 manager
  * 一并挡在门外 —— 而"看一条公开的求助热线"不该需要额外授权。
  * 关怀**记录**（要写库、带健康信息）才是 workforce:care 的适用场景，那个接口不在本次范围。
+ *
+ * ## 商家开关：`care` 默认**关**
+ *
+ * 把雇主提供的心理支持项目推到员工面前，是商家要**主动**做的决定（它牵涉
+ * 雇主与员工之间的信任关系，不是"没配置就等于开了"）。因此这一条与外卖/预订
+ * 相反：缺配置时为关闭，老板在 `/api/team/staff-access` 显式打开才出现。
+ *
+ * 关掉时返回 403 + `feature_disabled`，而不是 `{ resources: [] }`：
+ * 空清单会让员工以为"这家店没有提供任何资源" —— 那是与事实不符的陈述。
  */
 export async function GET(request: NextRequest) {
   const resolved = await staffRequestContext(request);
   if (!resolved.ok) return resolved.response;
+
+  const gate = await requireStaffFeature(resolved.ctx.tenantId, resolved.ctx.businessId, 'care');
+  if (gate) return gate;
 
   // 静态清单：无数据库读写、无请求参数、无与当前员工相关的字段。这正是上述硬规则的技术形态。
   return NextResponse.json({ resources: RESOURCES });

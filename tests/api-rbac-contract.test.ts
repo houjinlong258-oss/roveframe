@@ -101,6 +101,29 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionRule>> = {
     verify: (source) => source.includes('createAuthUserWithTenant')
       && source.includes('createBusinessRow'),
   },
+  // Phase 18：顾客账号管理（改资料 / 改密码 / 注销）。
+  // 顾客身份与商家身份**刻意隔离**，因此这四条不可能走中央守卫 ——
+  // 它们登记的是"经过审阅的边界"，verify 断言 handler 内确实解析了顾客会话
+  // 并显式拒绝（而不是忘了加守卫）。
+  'customer/me/route.ts': {
+    reason: 'public customer-account boundary; the account id comes only from the customer session cookie',
+    methods: ['PATCH'],
+    verify: (source) => source.includes('resolveCustomerSession(request)')
+      && source.includes("jsonError('unauthorized', 401)"),
+  },
+  'customer/auth/change-password/route.ts': {
+    reason: 'public customer password change; the current password is verified before the new hash is stored',
+    methods: ['POST'],
+    verify: (source) => source.includes('verifyPassword')
+      && source.includes('hashPassword')
+      && source.includes('resolveCustomerSession(request)'),
+  },
+  'customer/account/close/route.ts': {
+    reason: 'public customer account closure; marks pending_deletion and revokes sessions, never a hard delete',
+    methods: ['POST'],
+    verify: (source) => source.includes('pending_deletion')
+      && source.includes('resolveCustomerSession(request)'),
+  },
   'customer/favorites/route.ts': {
     reason: 'public customer device-identity boundary',
     methods: ['POST', 'DELETE'],
@@ -117,7 +140,7 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionRule>> = {
   // 只写其中一条的实现会被拦下：前者保证"有校验"，后者保证"校验失败是拒绝"。
   'customer/addresses/route.ts': {
     reason: 'public customer-account boundary resolved from the customer session cookie',
-    methods: ['POST', 'DELETE'],
+    methods: ['POST', 'DELETE', 'PATCH'],
     verify: (source) => source.includes('resolveCustomerSession(request)')
       && source.includes("jsonError('unauthorized', 401)"),
   },

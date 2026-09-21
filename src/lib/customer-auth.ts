@@ -240,6 +240,63 @@ export async function revokeCustomerSession(
   return { ok: true, revoked: true };
 }
 
+export type RevokeCustomerSessionsResult =
+  | { ok: true; revoked: number }
+  | { ok: false; error: string };
+
+/**
+ * 批量撤销某个账号的会话（改密码 / 注销账号用）。
+ *
+ * ## 为什么放在本模块而不是各个路由里
+ *
+ * "当前请求的 token → sha256(token)" 这一步只有本模块能做（`hashSessionToken` 与
+ * cookie 解析都是私有的）。改密码路由要"撤销除自己以外的全部会话"，就必须拿到
+ * 自己那一行的 token_hash —— 在路由里再写一遍 sha256 + cookie 解析，等于把
+ * 会话凭据的推导实现复制成两份，文件头警告过的漂移面（协议判定只允许有一个实现）
+ * 会原样长回来。因此这里给出唯一实现，路由只表达意图（`keepCurrent`）。
+ *
+ * ## keepCurrent 的语义与 fail-closed
+ *
+ * `keepCurrent: true`（改密码）撤销**除调用方本会话以外**的全部未撤销会话：
+ *   · 不带这个例外，改密码就等于把自己也踢下线 —— 用户改完密码还要重新登录，
+ *     而真正要拦的"别人那台设备"和"我自己这台"在同一次操作里无法区分；
+ *   · 拿不到自己的 token 时**不猜**：返回 ok:false（调用方 500）。
+ *     静默撤销全部 = 把用户登出，静默撤销 0 条 = 密码改了但谁也没被踢掉 ——
+ *     两种"猜"都违背这次操作的目的。
+ *
+ * `keepCurrent: false`（注销账号）撤销该账号全部未撤销会话。
+ *
+ * 已撤销的行不重写（`.is('revoked_at', null)`）：保留第一次登出的时间戳，
+ * 与 `revokeCustomerSession` 同一口径。
+ */
+export async function revokeCustomerSessions(
+  request: Request,
+  accountId: string,
+  options: { keepCurrent: boolean },
+): Promise<RevokeCustomerSessionsResult> {
+  let keepTokenHash: string | null = null;
+  if (options.keepCurrent) {
+    const token = tokenFromCookieHeader(request.headers.get('cookie'));
+    if (!token) return { ok: false, error: 'no session token to keep' };
+    keepTokenHash = hashSessionToken(token);
+  }
+
+  const scoped = getSupabaseClient()
+    .from('customer_sessions')
+    .update({ revoked_at: new Date().toISOString() })
+    .eq('account_id', accountId)
+    .is('revoked_at', null);
+  // 只有 keepCurrent 才加 token 例外；注销账号必须是"全部"
+  const target = keepTokenHash === null ? scoped : scoped.neq('token_hash', keepTokenHash);
+
+  // select('id') 让"撤销了 0 条"与"撤销了 N 条"可区分 ——
+  // 没有它，supabase-js 对 0 行的 update 同样返回 error=null，
+  // 调用方无法在审计/响应里说清楚到底影响了几条会话。
+  const { data, error } = await target.select('id');
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, revoked: (data ?? []).length };
+}
+
 /**
  * 登录成功后的 Set-Cookie。
  * `secure` 必须来自 `isSecureRequest(request)`（@/lib/auth），本模块不自行判定协议。

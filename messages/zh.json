@@ -23,7 +23,8 @@
     },
     "collapseSidebar": "收起侧栏",
     "expandSidebar": "展开侧栏",
-    "website": "官网"
+    "website": "官网",
+    "team": "团队"
   },
   "common": {
     "save": "保存",
@@ -56,6 +57,37 @@
     "markAllRead": "全部已读",
     "noAlerts": "暂无告警",
     "owner": "店主"
+  },
+  "account": {
+    "menuLabel": "账号",
+    "roles": {
+      "owner": "老板",
+      "manager": "店长",
+      "staff": "员工"
+    },
+    "identity": "当前登录",
+    "email": "邮箱",
+    "role": "角色",
+    "tenant": "租户 ID",
+    "business": "门店 ID",
+    "notLinked": "未关联",
+    "identityNote": "只读信息。角色与门店归属由老板在「团队」里调整。",
+    "signOut": "退出登录",
+    "switchAccount": "退出并切换账号",
+    "signOutFailed": "退出失败，你仍然处于登录状态。",
+    "changePassword": "修改密码",
+    "changePasswordNote": "改完当前会话继续有效；其它设备各自的会话到期后才会失效。",
+    "currentPassword": "当前密码",
+    "newPassword": "新密码",
+    "confirmPassword": "确认新密码",
+    "updatePassword": "更新密码",
+    "updating": "更新中...",
+    "passwordChanged": "密码已更新。",
+    "passwordTooShort": "新密码至少 8 位。",
+    "passwordMismatch": "两次输入的新密码不一致。",
+    "passwordWrong": "当前密码不正确。",
+    "passwordEmpty": "请填写当前密码。",
+    "passwordFailed": "密码更新失败，请重试。"
   },
   "dashboard": {
     "title": "经营仪表盘",
@@ -777,6 +809,7 @@
     "groupIntegrations": "系统集成",
     "groupAi": "AI 偏好",
     "groupData": "数据管理",
+    "groupAccount": "账号",
     "businessNote": "AI 会结合这些信息生成更贴合的分析与营销内容",
     "businessName": "店铺名称",
     "industry": "行业类型",
@@ -1077,7 +1110,13 @@
     "haveAccount": "已有账号?",
     "loginLink": "去登录",
     "businessName": "企业名称",
-    "industry": "行业"
+    "industry": "行业",
+    "entryTitle": "你以什么身份登录?",
+    "entryOwner": "老板 / 店主",
+    "entryOwnerHint": "经营仪表盘",
+    "entryStaff": "员工",
+    "entryStaffHint": "员工端",
+    "entryNote": "两个入口用的是同一套账号密码。入口只决定登录后的落点 —— 最终进入哪一页以服务端返回的角色为准。"
   },
   "pwa": {
     "installTitle": "安装 App",

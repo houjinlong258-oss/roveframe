@@ -23,7 +23,8 @@
     },
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
-    "website": "Website"
+    "website": "Website",
+    "team": "Team"
   },
   "common": {
     "save": "Save",
@@ -56,6 +57,37 @@
     "markAllRead": "Mark all read",
     "noAlerts": "No alerts",
     "owner": "Owner"
+  },
+  "account": {
+    "menuLabel": "Account",
+    "roles": {
+      "owner": "Owner",
+      "manager": "Manager",
+      "staff": "Staff"
+    },
+    "identity": "Signed in as",
+    "email": "Email",
+    "role": "Role",
+    "tenant": "Tenant ID",
+    "business": "Business ID",
+    "notLinked": "Not linked",
+    "identityNote": "Read-only. Roles and store links are changed by the owner in Team.",
+    "signOut": "Sign out",
+    "switchAccount": "Sign out & switch account",
+    "signOutFailed": "Sign out failed — you are still signed in.",
+    "changePassword": "Change password",
+    "changePasswordNote": "Your current session stays valid after the change; other devices keep their own sessions until they expire.",
+    "currentPassword": "Current password",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm new password",
+    "updatePassword": "Update password",
+    "updating": "Updating...",
+    "passwordChanged": "Password updated.",
+    "passwordTooShort": "New password must be at least 8 characters.",
+    "passwordMismatch": "The two new passwords do not match.",
+    "passwordWrong": "The current password is incorrect.",
+    "passwordEmpty": "Enter your current password.",
+    "passwordFailed": "Could not update the password — please try again."
   },
   "dashboard": {
     "title": "Business Dashboard",
@@ -777,6 +809,7 @@
     "groupIntegrations": "Integrations",
     "groupAi": "AI Preferences",
     "groupData": "Data",
+    "groupAccount": "Account",
     "businessNote": "AI uses this info to generate more relevant analysis and marketing content.",
     "businessName": "Business name",
     "industry": "Industry",
@@ -1077,7 +1110,13 @@
     "haveAccount": "Already have an account?",
     "loginLink": "Sign in",
     "businessName": "Business name",
-    "industry": "Industry"
+    "industry": "Industry",
+    "entryTitle": "How do you sign in?",
+    "entryOwner": "Owner / Manager",
+    "entryOwnerHint": "Business dashboard",
+    "entryStaff": "Staff",
+    "entryStaffHint": "Staff app",
+    "entryNote": "One account and password for both. The choice only sets where you land — the server's role decides the final page."
   },
   "pwa": {
     "installTitle": "Install App",

@@ -163,6 +163,11 @@ function toTrackableOrder(item: StaffDeliveryItem): CustomerOrderSummary {
   const riderStatus = item.rider_status ?? 'unclaimed';
   return {
     id: item.id,
+    // `StaffDeliveryItem.id` 来自 `delivery_orders.id`（见 src/lib/delivery.ts 的
+    // toDeliveryItem / DELIVERY_SELECT），因此它就是追踪接口要的 delivery id。
+    // 显式写出来而不是让追踪组件回落到 `id`：两者的语义不同，靠"恰好相等"
+    // 工作的地方，将来一旦把订单 id 放进这个字段就会静默 404。
+    delivery_id: item.id,
     order_no: item.order_no,
     channel: 'delivery',
     // 只做状态名的翻译，不改语义：没有骑手就不是"配送中"。

@@ -10,6 +10,10 @@ import {
   promisedAtFrom,
   quoteDelivery,
 } from '@/lib/delivery';
+import {
+  isValidLatitude as isValidLatitudeImpl,
+  isValidLongitude as isValidLongitudeImpl,
+} from '@/lib/delivery-position';
 
 /**
  * 外卖下单（公开，顾客端 PWA）。
@@ -43,10 +47,49 @@ interface DeliveryBody {
   address_line?: unknown;
   address_note?: unknown;
   notes?: unknown;
+  /** 顾客设备定位（可空）：唯一诚实的收货坐标来源，见下方 destinationCoords 的注释。 */
+  dest_lat?: unknown;
+  dest_lng?: unknown;
 }
 
 function text(value: unknown, max: number): string {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+/**
+ * 收货坐标（可空）。**导出是为了能被真实调用测试** —— 这段判定是纯函数，
+ * 没有理由只靠读源码来验证。
+ *
+ * ## 为什么坐标只能来自顾客设备
+ *
+ * `delivery_orders.dest_lat/dest_lng` 的迁移注释写着"唯一诚实来源是顾客下单时
+ * 本人设备的定位"。**我们不做地址地理编码**：把一行文字地址猜成坐标，
+ * 猜错了 ETA 与地图会一起错，而顾客无从分辨。所以：
+ *
+ *   - 顾客授权定位 ⇒ 写入真实坐标；
+ *   - 顾客拒绝 / 设备不支持 / 字段缺失 ⇒ **不写**（NULL）；
+ *   - 只给了一个、或者给了非法值（NaN / 超范围 / 非数字）⇒ 400。
+ *
+ * 最后一条是 fail-closed：静默丢弃非法坐标会让客户端以为定位生效了，
+ * 而顾客看到的 ETA 永远是空的 —— 那种"两边都以为没问题"最费时间。
+ *
+ * @param deps 可注入的校验器，仅测试用；缺省用 `@/lib/delivery-position` 的白名单。
+ */
+export function destinationCoords(
+  raw: { dest_lat?: unknown; dest_lng?: unknown },
+  deps: {
+    isValidLatitude: (value: unknown) => boolean;
+    isValidLongitude: (value: unknown) => boolean;
+  } = { isValidLatitude: isValidLatitudeImpl, isValidLongitude: isValidLongitudeImpl },
+): { ok: true; lat: number | null; lng: number | null } | { ok: false } {
+  const hasLat = raw.dest_lat !== undefined && raw.dest_lat !== null && raw.dest_lat !== '';
+  const hasLng = raw.dest_lng !== undefined && raw.dest_lng !== null && raw.dest_lng !== '';
+  if (!hasLat && !hasLng) return { ok: true, lat: null, lng: null };
+  if (hasLat !== hasLng) return { ok: false };
+  const lat = typeof raw.dest_lat === 'number' ? raw.dest_lat : Number(raw.dest_lat);
+  const lng = typeof raw.dest_lng === 'number' ? raw.dest_lng : Number(raw.dest_lng);
+  if (!deps.isValidLatitude(lat) || !deps.isValidLongitude(lng)) return { ok: false };
+  return { ok: true, lat, lng };
 }
 
 async function notifyNewDelivery(input: {
@@ -112,6 +155,17 @@ export async function POST(request: NextRequest) {
   }
   if (addressLine.length < 4) {
     return NextResponse.json({ error: 'address_line is required' }, { status: 400 });
+  }
+
+  const coords = destinationCoords(raw);
+  if (!coords.ok) {
+    return NextResponse.json(
+      {
+        error: 'invalid_destination_coordinates',
+        detail: 'dest_lat and dest_lng must both be present and be valid coordinates, or both be omitted.',
+      },
+      { status: 400 },
+    );
   }
 
   const store = await resolvePublicStore(typeof raw.token === 'string' ? raw.token : null);
@@ -280,6 +334,9 @@ export async function POST(request: NextRequest) {
       recipient_phone: recipientPhone,
       address_line: addressLine,
       address_note: addressNote || null,
+      // 收货坐标：顾客授权定位时才有值；没有就是 NULL（ETA 与地图据此保持关闭）。
+      dest_lat: coords.lat,
+      dest_lng: coords.lng,
       // 规则快照：商家事后改配送费不应改写这一单的金额。
       fee: quote.fee,
       min_order_amount: quote.minOrderAmount,
@@ -321,6 +378,11 @@ export async function POST(request: NextRequest) {
       total,
       promised_at: promisedAt,
       delivery_id: (delivery as { id: string }).id,
+      // 顾客端追踪用的是 **delivery id**（`/api/store/deliveries/{id}/track` 按
+      // `delivery_orders.id` 查），不是 order id。这两个 id 不同，此前客户端拿
+      // order id 去查 ⇒ 每次 404，地图与 ETA 因此永远不可达。凡返回订单的地方
+      // 都要能同时拿到 delivery id，否则调用方只能猜。
+      destination_coordinates: coords.lat === null ? null : { lat: coords.lat, lng: coords.lng },
     },
     { status: 201 },
   );

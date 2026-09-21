@@ -47,7 +47,7 @@ interface OrderRow {
 const ORDER_COLUMNS = 'id, order_no, channel, status, total, created_at';
 
 /** 统一出口形态：total 从 numeric（字符串）转成数字。 */
-function toOrder(row: OrderRow, riderStatus: string | null) {
+function toOrder(row: OrderRow, deliveryId: string | null, riderStatus: string | null) {
   return {
     id: row.id,
     order_no: row.order_no,
@@ -56,6 +56,9 @@ function toOrder(row: OrderRow, riderStatus: string | null) {
     total: Number(row.total),
     created_at: row.created_at,
     rider_status: riderStatus,
+    // 追踪接口按 **delivery_orders.id** 查（不是 order id）。不给这个字段，
+    // 客户端只能拿 order id 去试 —— 那每次都 404，地图与 ETA 永远打不开。
+    delivery_id: deliveryId,
   };
 }
 
@@ -92,7 +95,7 @@ export async function GET(request: Request) {
   if (requestedId) {
     const { data: delivery, error: deliveryError } = await client
       .from('delivery_orders')
-      .select('order_id, rider_status')
+      .select('id, order_id, rider_status')
       .eq('order_id', requestedId)
       .eq('tenant_id', session.tenantId)
       .eq('business_id', session.businessId)
@@ -118,7 +121,8 @@ export async function GET(request: Request) {
     if (!order) return jsonError('order not found', 404);
 
     const riderStatus = (delivery as { rider_status: string | null }).rider_status;
-    return json({ order: toOrder(order as OrderRow, riderStatus) });
+    const deliveryId = (delivery as { id: string }).id;
+    return json({ order: toOrder(order as OrderRow, deliveryId, riderStatus) });
   }
 
   // -------------------------------------------------------------------------
@@ -126,7 +130,7 @@ export async function GET(request: Request) {
   // -------------------------------------------------------------------------
   const { data: deliveries, error: deliveriesError } = await client
     .from('delivery_orders')
-    .select('order_id, rider_status')
+    .select('id, order_id, rider_status')
     .eq('tenant_id', session.tenantId)
     .eq('business_id', session.businessId)
     .eq('recipient_phone', phone)
@@ -137,11 +141,11 @@ export async function GET(request: Request) {
     return jsonError('orders could not be loaded', 500);
   }
 
-  const riderByOrderId = new Map<string, string | null>();
-  for (const row of (deliveries ?? []) as { order_id: string; rider_status: string | null }[]) {
-    riderByOrderId.set(row.order_id, row.rider_status);
+  const deliveryByOrderId = new Map<string, { id: string; riderStatus: string | null }>();
+  for (const row of (deliveries ?? []) as { id: string; order_id: string; rider_status: string | null }[]) {
+    deliveryByOrderId.set(row.order_id, { id: row.id, riderStatus: row.rider_status });
   }
-  const orderIds = [...riderByOrderId.keys()];
+  const orderIds = [...deliveryByOrderId.keys()];
   if (orderIds.length === 0) return json({ orders: [] });
 
   const { data: orders, error: ordersError } = await client
@@ -157,7 +161,9 @@ export async function GET(request: Request) {
   }
 
   return json({
-    orders: ((orders ?? []) as OrderRow[]).map((row) =>
-      toOrder(row, riderByOrderId.get(row.id) ?? null)),
+    orders: ((orders ?? []) as OrderRow[]).map((row) => {
+      const delivery = deliveryByOrderId.get(row.id) ?? null;
+      return toOrder(row, delivery?.id ?? null, delivery?.riderStatus ?? null);
+    }),
   });
 }

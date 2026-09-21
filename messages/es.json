@@ -23,7 +23,8 @@
     },
     "collapseSidebar": "Contraer barra",
     "expandSidebar": "Expandir barra",
-    "website": "Sitio web"
+    "website": "Sitio web",
+    "team": "Equipo"
   },
   "common": {
     "save": "Guardar",
@@ -56,6 +57,37 @@
     "markAllRead": "Marcar todo leído",
     "noAlerts": "Sin alertas",
     "owner": "Propietario"
+  },
+  "account": {
+    "menuLabel": "Cuenta",
+    "roles": {
+      "owner": "Propietario",
+      "manager": "Gerente",
+      "staff": "Empleado"
+    },
+    "identity": "Sesión iniciada como",
+    "email": "Correo",
+    "role": "Rol",
+    "tenant": "ID de inquilino",
+    "business": "ID del negocio",
+    "notLinked": "Sin vincular",
+    "identityNote": "Solo lectura. El propietario cambia los roles y las tiendas en Equipo.",
+    "signOut": "Cerrar sesión",
+    "switchAccount": "Cerrar sesión y cambiar de cuenta",
+    "signOutFailed": "No se pudo cerrar la sesión; sigues conectado.",
+    "changePassword": "Cambiar contraseña",
+    "changePasswordNote": "Tu sesión actual sigue válida tras el cambio; los demás dispositivos conservan la suya hasta que caduque.",
+    "currentPassword": "Contraseña actual",
+    "newPassword": "Nueva contraseña",
+    "confirmPassword": "Confirmar nueva contraseña",
+    "updatePassword": "Actualizar contraseña",
+    "updating": "Actualizando...",
+    "passwordChanged": "Contraseña actualizada.",
+    "passwordTooShort": "La nueva contraseña debe tener al menos 8 caracteres.",
+    "passwordMismatch": "Las dos contraseñas nuevas no coinciden.",
+    "passwordWrong": "La contraseña actual es incorrecta.",
+    "passwordEmpty": "Escribe tu contraseña actual.",
+    "passwordFailed": "No se pudo actualizar la contraseña; inténtalo de nuevo."
   },
   "dashboard": {
     "title": "Panel de control",
@@ -777,6 +809,7 @@
     "groupIntegrations": "Integraciones",
     "groupAi": "Preferencias de IA",
     "groupData": "Datos",
+    "groupAccount": "Cuenta",
     "businessNote": "La IA usa esta información para generar análisis y marketing más relevantes.",
     "businessName": "Nombre del negocio",
     "industry": "Industria",
@@ -1077,7 +1110,13 @@
     "haveAccount": "¿Ya tienes cuenta?",
     "loginLink": "Iniciar sesión",
     "businessName": "Nombre del negocio",
-    "industry": "Industria"
+    "industry": "Industria",
+    "entryTitle": "¿Cómo inicias sesión?",
+    "entryOwner": "Propietario / Gerente",
+    "entryOwnerHint": "Panel de negocio",
+    "entryStaff": "Empleado",
+    "entryStaffHint": "App de empleados",
+    "entryNote": "Ambas entradas usan la misma cuenta y contraseña. La elección solo define el destino inicial; el rol del servidor decide la página final."
   },
   "pwa": {
     "installTitle": "Instalar app",

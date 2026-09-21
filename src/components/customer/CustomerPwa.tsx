@@ -26,6 +26,13 @@ import {
   Search,
   ReceiptText,
   ChefHat,
+  Settings,
+  KeyRound,
+  Download,
+  Trash2,
+  Pencil,
+  Check,
+  LogOut,
 } from 'lucide-react';
 import {
   CustomerMode,
@@ -36,13 +43,20 @@ import {
   CustomerAccount,
   CustomerAddress,
   CustomerOrderSummary,
+  DeliveryOrderRequest,
 } from '@/types';
-import { customerApi, newIdempotencyKey } from '@/lib/api';
+import {
+  customerApi,
+  newIdempotencyKey,
+  type CustomerAccountSettings,
+  type CustomerAddressPatch,
+} from '@/lib/api';
 import { fmtCurrency, fmtDateTime } from '@/lib/format';
 import { getTranslations } from '@/lib/i18n';
 import { fadeClass, slideUpClass, usePresence } from '@/components/pwa/presence';
 import { TierInstallPrompt } from '@/components/pwa/tier-install-prompt';
 import { DeliveryTrackerMap } from '@/components/delivery/delivery-tracker';
+import { getDeviceCoordinates } from '@/lib/device-location';
 import { DishDetailModal } from './DishDetailModal';
 import { FlyingDishOverlay, FlyingDishParticle } from './FlyingDishOverlay';
 
@@ -67,6 +81,249 @@ function readWebOrderToken(config: SiteConfigResponse | null): string | null {
   const value = (config as SiteConfigResponse & { orderToken?: unknown }).orderToken;
   return typeof value === 'string' && value ? value : null;
 }
+
+/**
+ * 服务端 `/api/customer/me` 返回 `locale` 与 `marketing_opt_in`，但已 vendor 的
+ * `CustomerAccount`（src/types/index.ts，本次不允许改）只声明了
+ * id / email / display_name / phone。这里按**字段存在性**收窄，不编默认值：
+ * 读不到语言就是空串（界面按当前语言显示，那只是显示默认，保存时写的是用户选的），
+ * 订阅开关读不到就是 false —— 同意状态一律 fail-closed，
+ * 把没同意过的人显示成已同意是合规事故，不是体验问题。
+ */
+function toAccountSettings(account: CustomerAccount | null): CustomerAccountSettings | null {
+  if (!account) return null;
+  const extra = account as CustomerAccount & { locale?: unknown; marketing_opt_in?: unknown };
+  return {
+    ...account,
+    locale: typeof extra.locale === 'string' ? extra.locale : '',
+    marketing_opt_in: extra.marketing_opt_in === true,
+  };
+}
+
+/**
+ * 账号面板的文案。
+ *
+ * ## 为什么不写进 `src/lib/i18n.ts`
+ *
+ * 那个模块是本次任务的**禁改文件**（vendored i18n），因此没有键可用。
+ * 已存在的键一律复用（见下），剩下的在这里按语言给出短句 ——
+ * 而不是散落在 JSX 里写死中文：写死中文会让"三语同步"这条项目硬约束在
+ * 新增面上直接失效（面板只在中文下可读）。
+ *
+ * 复用的既有键：
+ *   · `delivery.recipient_name` / `recipient_phone` / `address_line` / `address_note`
+ *     —— 地址编辑表单的四个字段标签，语义与结账页完全一致；
+ *   · `delivery.saved_addresses` —— 地址列表标题；
+ *   · `staff.export_my_data` —— "下载我的个人数据 (JSON)"，与员工端同一个动作。
+ * 其余键（身份、改密码、偏好、注销、导出结果）在 i18n.ts 里**不存在**，
+ * 见交付报告里的逐条清单。
+ */
+interface AccountCopy {
+  title: string;
+  identity: string;
+  email_label: string;
+  display_name_label: string;
+  phone_label: string;
+  save: string;
+  saved: string;
+  save_failed: string;
+  load_failed: string;
+  password: string;
+  password_current: string;
+  password_new: string;
+  password_confirm: string;
+  password_mismatch: string;
+  password_submit: string;
+  password_done: string;
+  password_failed: string;
+  addresses: string;
+  default_badge: string;
+  set_default: string;
+  edit: string;
+  delete: string;
+  cancel: string;
+  address_delete_confirm: string;
+  address_saved: string;
+  address_save_failed: string;
+  address_deleted: string;
+  address_delete_failed: string;
+  address_default_done: string;
+  address_default_failed: string;
+  preferences: string;
+  language_label: string;
+  marketing_label: string;
+  marketing_hint: string;
+  pref_saved: string;
+  pref_save_failed: string;
+  export_hint: string;
+  export_done: string;
+  export_failed: string;
+  close_account: string;
+  close_arm: string;
+  close_warning: string;
+  close_confirm: string;
+  close_done: string;
+  close_failed: string;
+  signout: string;
+  signout_failed: string;
+}
+
+const ACCOUNT_COPY: Record<Locale, AccountCopy> = {
+  en: {
+    title: 'My account',
+    identity: 'Identity',
+    email_label: 'Email (cannot be changed)',
+    display_name_label: 'Display name',
+    phone_label: 'Phone',
+    save: 'Save',
+    saved: 'Profile saved',
+    save_failed: 'Could not save your profile',
+    load_failed: 'Could not load your account data',
+    password: 'Change password',
+    password_current: 'Current password',
+    password_new: 'New password (at least 8 characters)',
+    password_confirm: 'Confirm new password',
+    password_mismatch: 'The two new passwords do not match',
+    password_submit: 'Update password',
+    password_done: 'Password updated. Other devices were signed out',
+    password_failed: 'Could not change the password',
+    addresses: 'Saved addresses',
+    default_badge: 'Default',
+    set_default: 'Set as default',
+    edit: 'Edit',
+    delete: 'Delete',
+    cancel: 'Cancel',
+    address_delete_confirm: 'Delete this address?',
+    address_saved: 'Address saved',
+    address_save_failed: 'Could not save the address',
+    address_deleted: 'Address deleted',
+    address_delete_failed: 'Could not delete the address',
+    address_default_done: 'Default address updated',
+    address_default_failed: 'Could not set the default address',
+    preferences: 'Preferences',
+    language_label: 'Language',
+    marketing_label: 'Email me offers and new menu news',
+    marketing_hint:
+      'When this is on, this store may email you offers and new-menu news. You can turn it off here at any time.',
+    pref_saved: 'Preferences saved',
+    pref_save_failed: 'Could not save your preferences',
+    export_hint:
+      'Downloads your profile, saved addresses and orders as a JSON file. Favourites and session credentials are not included.',
+    export_done: 'Your export file is downloading',
+    export_failed: 'Could not export your data',
+    close_account: 'Close account',
+    close_arm: 'I want to close my account',
+    close_warning:
+      'Closing your account disables it immediately: you can no longer sign in and every device is signed out. Records that already exist (such as orders) are not deleted right away — they are kept for a retention period and removed later by an operator. You cannot undo this yourself.',
+    close_confirm: 'Confirm closure',
+    close_done: 'Your account is closed and all devices were signed out',
+    close_failed: 'Could not close the account',
+    signout: 'Sign out',
+    signout_failed: 'Could not sign out',
+  },
+  zh: {
+    title: '我的账号',
+    identity: '身份资料',
+    email_label: '邮箱（不可修改）',
+    display_name_label: '昵称',
+    phone_label: '手机号',
+    save: '保存',
+    saved: '资料已保存',
+    save_failed: '资料保存失败',
+    load_failed: '账号数据加载失败',
+    password: '修改密码',
+    password_current: '当前密码',
+    password_new: '新密码（至少 8 位）',
+    password_confirm: '确认新密码',
+    password_mismatch: '两次输入的新密码不一致',
+    password_submit: '更新密码',
+    password_done: '密码已更新，其它设备已登出',
+    password_failed: '密码修改失败',
+    addresses: '常用地址',
+    default_badge: '默认',
+    set_default: '设为默认',
+    edit: '编辑',
+    delete: '删除',
+    cancel: '取消',
+    address_delete_confirm: '删除这条地址？',
+    address_saved: '地址已保存',
+    address_save_failed: '地址保存失败',
+    address_deleted: '地址已删除',
+    address_delete_failed: '地址删除失败',
+    address_default_done: '默认地址已更新',
+    address_default_failed: '设置默认地址失败',
+    preferences: '偏好设置',
+    language_label: '界面语言',
+    marketing_label: '接收优惠与新品邮件',
+    marketing_hint: '开启后本店可能向你发送优惠与新品邮件；随时可以在这里关闭。',
+    pref_saved: '偏好已保存',
+    pref_save_failed: '偏好保存失败',
+    export_hint: '下载账号资料、常用地址与订单的 JSON 文件；不含收藏与会话凭据。',
+    export_done: '导出文件已开始下载',
+    export_failed: '数据导出失败',
+    close_account: '注销账号',
+    close_arm: '我要注销账号',
+    close_warning:
+      '注销后账号立即停用：无法再登录，所有设备都会被登出。已产生的记录（如订单）不会立刻删除——它们会保留一段法定期限，之后由运营人工处理。此操作无法自行撤销。',
+    close_confirm: '确认注销',
+    close_done: '账号已注销，所有设备均已登出',
+    close_failed: '注销失败',
+    signout: '退出登录',
+    signout_failed: '退出登录失败',
+  },
+  es: {
+    title: 'Mi cuenta',
+    identity: 'Identidad',
+    email_label: 'Correo (no se puede cambiar)',
+    display_name_label: 'Nombre visible',
+    phone_label: 'Teléfono',
+    save: 'Guardar',
+    saved: 'Perfil guardado',
+    save_failed: 'No se pudo guardar el perfil',
+    load_failed: 'No se pudieron cargar los datos de la cuenta',
+    password: 'Cambiar contraseña',
+    password_current: 'Contraseña actual',
+    password_new: 'Nueva contraseña (mínimo 8 caracteres)',
+    password_confirm: 'Confirmar la nueva contraseña',
+    password_mismatch: 'Las dos contraseñas nuevas no coinciden',
+    password_submit: 'Actualizar contraseña',
+    password_done: 'Contraseña actualizada. Se cerró la sesión en otros dispositivos',
+    password_failed: 'No se pudo cambiar la contraseña',
+    addresses: 'Direcciones guardadas',
+    default_badge: 'Predeterminada',
+    set_default: 'Usar como predeterminada',
+    edit: 'Editar',
+    delete: 'Eliminar',
+    cancel: 'Cancelar',
+    address_delete_confirm: '¿Eliminar esta dirección?',
+    address_saved: 'Dirección guardada',
+    address_save_failed: 'No se pudo guardar la dirección',
+    address_deleted: 'Dirección eliminada',
+    address_delete_failed: 'No se pudo eliminar la dirección',
+    address_default_done: 'Dirección predeterminada actualizada',
+    address_default_failed: 'No se pudo establecer la dirección predeterminada',
+    preferences: 'Preferencias',
+    language_label: 'Idioma',
+    marketing_label: 'Recibir ofertas y novedades por correo',
+    marketing_hint:
+      'Si está activado, esta tienda puede enviarte ofertas y novedades del menú por correo. Puedes desactivarlo aquí cuando quieras.',
+    pref_saved: 'Preferencias guardadas',
+    pref_save_failed: 'No se pudieron guardar las preferencias',
+    export_hint:
+      'Descarga tu perfil, direcciones guardadas y pedidos en un archivo JSON. No incluye favoritos ni credenciales de sesión.',
+    export_done: 'La descarga del archivo ha comenzado',
+    export_failed: 'No se pudieron exportar los datos',
+    close_account: 'Cerrar cuenta',
+    close_arm: 'Quiero cerrar mi cuenta',
+    close_warning:
+      'Al cerrar la cuenta se desactiva de inmediato: ya no podrás iniciar sesión y se cerrará la sesión en todos los dispositivos. Los registros ya existentes (como los pedidos) no se eliminan de inmediato: se conservan durante un plazo y luego los elimina un operador. No puedes deshacerlo tú mismo.',
+    close_confirm: 'Confirmar cierre',
+    close_done: 'Tu cuenta está cerrada y se cerró la sesión en todos los dispositivos',
+    close_failed: 'No se pudo cerrar la cuenta',
+    signout: 'Cerrar sesión',
+    signout_failed: 'No se pudo cerrar la sesión',
+  },
+};
 
 type DeliveryDict = ReturnType<typeof getTranslations>['delivery'];
 
@@ -112,6 +369,8 @@ export const CustomerPwa: React.FC<CustomerPwaProps> = ({
   onModeChange,
 }) => {
   const t = getTranslations(locale);
+  /** 账号面板的文案（见 ACCOUNT_COPY 的说明：i18n.ts 是禁改文件）。 */
+  const copy = ACCOUNT_COPY[locale];
 
   // Mode state synced with URL/prop
   const [mode, setMode] = useState<CustomerMode>(initialMode);
@@ -184,6 +443,26 @@ export const CustomerPwa: React.FC<CustomerPwaProps> = ({
   const [savedAddresses, setSavedAddresses] = useState<CustomerAddress[]>([]);
   const [selectedTrackingOrder, setSelectedTrackingOrder] = useState<CustomerOrderSummary | null>(null);
   const [showTrackingModal, setShowTrackingModal] = useState<boolean>(false);
+
+  // 账号面板（顾客账号信息管理：资料 / 密码 / 地址 / 偏好 / 导出 / 注销）。
+  // 与登录弹窗、订单弹窗并列，不合并 —— 三者的读取时机与失败语义都不一样。
+  const [showAccountModal, setShowAccountModal] = useState(false);
+  const [accountBusy, setAccountBusy] = useState(false);
+  // 每一次写入的失败都必须落到这两个状态之一（禁止 `catch {}` 静默吞掉）
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [accountNotice, setAccountNotice] = useState<string | null>(null);
+  const [profileName, setProfileName] = useState('');
+  const [profilePhone, setProfilePhone] = useState('');
+  const [pwCurrent, setPwCurrent] = useState('');
+  const [pwNew, setPwNew] = useState('');
+  const [pwConfirm, setPwConfirm] = useState('');
+  const [prefLocale, setPrefLocale] = useState<string>('');
+  const [prefMarketing, setPrefMarketing] = useState(false);
+  // 地址行内编辑：null = 没有行在编辑状态
+  const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
+  const [addressDraft, setAddressDraft] = useState<CustomerAddressPatch>({});
+  // 注销必须两步：先"我要注销"（展开后果说明），再"确认注销"（真正发请求）
+  const [closeArmed, setCloseArmed] = useState(false);
 
   // Feedback states
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -437,7 +716,15 @@ export const CustomerPwa: React.FC<CustomerPwaProps> = ({
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
-      const payload = {
+      /**
+       * 收货坐标：下单时向顾客设备要一次定位（浏览器会弹授权）。
+       *
+       * 拿不到就**不传**这两个字段 —— 服务端写 NULL，追踪页保持
+       * "尚未获取目的地坐标"，ETA 不显示。绝不在这里编一个坐标，
+       * 也绝不用店铺位置代替（那会让顾客看到一条"骑手已经到了"的假 ETA）。
+       */
+      const coords = await getDeviceCoordinates();
+      const payload: DeliveryOrderRequest = {
         // 外卖用网页点单 token（WEB 桌码），不是扫码进来的桌码。
         token: orderToken,
         items: Object.entries(cart).map(([product_id, qty]) => ({ product_id, qty })),
@@ -449,6 +736,7 @@ export const CustomerPwa: React.FC<CustomerPwaProps> = ({
         tip: computedTip,
         tip_rate: isCustomTip ? undefined : tipRate,
         idempotency_key: newIdempotencyKey('delivery'),
+        ...(coords ? { dest_lat: coords.lat, dest_lng: coords.lng } : {}),
       };
       const res = await customerApi.createDeliveryOrder(payload);
       const freshOrders = await customerApi.getCustomerOrders();
@@ -537,6 +825,263 @@ export const CustomerPwa: React.FC<CustomerPwaProps> = ({
     const orders = await customerApi.getCustomerOrders();
     setCustomerOrders(orders);
     setShowOrdersModal(true);
+  };
+
+  // ---------------------------------------------------------------------------
+  // 账号面板（顾客账号信息管理）
+  //
+  // 这一段里每一次写入都有 try/catch，并且**失败一定落到 accountError**：
+  // 面板上的"保存"如果静默失败，用户会以为改成功了，下次登录才发现没生效 ——
+  // 那是最难排查的一类缺陷。所以这里没有一处 `catch {}`。
+  // ---------------------------------------------------------------------------
+
+  /** 重新拉地址列表。返回是否成功，调用方据此决定要不要同时报"已保存"。 */
+  const refreshSavedAddresses = async (): Promise<boolean> => {
+    try {
+      const list = await customerApi.getCustomerAddresses();
+      setSavedAddresses(list);
+      return true;
+    } catch (err: unknown) {
+      setAccountError(describeError(err, copy.load_failed));
+      return false;
+    }
+  };
+
+  const openAccountPanel = () => {
+    if (!customer) {
+      setShowAuthModal(true);
+      return;
+    }
+    // 每次打开都重置表单：密码框绝不能残留上一次的输入
+    setProfileName(customer.display_name ?? '');
+    setProfilePhone(customer.phone ?? '');
+    setPwCurrent('');
+    setPwNew('');
+    setPwConfirm('');
+    setAccountError(null);
+    setAccountNotice(null);
+    setEditingAddressId(null);
+    setCloseArmed(false);
+    setShowAccountModal(true);
+    // 地址簿可能在结账流程里变过（勾了"保存至我的常用地址"），打开时重取一次。
+    // 失败会被 refreshSavedAddresses 写进 accountError（不吞异常）。
+    refreshSavedAddresses();
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAccountBusy(true);
+    setAccountError(null);
+    setAccountNotice(null);
+    try {
+      const updated = await customerApi.updateCustomerAccount({
+        display_name: profileName,
+        phone: profilePhone,
+      });
+      // 用**服务端的返回**回填（它会 trim 并把空串落成 null），
+      // 而不是用本地输入 —— 否则界面上显示的可能是库里没存的值。
+      setCustomer(updated);
+      setProfileName(updated.display_name ?? '');
+      setProfilePhone(updated.phone ?? '');
+      setPrefLocale(updated.locale || prefLocale);
+      setPrefMarketing(updated.marketing_opt_in === true);
+      setAccountNotice(copy.saved);
+    } catch (err: unknown) {
+      setAccountError(describeError(err, copy.save_failed));
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAccountError(null);
+    setAccountNotice(null);
+    if (pwNew !== pwConfirm) {
+      // 客户端先拦一次只是省一趟往返；服务端不接收 confirm 字段，
+      // 真正的校验（长度、旧密码）都在服务端。
+      setAccountError(copy.password_mismatch);
+      return;
+    }
+    setAccountBusy(true);
+    try {
+      const result = await customerApi.changeCustomerPassword(pwCurrent, pwNew);
+      setPwCurrent('');
+      setPwNew('');
+      setPwConfirm('');
+      // 括号里的数字是服务端撤销掉的**其它会话**条数（本会话保留），
+      // 让用户知道"别的设备确实被登出了"，而不是只能相信这句话。
+      setAccountNotice(`${copy.password_done} (${result.revoked_sessions})`);
+    } catch (err: unknown) {
+      // 401 的正文由服务端给（与登录失败逐字相同），这里不翻译也不改写它 ——
+      // 前端一旦按 code 分支显示不同措辞，就等于把服务端刻意抹平的差异又泄露出来。
+      setAccountError(describeError(err, copy.password_failed));
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const handleSavePreferences = async () => {
+    setAccountBusy(true);
+    setAccountError(null);
+    setAccountNotice(null);
+    try {
+      const updated = await customerApi.updateCustomerAccount({
+        // 库里没读到语言时控件显示的是当前界面语言，用户不动它保存的就是它 ——
+        // 这与"页面显示什么就保存什么"一致，不存在隐藏的默认值。
+        locale: prefLocale || locale,
+        marketing_opt_in: prefMarketing,
+      });
+      setCustomer(updated);
+      setPrefLocale(updated.locale || prefLocale);
+      setPrefMarketing(updated.marketing_opt_in === true);
+      setAccountNotice(copy.pref_saved);
+    } catch (err: unknown) {
+      setAccountError(describeError(err, copy.pref_save_failed));
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const handleExportData = async () => {
+    setAccountBusy(true);
+    setAccountError(null);
+    setAccountNotice(null);
+    try {
+      const data = await customerApi.exportCustomerData();
+      // 服务端已经带了 attachment 头，但 fetch 读到的是 JSON 正文，落盘必须由这里触发。
+      // 用到 document / URL.createObjectURL —— 只可能在事件回调里执行，
+      // 不参与服务端渲染（Hydration 安全，AGENTS.md 的禁令针对渲染期）。
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `roveframe-customer-export-${data.account.id}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setAccountNotice(copy.export_done);
+    } catch (err: unknown) {
+      setAccountError(describeError(err, copy.export_failed));
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const handleSetDefaultAddress = async (addressId: string) => {
+    setAccountBusy(true);
+    setAccountError(null);
+    setAccountNotice(null);
+    try {
+      await customerApi.updateCustomerAddress(addressId, { is_default: true });
+      if (await refreshSavedAddresses()) setAccountNotice(copy.address_default_done);
+    } catch (err: unknown) {
+      setAccountError(describeError(err, copy.address_default_failed));
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const handleDeleteAddress = async (addressId: string) => {
+    setAccountBusy(true);
+    setAccountError(null);
+    setAccountNotice(null);
+    try {
+      await customerApi.deleteCustomerAddress(addressId);
+      // 删掉默认地址后服务端会把另一条补成默认（见 addresses 路由），
+      // 因此必须重取列表 —— 本地删一行会让界面与库里不一致。
+      const refreshed = await refreshSavedAddresses();
+      if (editingAddressId === addressId) setEditingAddressId(null);
+      if (refreshed) setAccountNotice(copy.address_deleted);
+    } catch (err: unknown) {
+      setAccountError(describeError(err, copy.address_delete_failed));
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const startEditAddress = (addr: CustomerAddress) => {
+    setEditingAddressId(addr.id);
+    setAddressDraft({
+      label: addr.label ?? '',
+      recipient_name: addr.recipient_name,
+      recipient_phone: addr.recipient_phone,
+      address_line: addr.address_line,
+      address_note: addr.address_note ?? '',
+    });
+    setAccountError(null);
+    setAccountNotice(null);
+  };
+
+  const handleSaveAddressEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAddressId) return;
+    setAccountBusy(true);
+    setAccountError(null);
+    setAccountNotice(null);
+    try {
+      await customerApi.updateCustomerAddress(editingAddressId, addressDraft);
+      setEditingAddressId(null);
+      if (await refreshSavedAddresses()) setAccountNotice(copy.address_saved);
+    } catch (err: unknown) {
+      setAccountError(describeError(err, copy.address_save_failed));
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  /**
+   * 注销：**只能由"确认注销"那一步调用**（面板里先展开后果说明，再出现这个按钮）。
+   * 服务端还额外要求请求体 `{ confirm: true }`（缺它 400），因此这里不存在
+   * "一次误点就把账号注销掉"的路径。
+   */
+  const handleCloseAccount = async () => {
+    setAccountBusy(true);
+    setAccountError(null);
+    setAccountNotice(null);
+    try {
+      await customerApi.closeCustomerAccount();
+      // 服务端已撤销全部会话并清掉 cookie。本地状态一并清掉 ——
+      // 否则页面上还留着一个已注销的账号，点任何按钮都只会 401。
+      setCustomer(null);
+      setSavedAddresses([]);
+      setCustomerOrders([]);
+      setShowAccountModal(false);
+      setCloseArmed(false);
+      setSubmissionSuccess(copy.close_done);
+    } catch (err: unknown) {
+      setAccountError(describeError(err, copy.close_failed));
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  /**
+   * 退出登录。订单弹窗与账号面板共用这一个实现 ——
+   * 从前订单弹窗那一处是 `await logout(); setCustomer(null);`（没有 catch），
+   * 失败会变成未处理的 Promise 拒绝，界面看起来"点了没反应"。
+   */
+  const handleSignOut = async () => {
+    setAccountBusy(true);
+    setAccountError(null);
+    setAccountNotice(null);
+    try {
+      await customerApi.customerLogout();
+      setCustomer(null);
+      setSavedAddresses([]);
+      setCustomerOrders([]);
+      setShowAccountModal(false);
+      setShowOrdersModal(false);
+    } catch (err: unknown) {
+      const message = describeError(err, copy.signout_failed);
+      // 两个可见面都写上：面板里显示 accountError，页面顶部显示 errorMessage
+      // （登录状态没能撤销是安全问题，不能只在一个弹窗里说）。
+      setAccountError(message);
+      setErrorMessage(message);
+    } finally {
+      setAccountBusy(false);
+    }
   };
 
   const categories = menuData ? ['All', ...menuData.categories] : ['All'];
@@ -1801,6 +2346,10 @@ export const CustomerPwa: React.FC<CustomerPwaProps> = ({
               onClose={() => setShowTrackingModal(false)}
               currency={currency}
               locale={locale}
+              // 追踪接口按 token 收敛到 (租户, 门店)：传的正是下单用的那一个
+              // （堂食=二维码 token，外卖=站点网页点单 token）。为空时组件不发请求，
+              // 只显示状态时间线 —— 不会拿一个空 token 去换 404。
+              trackingToken={orderToken || undefined}
             />
           </div>
         </div>

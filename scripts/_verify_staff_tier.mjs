@@ -12,8 +12,9 @@
  *
  * ## 关键点
  *
- * 会话 cookie 是真登录拿到的（`roveframe_session`），不是伪造的 JWT ——
- * 伪造的 JWT 只能证明处理器逻辑，证明不了登录链路。
+ * 会话 cookie 是真登录拿到的（`rf_session`，见 src/lib/auth.ts 的
+ * SESSION_COOKIE_NAME），不是伪造的 JWT —— 伪造的 JWT 只能证明处理器逻辑，
+ * 证明不了登录链路。
  *
  * 用法：
  *   node scripts/_verify_staff_tier.mjs <baseUrl> <email> <password>
@@ -24,6 +25,23 @@ const PASSWORD = process.argv[4] ?? 'Staff-demo-2026';
 
 const results = [];
 const record = (label, pass, detail) => results.push({ label, pass, detail });
+
+/**
+ * 本脚本请求使用的来源 IP（`X-Forwarded-For`）。
+ *
+ * 为什么需要它：登录限流按 `auth:login:ip:<getClientIp()>` 计数，而 `getClientIp`
+ * （src/lib/rate-limit.ts:176）先看 `x-forwarded-for`。本机直连时没有代理设置这个头，
+ * 于是**所有**直连调用方共用同一个 IP 桶 —— 反复跑本脚本会把**正确密码**的登录
+ * 一起锁进 429（实测：本脚本第一版就是这么失败的，表现为"登录 200 且拿到会话 cookie"
+ * 这一条变红，看起来像登录坏了，实际是限流）。
+ *
+ * 与 `_verify_delivery_chain.mjs` 用同一个办法：每次运行取一个独立的、
+ * 保留给文档用的测试网段地址。要看"真实来源 IP"下的行为就设
+ * `STAFF_VERIFY_XFF=direct`（不发这个头，落回 `unknown` 桶）。
+ */
+const XFF = process.env.STAFF_VERIFY_XFF === 'direct'
+  ? ''
+  : (process.env.STAFF_VERIFY_XFF || `198.51.100.${Math.floor(Math.random() * 200) + 1}`);
 
 /** 从 Set-Cookie 里取会话 cookie，后续请求带上 —— 等价于浏览器的 cookie jar。 */
 let cookie = '';
@@ -37,6 +55,7 @@ function captureCookie(response) {
 
 async function call(path, init = {}) {
   const headers = { Accept: 'application/json', ...(init.headers ?? {}) };
+  if (XFF) headers['X-Forwarded-For'] = XFF;
   if (cookie) headers.Cookie = cookie;
   const response = await fetch(`${BASE}${path}`, { redirect: 'manual', ...init, headers });
   captureCookie(response);

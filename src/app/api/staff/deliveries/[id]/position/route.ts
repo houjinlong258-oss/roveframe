@@ -8,6 +8,7 @@ import {
   isValidLongitude,
   recordDeliveryPosition,
 } from '@/lib/delivery-position';
+import { requireStaffFeature } from '@/lib/staff-access';
 
 /**
  * 骑手设备上报一次位置（员工端在配送中主动调用）。
@@ -37,12 +38,21 @@ import {
  * 409 而不是 403：员工端在"这不是你的单"与"这单已结束"两种情况下要做的事完全
  * 相同（停止上报 + 刷新），且两者都只是"此刻不该再写位置"。具体的细分原因写进
  * 服务端日志，供排查用。
+ *
+ * ## 商家开关（`delivery`）让这里多一种 403
+ *
+ * 老板关掉外卖之后，正在配送中的班次可能还在继续上报。此时返回
+ * 403 + `feature_disabled`（不是 409 `not_active`）：409 会让员工端以为
+ * "单子状态变了，刷新就好"，于是继续重试；403 才是"这家店不做外卖了，停下"。
  */
 async function positionHandler(
   request: NextRequest,
   routeContext: { params: Promise<{ id: string }> },
 ) {
   const context = requireBusinessContext(await getTenantContext(request));
+
+  const gate = await requireStaffFeature(context.tenantId, context.businessId, 'delivery');
+  if (gate) return gate;
 
   const resolved = await resolveStaffForUser(context.tenantId, context.businessId, context.userId);
   if (!resolved.ok) {

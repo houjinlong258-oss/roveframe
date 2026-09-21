@@ -3,6 +3,7 @@ import { getTenantContext, requireBusinessContext } from '@/lib/tenant';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
 import { resolveStaffForUser } from '@/lib/workforce';
 import { advanceDeliveryStatus, RIDER_STATUSES, type RiderStatus } from '@/lib/delivery';
+import { requireStaffFeature } from '@/lib/staff-access';
 
 /**
  * 骑手推进自己那一单：已取餐 / 已送达。
@@ -17,12 +18,21 @@ import { advanceDeliveryStatus, RIDER_STATUSES, type RiderStatus } from '@/lib/d
  * （`rider_staff_id = 会话解析出的 staff id`），**不看客户端传的任何身份字段**。
  * 中央守卫里的 `delivery:claim` 只回答"允许接单"，不回答"这一单归谁" ——
  * 权限矩阵与所有权是两回事，混在一起就会写出"任何员工能推进任何单"。
+ *
+ * ## 还有一层：商家开关（`delivery`）
+ *
+ * 不做外卖的店由老板关掉这个面（src/lib/staff-access.ts），推进状态一律
+ * 403 + `feature_disabled`。它与 RBAC 是两条轴：RBAC 说"这个角色能不能送外卖"，
+ * 开关说"这家店做不做外卖"。
  */
 async function statusHandler(
   request: NextRequest,
   routeContext: { params: Promise<{ id: string }> },
 ) {
   const context = requireBusinessContext(await getTenantContext(request));
+
+  const gate = await requireStaffFeature(context.tenantId, context.businessId, 'delivery');
+  if (gate) return gate;
 
   const resolved = await resolveStaffForUser(context.tenantId, context.businessId, context.userId);
   if (!resolved.ok) {

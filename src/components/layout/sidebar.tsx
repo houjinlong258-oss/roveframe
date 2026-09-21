@@ -5,7 +5,7 @@ import { Link, usePathname } from '@/i18n/navigation';
 import {
   LayoutDashboard, Bot, Brain, Star, Users, Megaphone, Mail, Database,
   CalendarDays, Settings, X, ShieldCheck, GitPullRequest, ScrollText, FolderOpen,
-  PanelLeftClose, PanelLeftOpen, Globe,
+  PanelLeftClose, PanelLeftOpen, Globe, HeartHandshake,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { RoveFrameLogo } from '@/components/layout/brand-logo';
@@ -31,6 +31,15 @@ const NAV_GROUPS = [
       { href: '/emails', key: 'emails', icon: Mail },
       { href: '/business', key: 'business', icon: Database },
       { href: '/reservations', key: 'reservations', icon: CalendarDays },
+      // 老板端「团队 / 考勤 / 关怀」。
+      //
+      // 这一页早就在（`src/app/[locale]/team/page.tsx`），只是**没有任何入口**：
+      // 侧栏不列它，其它页面也不链接它，等于只有知道 URL 的人才能用。
+      // 放进 operations 而不是新开一组：对店主来说它和「经营数据 / 预约」是同一层
+      // 日常事务，不是治理动作（治理那一组是审批与审计）。
+      // 图标用 HeartHandshake 而不是 Users：Users 已经是「客户智能」，
+      // 同一个图标出现在两个入口上会让人以为是同一个页面。
+      { href: '/team', key: 'team', icon: HeartHandshake },
       // Phase 17：商户官网（AI 起草 → 预览 → 绑定域名 → 发布）
       { href: '/website', key: 'website', icon: Globe },
     ],

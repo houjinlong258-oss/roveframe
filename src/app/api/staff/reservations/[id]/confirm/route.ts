@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { staffRequestContext } from '@/lib/workforce';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
+import { requireStaffFeature } from '@/lib/staff-access';
 
 /**
  * 员工端确认/推进一张预约（Phase 18 / P18-x）。
@@ -21,6 +22,12 @@ import { protectBusinessMutation } from '@/lib/mutation-guard';
  * 更新语句同时带 id + tenant_id + business_id，并把 from 状态写进 WHERE：
  * 影响 0 行有两种含义，通过回读区分 404（不存在/不属于本店）与 409（状态冲突）。
  * 客户端传的 id 只能指向**本店**的行。
+ *
+ * ## 商家开关（`reservations`）
+ *
+ * 老板关掉"员工端确认预订"之后，这里返回 403 + `feature_disabled` —— 与
+ * 409 `invalid_transition` 刻意区分：后者是"这条预订状态变了，刷新"，前者是
+ * "这家店不开这个功能，别再点了"。
  */
 
 const TARGETS = ['confirmed', 'arrived', 'cancelled'] as const;
@@ -46,6 +53,9 @@ async function confirmHandler(
   const resolved = await staffRequestContext(request);
   if (!resolved.ok) return resolved.response;
   const { tenantId, businessId } = resolved.ctx;
+
+  const gate = await requireStaffFeature(tenantId, businessId, 'reservations');
+  if (gate) return gate;
 
   const { id } = await routeContext.params;
   const reservationId = typeof id === 'string' ? id.trim() : '';

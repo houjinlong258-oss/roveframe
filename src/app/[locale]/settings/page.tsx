@@ -7,15 +7,17 @@ import {
   Store, Languages, KeyRound, Inbox, Blocks, SlidersHorizontal, Database, MessageCircle,
   X, Zap, Plus, Mail, Server, ShieldCheck, Factory, Square, ShoppingBag,
   CreditCard, Wallet, Plug, Check, Minus, RefreshCw, Trash2, TriangleAlert, CircleCheck, CircleX,
-  Send, Palette, Sun, Moon, Monitor,
+  Send, Palette, Sun, Moon, Monitor, UserCog, LogOut,
 } from 'lucide-react';
 import { fmtDateTime } from '@/lib/format';
 import { saveJson } from '@/lib/fetch-utils';
 import { CHANNEL_PRESETS, type ChannelKey } from '@/lib/channels-presets';
 import { SMTP_PRESETS } from '@/lib/email/smtp-presets';
 import { useTheme, type ThemeMode } from '@/components/theme/theme-provider';
+import { useSession } from '@/hooks/use-session';
+import { MapConfigPanel } from '@/components/settings/map-config-panel';
 
-type Group = 'business' | 'locale' | 'appearance' | 'models' | 'mailbox' | 'integrations' | 'channels' | 'ai' | 'data';
+type Group = 'business' | 'locale' | 'appearance' | 'models' | 'mailbox' | 'integrations' | 'channels' | 'ai' | 'data' | 'account';
 
 interface ProviderConnection {
   maskedKey: string;
@@ -161,9 +163,14 @@ function StatusBadge({ connected, connectedText, disconnectedText }: { connected
 export default function SettingsPage() {
   const t = useTranslations('settings');
   const tc = useTranslations('common');
+  // 账号分组的文案（退出登录 / 改密码）与顶栏账号菜单共用一套键，
+  // 避免同一个动作在两处出现两种措辞。
+  const ta = useTranslations('account');
   const locale = useLocale();
   const router = useRouter();
   const pathname = usePathname();
+  // 身份来自 useSession 内部的 `/api/auth/me`（与顶栏、AppShell 守卫同一个接口）
+  const { session } = useSession();
 
   const [group, setGroup] = useState<Group>('models');
   const { mode: themeMode, resolved: themeResolved, setMode: setThemeMode } = useTheme();
@@ -207,6 +214,13 @@ export default function SettingsPage() {
   const [wipeModal, setWipeModal] = useState(false);
   const [wiping, setWiping] = useState(false);
   const [wipeError, setWipeError] = useState('');
+  // 账号：改密码 + 退出登录
+  const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' });
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwError, setPwError] = useState('');
+  const [pwDone, setPwDone] = useState('');
+  const [signOutError, setSignOutError] = useState('');
+  const [signingOut, setSigningOut] = useState(false);
 
   const flashSaved = () => {
     setSavedTip(t('saved'));
@@ -559,6 +573,84 @@ export default function SettingsPage() {
   const erp = erpConfigured && erpConfigured.syncable ? erpConfigured : undefined;
   const getInt = (p: string) => integrations.find((i) => i.provider === p && isConfigured(i));
 
+  /**
+   * 修改密码。
+   *
+   * 走 `POST /api/auth/change-password`：服务端先用当前密码向 GoTrue 换取一次登录
+   * （证明改密码的人知道旧密码），再用 service_role 的 admin API 写入新密码。
+   * 客户端只提交两个字符串，**不能**指定要改哪个 user —— 目标永远是会话本人，
+   * 否则这个接口就成了"任意账号改密"。
+   *
+   * 失败按 code 分类显示：401 且 code=invalid_current_password 是"旧密码错"，
+   * 其余（限流、上游失败）显示服务端原文，不笼统说"失败了"。
+   */
+  const changePassword = async () => {
+    setPwError('');
+    setPwDone('');
+    if (!pwForm.current) {
+      setPwError(ta('passwordEmpty'));
+      return;
+    }
+    if (pwForm.next.length < 8) {
+      setPwError(ta('passwordTooShort'));
+      return;
+    }
+    if (pwForm.next !== pwForm.confirm) {
+      setPwError(ta('passwordMismatch'));
+      return;
+    }
+    setPwSaving(true);
+    try {
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_password: pwForm.current, new_password: pwForm.next }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setPwError(
+          (data as { code?: string } | null)?.code === 'invalid_current_password'
+            ? ta('passwordWrong')
+            : ((data as { error?: string } | null)?.error ?? ta('passwordFailed')),
+        );
+        return;
+      }
+      // 成功后清空输入框：密码不该在表单里继续停留
+      setPwForm({ current: '', next: '', confirm: '' });
+      setPwDone(ta('passwordChanged'));
+    } catch {
+      setPwError(ta('passwordFailed'));
+    } finally {
+      setPwSaving(false);
+    }
+  };
+
+  /**
+   * 退出登录。
+   *
+   * 与顶栏账号菜单同一套纪律：**只有服务端确认清除会话 cookie 才跳转**。
+   * 前端读不到 HttpOnly cookie，失败了还跳登录页会让用户以为已经退出，
+   * 实际下一次请求仍带有效会话。
+   */
+  const signOut = async () => {
+    setSignOutError('');
+    setSigningOut(true);
+    try {
+      const res = await fetch('/api/auth/logout', { method: 'POST' });
+      if (!res.ok) {
+        setSignOutError(ta('signOutFailed'));
+        return;
+      }
+      // i18n router 自动补 locale 前缀
+      router.push('/auth/login');
+      router.refresh();
+    } catch {
+      setSignOutError(ta('signOutFailed'));
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
   const groups: { key: Group; icon: typeof Store; label: string }[] = [
     { key: 'business', icon: Store, label: t('groupBusiness') },
     { key: 'locale', icon: Languages, label: t('groupLocale') },
@@ -569,12 +661,20 @@ export default function SettingsPage() {
     { key: 'channels', icon: MessageCircle, label: t('groupChannels') },
     { key: 'ai', icon: SlidersHorizontal, label: t('groupAi') },
     { key: 'data', icon: Database, label: t('groupData') },
+    // 账号放在最后：前面的分组是"这家店怎么运作"，这一组是"我是谁"。
+    // 顺序上不插队，现有分组的相对位置一个都没动。
+    { key: 'account', icon: UserCog, label: t('groupAccount') },
   ];
 
   const biz = settings?.business ?? {};
   const loc = settings?.locale ?? {};
   const aiPrefs = (settings?.ai_prefs ?? {}) as Record<string, unknown>;
   const enabledProviders = providers.filter((p) => p.connection?.isEnabled);
+
+  // 角色只认三个值：拿不到的键名去调 t() 会抛 MISSING_MESSAGE 把整页搞崩
+  const roleLabel = session && (session.role === 'owner' || session.role === 'manager' || session.role === 'staff')
+    ? ta(`roles.${session.role}`)
+    : null;
 
   const assignOptions = (cap: string) => (
     <>
@@ -1030,6 +1130,10 @@ export default function SettingsPage() {
               <h2 className="text-base font-semibold mb-1">{t('groupIntegrations')}</h2>
               <p className="text-xs text-on-surface-variant mb-5">{t('integrationsNote')}</p>
 
+              {/* 配送地图（Phase 18）：独立的客户端组件，自带读写与"测试连接"。
+                  key 加密存储、只写不回显，见组件文件头。 */}
+              <MapConfigPanel />
+
               {/* ERPNext */}
               <div className="rounded-md bg-surface-container/60 p-5 mb-3">
                 <div className="flex items-start justify-between mb-4">
@@ -1374,6 +1478,95 @@ export default function SettingsPage() {
                   <button onClick={() => setWipeModal(true)} className="shrink-0 ml-4 bg-error text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all inline-flex items-center gap-2">
                     <Trash2 className="w-3.5 h-3.5" />
                     {t('wipeButton')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* 账号：身份（只读）+ 修改密码 + 退出登录 */}
+          {group === 'account' && (
+            <div className="bg-surface rounded-lg shadow-card p-6">
+              <h2 className="text-base font-semibold mb-1">{t('groupAccount')}</h2>
+              <p className="text-xs text-on-surface-variant mb-5">{ta('identityNote')}</p>
+
+              {/* 身份只读展示：邮箱 / 角色 / 租户 / 门店 */}
+              <div className="rounded-md bg-surface-container/60 p-4">
+                <div className="grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-2 text-sm items-baseline">
+                  <span className="text-xs font-medium text-on-surface-variant">{ta('email')}</span>
+                  <span className="text-on-surface break-all">{session?.email ?? '—'}</span>
+                  <span className="text-xs font-medium text-on-surface-variant">{ta('role')}</span>
+                  <span className="text-on-surface">{roleLabel ?? '—'}</span>
+                  <span className="text-xs font-medium text-on-surface-variant">{ta('tenant')}</span>
+                  <span className="font-mono text-xs text-on-surface break-all">{session?.tenantId ?? '—'}</span>
+                  <span className="text-xs font-medium text-on-surface-variant">{ta('business')}</span>
+                  <span className="font-mono text-xs text-on-surface break-all">{session?.businessId ?? ta('notLinked')}</span>
+                </div>
+              </div>
+
+              {/* 修改密码 */}
+              <div className="mt-6">
+                <h3 className="text-sm font-semibold mb-1">{ta('changePassword')}</h3>
+                <p className="text-xs text-on-surface-variant mb-3">{ta('changePasswordNote')}</p>
+                <div className="space-y-3">
+                  <div>
+                    <label className={labelCls}>{ta('currentPassword')}</label>
+                    <input
+                      type="password"
+                      autoComplete="current-password"
+                      value={pwForm.current}
+                      onChange={(e) => setPwForm({ ...pwForm, current: e.target.value })}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelCls}>{ta('newPassword')}</label>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={pwForm.next}
+                        onChange={(e) => setPwForm({ ...pwForm, next: e.target.value })}
+                        className={inputCls}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelCls}>{ta('confirmPassword')}</label>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={pwForm.confirm}
+                        onChange={(e) => setPwForm({ ...pwForm, confirm: e.target.value })}
+                        className={inputCls}
+                      />
+                    </div>
+                  </div>
+                  {pwError && <p className="text-sm text-error">{pwError}</p>}
+                  {pwDone && (
+                    <p className="text-sm text-success inline-flex items-center gap-1.5">
+                      <CircleCheck className="w-3.5 h-3.5" />
+                      {pwDone}
+                    </p>
+                  )}
+                  <div className="flex justify-end">
+                    <button onClick={changePassword} disabled={pwSaving} className={primaryBtn}>
+                      {pwSaving ? ta('updating') : ta('updatePassword')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 退出登录（= 切换账号，同一动作） */}
+              <div className="mt-6 border-t border-border/30 pt-4">
+                {signOutError && <p className="text-sm text-error mb-2">{signOutError}</p>}
+                <div className="flex items-center justify-between gap-4">
+                  <p className="text-xs text-on-surface-variant">{ta('switchAccount')}</p>
+                  <button
+                    onClick={signOut}
+                    disabled={signingOut}
+                    className="shrink-0 inline-flex items-center gap-1.5 bg-error text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-60"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    {ta('signOut')}
                   </button>
                 </div>
               </div>

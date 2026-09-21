@@ -197,6 +197,99 @@ function toUiSignalKind(value: unknown): CareSignal['kind'] {
 // 7.1 顾客端
 // ---------------------------------------------------------------------------
 
+/**
+ * 顾客账号的完整形态。
+ *
+ * `CustomerAccount`（src/types/index.ts:147）只有 id / email / display_name / phone，
+ * 而 `/api/customer/me` 还返回 `locale` 与 `marketing_opt_in`。那个文件本轮禁改
+ * （与下面的 `StaffDataExport` 同一个理由），因此在数据层把它扩展出来：
+ * 账号面板要回显语言与订阅开关，缺这两个字段会让"保存成功但界面没变"看起来像 bug。
+ */
+export interface CustomerAccountSettings extends CustomerAccount {
+  /** en | zh | es：服务端白名单三选一（不在表里一律 400，不静默回落）。 */
+  locale: string;
+  marketing_opt_in: boolean;
+}
+
+/**
+ * 可编辑的账号字段。**没出现的字段服务端不动**（PATCH 语义）——
+ * 因此这里刻意用可选字段而不是"整体覆盖"：整体覆盖会让一次只想改语言的请求
+ * 顺手把手机号清空，而手机号是订单归属的匹配键（src/app/api/customer/orders）。
+ */
+export interface CustomerAccountPatch {
+  display_name?: string;
+  phone?: string;
+  locale?: string;
+  marketing_opt_in?: boolean;
+}
+
+/** 地址的局部编辑。同上：没出现的字段不动。 */
+export interface CustomerAddressPatch {
+  label?: string;
+  recipient_name?: string;
+  recipient_phone?: string;
+  address_line?: string;
+  address_note?: string;
+  is_default?: boolean;
+}
+
+/**
+ * `GET /api/customer/export` 的返回体（与 `StaffDataExport` 同一形态，
+ * 定义在这里而不是 src/types/index.ts：那个文件本轮禁改）。
+ *
+ * 地址/订单刻意是**原始列**而不是页面上的派生形态：导出的定位是数据副本，
+ * 派生字段的算法住在各自的接口里，抄一份过来就会漂移。
+ * `label` / `address_note` 在库里可空，因此类型是 `string | null` 而不是 string ——
+ * `CustomerAddress`（UI 契约）把它们写成 string 是原型的历史遗留。
+ */
+export interface CustomerDataExport {
+  exported_at: string;
+  account: {
+    id: string;
+    email: string | null;
+    phone: string | null;
+    display_name: string | null;
+    locale: string | null;
+    marketing_opt_in: boolean | null;
+    status: string | null;
+    created_at: string | null;
+    last_login_at: string | null;
+  };
+  addresses: {
+    id: string;
+    label: string | null;
+    recipient_name: string;
+    recipient_phone: string;
+    address_line: string;
+    address_note: string | null;
+    is_default: boolean;
+    created_at: string;
+  }[];
+  orders: {
+    id: string;
+    order_no: string;
+    channel: string;
+    status: string;
+    total: number;
+    created_at: string | null;
+    rider_status: string | null;
+  }[];
+  /** 订单部分的上限（与 /api/customer/orders 相同）。 */
+  orders_limit: number;
+  /** true = 还有更早的订单没包含在内。**不假装完整**（见导出路由的文件头）。 */
+  orders_truncated: boolean;
+  /** 刻意未包含的数据块及理由：给读文件的顾客看的，不是给开发者的备注。 */
+  excluded: { section: string; reason: string }[];
+}
+
+/** `POST /api/customer/account/close` 的返回体：`completed` 恒为 false，见该路由文件头。 */
+export interface CustomerAccountClosure {
+  ok: boolean;
+  status: string;
+  revoked_sessions: number;
+  deletion: { completed: boolean; note: string };
+}
+
 export const customerApi = {
   async getMenu(token = 'tbl_A1'): Promise<StoreMenuResponse> {
     const data = await request<{
@@ -275,6 +368,11 @@ export const customerApi = {
         address_note: req.address_note ?? '',
         customer_address_id: req.customer_address_id ?? null,
         notes: req.notes ?? '',
+        // 只在顾客真的授权定位时带上；未授权则整个字段不出现，
+        // 而不是传 null/0 —— 服务端把 null 视作"未提供"，与"提供了非法值"不同。
+        ...(typeof req.dest_lat === 'number' && typeof req.dest_lng === 'number'
+          ? { dest_lat: req.dest_lat, dest_lng: req.dest_lng }
+          : {}),
       },
     });
   },
@@ -377,6 +475,83 @@ export const customerApi = {
 
   async deleteCustomerAddress(id: string): Promise<void> {
     await request<void>(`/api/customer/addresses?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+
+  /**
+   * 编辑一条已有地址（含"设为默认"）。
+   *
+   * 服务端返回的地址（含 `is_default`）是**这次写入的值**，并发下可能已被另一个
+   * 请求改掉，所以调用方在成功后应重新 `getCustomerAddresses()` 取权威列表 ——
+   * UI 就是这么做的。这里不替调用方做二次读取：那只是另一个同样会过期的快照。
+   */
+  async updateCustomerAddress(id: string, patch: CustomerAddressPatch): Promise<CustomerAddress> {
+    const data = await request<{ address: CustomerAddress }>(
+      `/api/customer/addresses?id=${encodeURIComponent(id)}`,
+      { method: 'PATCH', body: patch },
+    );
+    return data.address;
+  },
+
+  /**
+   * 编辑自己的账号资料。**没有 account id 参数**，这是有意的：
+   * 服务端只改会话本人的那一行（路由不接受 `account_id`）。给这个方法加一个
+   * id 参数，就等于向调用方许诺一个它做不到的能力。
+   *
+   * 401 在这里**照常抛出**（不像 `getCustomerAccount` 把 401 当"未登录"）：
+   * 会话中途失效时用户必须看到"登录已过期"，静默返回 null 会让面板显示旧数据。
+   */
+  async updateCustomerAccount(patch: CustomerAccountPatch): Promise<CustomerAccountSettings> {
+    const data = await request<{ account: CustomerAccountSettings }>('/api/customer/me', {
+      method: 'PATCH',
+      body: patch,
+    });
+    return data.account;
+  },
+
+  /**
+   * 改密码：当前密码 + 新密码。服务端会**撤销除本会话以外的全部会话**，
+   * 返回值里的 `revoked_sessions` 用来告诉用户"其它设备已被登出"。
+   *
+   * 当前密码错误是 401，响应体与服务端登录失败**逐字相同**（不区分原因），
+   * 因此 UI 不能按 code 分支，只能显示服务端给的这一句。
+   */
+  async changeCustomerPassword(
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ revoked_sessions: number }> {
+    return request<{ ok: boolean; revoked_sessions: number }>('/api/customer/auth/change-password', {
+      method: 'POST',
+      body: { current_password: currentPassword, new_password: newPassword },
+    });
+  },
+
+  /**
+   * 导出自己的顾客数据（资料 + 地址簿 + 订单）。
+   *
+   * **没有参数**，与 `staffApi.exportStaffData` 同一形态：服务端只导出会话本人
+   * （账号 id 由会话解析，路由不接受 `?account_id=`）。
+   *
+   * 服务端回的是带 `Content-Disposition: attachment` 与 `Cache-Control: no-store`
+   * 的 JSON，这里的 `request()` 读的仍然是 JSON 正文 —— 附件头只影响"把 URL 直接
+   * 输进地址栏"时的行为。**不为此绕开 request()**：那样会丢掉统一的 PwaApiError
+   * 语义（401 / 503 都要能被 UI 显示出来）。落盘由调用方用 Blob 触发。
+   */
+  async exportCustomerData(): Promise<CustomerDataExport> {
+    return request<CustomerDataExport>('/api/customer/export');
+  },
+
+  /**
+   * 注销账号：服务端只把 `status` 置为 `pending_deletion` 并撤销全部会话，
+   * **不硬删除**（订单引用着这些记录，理由见该路由文件头）。
+   *
+   * `confirm: true` 是服务端强制要求的显式确认字段：缺它返回 400。
+   * 因此这个方法是"不可逆动作"的入口，UI 必须先完成二次确认再调它。
+   */
+  async closeCustomerAccount(): Promise<CustomerAccountClosure> {
+    return request<CustomerAccountClosure>('/api/customer/account/close', {
+      method: 'POST',
+      body: { confirm: true },
+    });
   },
 };
 

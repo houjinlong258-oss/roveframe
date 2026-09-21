@@ -9,6 +9,7 @@ import {
   latestPositionForDelivery,
   type GeoPoint,
 } from '@/lib/delivery-position';
+import { readMapConfig, toClientMapConfig } from '@/lib/map-config';
 
 /**
  * 顾客端"骑手在哪 / 大约什么时候到"（公开，凭不透明桌码 token）。
@@ -36,6 +37,17 @@ import {
  * 骑手还没上报时 `rider: null`；没有目的地坐标时 `estimate: null`（顾客端只显示
  * `promised_at`）。**不回落成店铺坐标、不回落成"上次已知位置"、不编一个距离** ——
  * 此前的原型正是一个 2 秒定时器让标记自己走，看起来像追踪，其实一个真实坐标都没有。
+ *
+ * ## 这一轮新增的两块（地图）
+ *
+ *   1. `destination_coordinates`：目的地的**坐标**，可空。它刻意与
+ *      `destination`（地址文本）分开：地址总是有（顾客下单时填的），坐标经常没有
+ *      （取决于顾客设备是否授权定位）。把可空坐标塞进地址那一块，会让"总是存在"
+ *      与"常常缺失"混成一种形状，UI 就再也分不出"没定位"与"地址为空"。
+ *   2. `map`：**本租户本门店**的地图服务商配置（有的店没配 → null）。
+ *      它跟着本响应一起下发，是因为本路由本来就按 token 把身份收敛到了
+ *      (tenant, business) —— 新开一个公开接口只会多一个需要单独守住的边界。
+ *      绝不下发平台级 key：只读这家店自己那一行（见 src/lib/map-config.ts）。
  */
 
 /** 把 jsonb/数值列里可能出现的任意值收敛成合法坐标；不合法就返回 null（并留日志）。 */
@@ -106,10 +118,27 @@ export async function GET(
     destination,
   );
 
+  /**
+   * 地图配置：读失败**不**让整条追踪链路 500。
+   * 位置与状态是顾客最需要的信息，地图只是补充；但失败必须留日志，
+   * 否则症状会是"地图永远不显示"，而没有任何证据可查（no silent fallback）。
+   */
+  let map = null;
+  try {
+    map = toClientMapConfig(await readMapConfig(store.tenantId, store.businessId));
+  } catch (error) {
+    console.error(
+      '[store/deliveries/track] map config read failed:',
+      error instanceof Error ? error.message : error,
+    );
+  }
+
   return NextResponse.json({
     rider_status: riderStatus,
     promised_at: row.promised_at,
     destination: { address_line: row.address_line },
+    // 目的地坐标；没有定位就是 null（顾客端据此说"尚未获取目的地坐标"，不画地图）。
+    destination_coordinates: destination,
     rider: position
       ? {
         lat: position.lat,
@@ -120,5 +149,8 @@ export async function GET(
     // estimate 里带 isEstimate: true 与两个系数：UI 必须能看出这是估算值，
     // 而不是实时 GPS 预测。
     estimate,
+    // null = 这家店没有可用的地图配置（没配 / 关掉 / 密钥读不出来）。
+    // 顾客端此时显示"地图未配置"，**不**渲染空白框，也不回落成任何编造的地图。
+    map,
   });
 }

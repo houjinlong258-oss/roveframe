@@ -3,6 +3,7 @@ import { staffRequestContext } from '@/lib/workforce';
 import { scopedTable } from '@/lib/tenant-db';
 import { businessDayRange, localDateInTimeZone, resolveBusinessTimeZone } from '@/lib/time';
 import { getSettings } from '@/lib/settings';
+import { requireStaffFeature } from '@/lib/staff-access';
 import type { RoleKey } from '@/lib/rbac';
 
 /**
@@ -24,6 +25,12 @@ import type { RoleKey } from '@/lib/rbac';
  *
  * 服务器是 CST，`reserved_at` 存的是 UTC。用进程时区切"今天"会让纽约店的
  * 员工在下午看到"明天的预约"。统一走 src/lib/time.ts 的 businessDayRange。
+ *
+ * ## 商家开关（`reservations`）
+ *
+ * 老板可以在 `/api/team/staff-access` 关掉"员工端确认预订"这个面。关掉后本接口
+ * 返回 403 + `feature_disabled`，**不返回空列表**：空列表会让员工以为"今天没有
+ * 预订"，而真相是这个功能被关掉了（两者在界面上必须能分辨）。
  */
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -37,6 +44,9 @@ export async function GET(request: NextRequest) {
   const resolved = await staffRequestContext(request);
   if (!resolved.ok) return resolved.response;
   const { tenantId, businessId } = resolved.ctx;
+
+  const gate = await requireStaffFeature(tenantId, businessId, 'reservations');
+  if (gate) return gate;
 
   let timeZone: string;
   let localToday: string;

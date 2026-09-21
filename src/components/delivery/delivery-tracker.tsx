@@ -1,10 +1,11 @@
 'use client';
 
-import React from 'react';
-import { CheckCircle2, Circle, MapPin, Phone, Receipt, X } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { CheckCircle2, Circle, MapPin, Phone, Receipt, RefreshCw, X } from 'lucide-react';
 import type { CustomerOrderSummary, Locale } from '@/types';
 import { fmtCurrency, fmtDateTime } from '@/lib/format';
 import { getTranslations } from '@/lib/i18n';
+import { DeliveryMap, type DeliveryMapClientConfig, type MapPoint } from '@/components/delivery/delivery-map';
 
 /**
  * 配送状态追踪（替换原型里的 `DeliveryTrackerMap`）。
@@ -36,6 +37,19 @@ import { getTranslations } from '@/lib/i18n';
  * 不做模拟位移、不猜 ETA、不编遥测。
  *
  * 导出名沿用 `DeliveryTrackerMap`，这样 `CustomerPwa` 除了 import 路径之外不用改。
+ *
+ * ## 本轮新增：真实坐标的地图（默认不出现）
+ *
+ * 传入 `trackingToken`（顾客端从二维码/官网拿到的门店 token）时，组件会去调
+ * 一次 `/api/store/deliveries/{id}/track?token=...`，拿三样东西：
+ *   · 骑手最新位置（`delivery_positions` 里真实存在的那一行，可能没有）；
+ *   · 目的地坐标（顾客设备下单时提供的，**经常没有**）；
+ *   · 本门店的地图服务商配置（没配 / 关掉 / 密钥读不出来 → null）。
+ *
+ * 三者**都齐**（配置 + 两个坐标）才画地图；缺任何一样都保持下面原来的状态时间线，
+ * 并明确写出缺的是哪一样。这里刻意**没有**轮询：位置只在顾客点"刷新位置"时重取
+ * 一次。理由与整个追踪链一致 —— 一个自己会走的地图，正是原型骗过评审的那件事。
+ * 没有 `trackingToken`（例如员工端复用本组件）时，连这次请求都不发。
  */
 
 interface DeliveryTrackerProps {
@@ -44,6 +58,26 @@ interface DeliveryTrackerProps {
   /** 币种取自站点配置/菜单；拿不到时由 fmtCurrency 回落 USD。 */
   currency?: string;
   locale: Locale;
+  /**
+   * 公开门店 token（二维码 / 官网点单 token）。给了才会去取真实坐标与地图配置；
+   * 不给（员工端复用）就完全不碰追踪接口，只显示状态时间线。
+   */
+  trackingToken?: string;
+}
+
+/** 追踪接口回来的坐标快照。三项都可空 —— 空就是空，不编。 */
+interface TrackingSnapshot {
+  rider: MapPoint | null;
+  destination: MapPoint | null;
+  map: DeliveryMapClientConfig | null;
+}
+
+/** 只接受有限的合法坐标；其余一律 null（一个 NaN 会让整张图算不出来且不报错）。 */
+function toPoint(lat: unknown, lng: unknown): MapPoint | null {
+  if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
 }
 
 /** 配送状态的四步。顺序即业务流程顺序，不要按字母重排。 */
@@ -64,6 +98,7 @@ export const DeliveryTrackerMap: React.FC<DeliveryTrackerProps> = ({
   onClose,
   currency,
   locale,
+  trackingToken,
 }) => {
   const t = getTranslations(locale);
   // 后端偶发不返回 rider_status（老单/非外卖单）。缺值时按"还没骑手"处理，
@@ -71,6 +106,62 @@ export const DeliveryTrackerMap: React.FC<DeliveryTrackerProps> = ({
   const current: DeliveryStep = order.rider_status ?? 'unclaimed';
   const currentIndex = STEPS.indexOf(current);
   const items = order.items ?? [];
+
+  const [tracking, setTracking] = useState<TrackingSnapshot | null>(null);
+  const [trackingLoading, setTrackingLoading] = useState(false);
+  const [trackingError, setTrackingError] = useState<string | null>(null);
+
+  /**
+   * 取一次真实坐标。**只在挂载与用户显式点刷新时调用**（没有定时器、没有轮询）。
+   * 失败要说出来：静默失败会让顾客以为"地图还没加载完"，一直等下去。
+   */
+  const loadTracking = useCallback(async () => {
+    if (!trackingToken) return;
+    setTrackingLoading(true);
+    setTrackingError(null);
+    try {
+      const query = new URLSearchParams({ token: trackingToken });
+      // 追踪接口按 **delivery id** 查，不是 order id。此前这里传的是 order.id，
+      // 于是每一次都是 404（`delivery not found`），顾客永远看不到地图与 ETA。
+      // 拿不到 delivery_id 时**不发这次请求**：拿一个必然 404 的 id 去问，
+      // 只会把"这单没有配送记录"显示成"追踪信息不可用"。
+      const trackId = order.delivery_id ?? null;
+      if (!trackId) {
+        setTracking({ rider: null, destination: null, map: null });
+        return;
+      }
+      const res = await fetch(
+        `/api/store/deliveries/${encodeURIComponent(trackId)}/track?${query.toString()}`,
+        { credentials: 'include' },
+      );
+      if (!res.ok) {
+        setTrackingError(res.status === 404 ? '这笔订单的追踪信息不可用。' : '追踪信息读取失败。');
+        return;
+      }
+      const data = (await res.json()) as {
+        rider?: { lat?: unknown; lng?: unknown } | null;
+        destination_coordinates?: { lat?: unknown; lng?: unknown } | null;
+        map?: DeliveryMapClientConfig | null;
+      };
+      setTracking({
+        rider: toPoint(data.rider?.lat, data.rider?.lng),
+        destination: toPoint(data.destination_coordinates?.lat, data.destination_coordinates?.lng),
+        // map 为 null 就是"这家店没有可用的地图配置"，原样传给地图组件，
+        // 由它显示「地图未配置」——不在这里回落成任何默认厂商。
+        map: data.map ?? null,
+      });
+    } catch {
+      setTrackingError('网络错误，追踪信息读取失败。');
+    } finally {
+      setTrackingLoading(false);
+    }
+  }, [order.id, trackingToken]);
+
+  useEffect(() => {
+    if (trackingToken) void loadTracking();
+  }, [loadTracking, trackingToken]);
+
+  const hasBothCoordinates = Boolean(tracking?.rider && tracking?.destination);
 
   return (
     <div
@@ -111,6 +202,67 @@ export const DeliveryTrackerMap: React.FC<DeliveryTrackerProps> = ({
 
       {/* 状态时间线 */}
       <div className="p-5 space-y-5">
+        {/*
+          地图区（仅当调用方给了门店 token 时出现）。
+          三种情况分别渲染，**互不混淆**：
+            · 有配置 + 两个坐标 → 真实地图；
+            · 有配置但缺坐标   → 明说缺什么，继续用下面的时间线（不画半个地图）；
+            · 没配置/密钥读不出来 → 地图组件显示「地图未配置」。
+          这里不会出现"空白框"：空白框会被读成"加载失败"。
+        */}
+        {trackingToken && (
+          <div className="space-y-2" id={`delivery-map-section-${order.id}`}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-[11px] text-stone-400 font-semibold uppercase tracking-wider">
+                {hasBothCoordinates ? '配送位置（真实坐标）' : '配送位置'}
+              </div>
+              <button
+                type="button"
+                onClick={() => void loadTracking()}
+                disabled={trackingLoading}
+                className="px-2.5 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 disabled:opacity-50 text-stone-200 text-[11px] font-semibold inline-flex items-center gap-1.5 transition border border-stone-700/60"
+              >
+                <RefreshCw className={`w-3 h-3 ${trackingLoading ? 'animate-spin' : ''}`} />
+                <span>刷新位置</span>
+              </button>
+            </div>
+
+            {trackingError && (
+              <p className="text-[11px] text-rose-300" role="alert">{trackingError}</p>
+            )}
+
+            {tracking && hasBothCoordinates && (
+              <DeliveryMap
+                config={tracking.map}
+                rider={tracking.rider}
+                destination={tracking.destination}
+              />
+            )}
+
+            {tracking && !hasBothCoordinates && (
+              <>
+                {/* 有配置但缺坐标：明说缺哪一样，不画地图也不编一个位置。 */}
+                {tracking.map && (
+                  <p className="text-[11px] text-stone-400">
+                    {!tracking.rider && !tracking.destination
+                      ? '尚未收到骑手位置，也还没有本次配送的目的地坐标，暂不显示地图。'
+                      : !tracking.rider
+                        ? '尚未收到骑手位置上报，暂不显示地图。'
+                        : '本次订单没有目的地坐标（下单时未授权定位），暂不显示地图。'}
+                  </p>
+                )}
+                {!tracking.map && (
+                  <DeliveryMap config={null} rider={null} destination={null} />
+                )}
+              </>
+            )}
+
+            {!tracking && trackingLoading && (
+              <p className="text-[11px] text-stone-400">正在读取位置…</p>
+            )}
+          </div>
+        )}
+
         <ol className="space-y-0">
           {STEPS.map((step, index) => {
             const reached = index <= currentIndex;

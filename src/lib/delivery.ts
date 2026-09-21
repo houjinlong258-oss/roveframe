@@ -1,5 +1,6 @@
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { getSettings } from '@/lib/settings';
+import { hashFingerprint } from '@/lib/fingerprint';
 
 /**
  * 外卖配送的后端核心（Phase 18 / P18-4 · P18-5）。
@@ -145,6 +146,10 @@ export function canRiderAdvance(from: RiderStatus, to: RiderStatus): boolean {
  * 与堂食的 `orderContentFingerprint`（src/app/api/store/orders/route.ts:98）同一思路：
  * 在**商品已按商品表核验之后**计算，因此是权威值。字段不同是必要的 ——
  * 外卖没有桌号，但有配送地址与配送费；地址改了就是另一单。
+ *
+ * **返回值是 sha256 哈希，不是拼出来的原文。** 理由见 src/lib/fingerprint.ts：
+ * 原文实测到 147 字符、超出列宽 varchar(128)（两件商品 + 一个正常地址就够），
+ * 直接把下单打成 500；而且原文里含顾客地址与电话，不该明文落进这个列。
  */
 export function deliveryContentFingerprint(input: {
   items: readonly { product_id: string; qty: number }[];
@@ -153,11 +158,14 @@ export function deliveryContentFingerprint(input: {
   addressLine: string;
   recipientPhone: string;
 }): string {
+  // 拼接规则原样保留（顺序与分隔符影响结果，改了会让既有断言失效），只在最后加一层哈希。
   const items = [...input.items]
     .map((item) => `${item.product_id}x${item.qty}`)
     .sort()
     .join(',');
-  return `${items}|${input.subtotal.toFixed(2)}|${input.fee.toFixed(2)}|${input.addressLine}|${input.recipientPhone}`;
+  return hashFingerprint(
+    `${items}|${input.subtotal.toFixed(2)}|${input.fee.toFixed(2)}|${input.addressLine}|${input.recipientPhone}`,
+  );
 }
 
 export function promisedAtFrom(now: Date, prepMinutes: number): string {

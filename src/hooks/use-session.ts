@@ -24,7 +24,14 @@ export interface Session {
 export interface SessionAPI {
   session: Session | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  /**
+   * 登录。返回**服务端判定的角色**。
+   *
+   * 为什么要把 role 带出来：登录页有「老板 / 员工」两个入口，但那只是**提示**。
+   * 真正算数的是服务端返回的角色 —— 客户端传什么都不该决定权限与落点。
+   * 调用方拿它来跳转，避免再请求一次 `/api/auth/me` 才知道自己是谁。
+   */
+  login: (email: string, password: string) => Promise<{ ok: true; role: string } | { ok: false; error: string }>;
   signup: (
     email: string,
     password: string,
@@ -77,7 +84,7 @@ export function useSession(): SessionAPI {
   }, []);
 
   const login = useCallback(
-    async (email: string, password: string): Promise<{ ok: true } | { ok: false; error: string }> => {
+    async (email: string, password: string): Promise<{ ok: true; role: string } | { ok: false; error: string }> => {
       try {
         const res = await fetch('/api/auth/login', {
           method: 'POST',
@@ -104,7 +111,7 @@ export function useSession(): SessionAPI {
           email: data.email,
           name: data.name,
         });
-        return { ok: true };
+        return { ok: true, role: data.role };
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : String(e) };
       }

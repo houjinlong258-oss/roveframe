@@ -162,7 +162,9 @@
     "recReviewDesc": "Responder en 24 h triplica la recuperación. Las respuestas de IA están listas para tu aprobación.",
     "recGrowthTitle": "Impulso de ingresos de fin de semana detectado",
     "recGrowthDesc": "Ingreso diario máximo de {revenue}. Amplifica los platos estrella con una campaña social.",
-    "agentAnalyzing": "Analizando datos del negocio…"
+    "agentAnalyzing": "Analizando datos del negocio…",
+    "demoBadge": "Datos de demostración — no son de tu negocio",
+    "demoNotice": "Este panel muestra cifras de ejemplo generadas para demostraciones y capturas. No las uses para decidir."
   },
   "agent": {
     "title": "Asistente AI COO",

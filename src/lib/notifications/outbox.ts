@@ -87,7 +87,27 @@ export async function enqueueNotification(input: {
   return { id: existing?.id ?? null, created: false };
 }
 
-/** Claims a bounded batch using the database lease function. */
+/**
+ * Claims a bounded batch using the database lease function.
+ *
+ * ## 认领失败必须抛错，不能返回空数组（Phase 18 审计修复）
+ *
+ * 原实现是 `if (error) return []` —— 那正是本仓库记录过三次的**静默兜底**形态
+ * （`agent/tasks/types.ts:82`、`worker.ts:280` 都留着同样的教训注释）。
+ * 后果不是崩溃，而是**投递循环安静地空转**：outbox 里堆着待发通知，
+ * 每一 tick 都报告"处理了 0 条"，而日志里一个字都没有。
+ * Phase 15 那条"一个 SQL 缺陷隐藏了 11 天"就是同一形态。
+ *
+ * 抛错是安全的：唯一的调用方 `dispatchNotificationOutbox` 被
+ * `scheduler.ts:498-502` 的 try/catch 包着，会打
+ * `[scheduler] notification outbox worker failed:`。也就是说
+ * **失败会变成一条有据可查的日志，而不是一个看起来正常的 0**。
+ *
+ * `recoverStaleOutboxItems`（同文件）对同类失败的处置是"记日志 + 返回零"，
+ * 两者不冲突：那个函数返回的是**统计值**，而本函数返回的是**工作清单** ——
+ * 把失败的清单静默成"没有工作"会改变调用方的行为，把失败的统计静默成 0
+ * 不会。区别在于"调用方会不会据此少做事"。
+ */
 export async function claimNotificationOutbox(
   workerId = `notification-${randomUUID().slice(0, 8)}`,
   limit = 20,
@@ -96,7 +116,9 @@ export async function claimNotificationOutbox(
     p_worker_id: workerId,
     p_limit: Math.max(1, Math.min(limit, 100)),
   });
-  if (error) return [];
+  if (error) {
+    throw new Error(`notification outbox claim failed: ${error.message}`);
+  }
   return (data ?? []) as NotificationOutboxItem[];
 }
 

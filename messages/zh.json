@@ -162,7 +162,9 @@
     "recReviewDesc": "24 小时内回复可将挽回率提升 3 倍，AI 回复草稿已备好待你批准。",
     "recGrowthTitle": "检测到周末营收增长势头",
     "recGrowthDesc": "峰值日营收达 {revenue}，建议配合社媒活动放大热销菜品。",
-    "agentAnalyzing": "正在分析经营数据…"
+    "agentAnalyzing": "正在分析经营数据…",
+    "demoBadge": "演示数据 —— 不是你的经营数据",
+    "demoNotice": "当前仪表盘显示的是为演示与截图生成的示例数字，不可用于任何经营决策。"
   },
   "agent": {
     "title": "AI COO 助手",

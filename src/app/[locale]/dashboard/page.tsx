@@ -100,6 +100,21 @@ export default function DashboardPage() {
   const churnHigh = data?.totals.churnHigh ?? 0;
   const reviewAlerts = alerts.filter((a) => a.type === 'review').length;
   const inventoryAlerts = alerts.filter((a) => a.type === 'inventory').length;
+  /**
+   * 演示数据标记（Phase 18 审计修复）。
+   *
+   * `/api/dashboard` 在演示模式下（`RF_E2E_DEMO=1` 且非生产）返回的整套数字
+   * **是编造的**（`Math.round((18 + i * 0.6) * ...)`），并带 `demo: true`。
+   *
+   * 实测：这个字段在类型里声明了、接口也返回了，但**页面从来没有读过它** ——
+   * 也就是说演示数据与真实经营数据在界面上完全无法区分。一个截图被当成经营
+   * 事实传出去，是这套系统里最不该发生的事（Phase 16 的任务 1 修的就是
+   * "仪表盘对零数据账户编造增长"）。
+   *
+   * 修法不是在接口层删演示模式（它是刻意的 E2E / 截图能力），而是让**看到它的
+   * 人知道自己在看什么**。
+   */
+  const isDemoData = data?.demo === true;
 
   // —— AI 员工团队实时状态（全部来自真实经营数据） ——
   const team = useMemo(() => {
@@ -265,6 +280,22 @@ export default function DashboardPage() {
           />
         ))}
       </div>
+
+      {/* ===== 演示数据横幅（仅当接口明确回报 demo: true 时出现）=====
+          演示模式下这套数字是编造的；没有这条横幅，它与真实经营数据在界面上
+          完全一样。故意用高对比的警示色，而不是低调的灰字。 */}
+      {isDemoData && (
+        <div
+          role="status"
+          className="mb-6 flex items-start gap-3 rounded-lg border border-amber-500/50 bg-amber-500/10 p-4"
+        >
+          <span className="mt-0.5 text-amber-500" aria-hidden="true">⚠</span>
+          <div className="text-sm">
+            <p className="font-semibold text-amber-600 dark:text-amber-400">{t('demoBadge')}</p>
+            <p className="mt-0.5 text-muted-foreground">{t('demoNotice')}</p>
+          </div>
+        </div>
+      )}
 
       {/* ===== 关键指标 InsightCards ===== */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">

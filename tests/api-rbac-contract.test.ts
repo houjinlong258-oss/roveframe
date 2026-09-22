@@ -144,6 +144,11 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionRule>> = {
     verify: (source) => source.includes('resolveCustomerSession(request)')
       && source.includes("jsonError('unauthorized', 401)"),
   },
+  // 注：`customer/export/route.ts` **不在这里**，而且这是对的 —— 它只导出 GET，
+  // 而本契约检查的是**写方法**（`MutationMethod` 不含 GET）。
+  // 审计时我一度把它登记进来，`ts-check` 立刻拒绝：`'GET' is not assignable to
+  // type 'MutationMethod'`。它需要的是"只读边界"的守卫，见
+  // tests/customer-export.test.ts（会话解析 + 401 + 不含口令列）。
   'customer/auth/login/route.ts': {
     reason: 'public customer login boundary; no session exists yet',
     methods: ['POST'],

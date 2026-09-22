@@ -162,7 +162,9 @@
     "recReviewDesc": "Replying within 24h triples win-back rate. AI-drafted replies are ready for your approval.",
     "recGrowthTitle": "Weekend revenue momentum detected",
     "recGrowthDesc": "Peak daily revenue reached {revenue}. Amplify top sellers with a weekend social campaign.",
-    "agentAnalyzing": "Analyzing business data..."
+    "agentAnalyzing": "Analyzing business data...",
+    "demoBadge": "Demo data — not your business",
+    "demoNotice": "This dashboard is showing sample figures generated for demos and screenshots. Do not use them for decisions."
   },
   "agent": {
     "title": "AI COO Assistant",

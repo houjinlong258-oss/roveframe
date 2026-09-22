@@ -41,13 +41,26 @@ function arg(name, fallback = null) {
 }
 const URL_TARGET = process.argv[2];
 if (!URL_TARGET) {
-  console.error('用法: node scripts/_browser_check.mjs <url> [--eval "<js>"] [--wait ms] [--click sel] [--mobile]');
+  console.error('用法: node scripts/_browser_check.mjs <url> [--eval "<js>"] [--wait ms] [--click sel] [--mobile] [--allow <regex>]');
   process.exit(2);
 }
 const WAIT_MS = Number(arg('wait', '2500'));
 const EVAL_EXPR = arg('eval');
 const CLICK_SEL = arg('click');
 const MOBILE = process.argv.includes('--mobile');
+/**
+ * 显式声明"这一条失败是预期内的"（正则，匹配失败请求的完整文本）。
+ *
+ * 为什么需要它：有些页面**故意**让某个请求失败并据此显示明确文案
+ * （例如 `/en/store` 不带 token 时会拿到 404，然后渲染
+ * "Invalid or inactive store link"）。那是正确行为，但与"资源真的丢了"
+ * 在失败请求列表里长得一样。
+ *
+ * 为什么不直接放宽判定（把 404 一律忽略）：那会让探针失去抓 404 的能力。
+ * 这里要求调用方**逐条声明**，于是"预期内的失败"是一句被写下来的话，
+ * 而不是一个静默的例外。
+ */
+const ALLOW = arg('allow');
 
 const userDataDir = mkdtempSync(join(tmpdir(), 'rf-cdp-'));
 const port = 9000 + Math.floor(Math.random() * 900);
@@ -274,9 +287,15 @@ function main() {
       const info = mountInfo.value ?? {};
       // "渲染出内容"= 有可交互元素或可见文本。空白的 200 页面也算失败。
       const rendered = (info.interactiveElements ?? 0) > 0 || (info.bodyTextLength ?? 0) > 40;
+      // 调用方用 --allow 声明的"预期内失败"单独列出：仍然打印，但不参与判定。
+      const allowRe = ALLOW ? new RegExp(ALLOW) : null;
+      const expectedFailures = allowRe ? failedRequests.filter((f) => allowRe.test(f)) : [];
+      const unexpectedFailures = allowRe
+        ? failedRequests.filter((f) => !allowRe.test(f))
+        : failedRequests;
       const ok = consoleErrors.length === 0
         && exceptions.length === 0
-        && failedRequests.length === 0
+        && unexpectedFailures.length === 0
         && rendered;
 
       console.log('='.repeat(78));
@@ -296,8 +315,9 @@ function main() {
       for (const e of consoleErrors.slice(0, 10)) console.log(`      ! ${e.slice(0, 300)}`);
       console.log(`  未捕获异常:     ${exceptions.length}`);
       for (const e of exceptions.slice(0, 10)) console.log(`      ! ${String(e).slice(0, 300)}`);
-      console.log(`  失败请求:       ${failedRequests.length}`);
-      for (const f of failedRequests.slice(0, 10)) console.log(`      ! ${f.slice(0, 200)}`);
+      console.log(`  失败请求:       ${unexpectedFailures.length}${expectedFailures.length ? `（另有 ${expectedFailures.length} 条由 --allow 声明为预期内）` : ''}`);
+      for (const f of unexpectedFailures.slice(0, 10)) console.log(`      ! ${f.slice(0, 200)}`);
+      for (const f of expectedFailures.slice(0, 10)) console.log(`      · 预期内: ${f.slice(0, 200)}`);
       if (consoleWarnings.length) {
         console.log(`  console warning: ${consoleWarnings.length}（不计入判定）`);
         for (const w of consoleWarnings.slice(0, 5)) console.log(`      ~ ${w.slice(0, 200)}`);

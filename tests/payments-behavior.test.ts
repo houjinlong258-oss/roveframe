@@ -180,7 +180,10 @@ describe('支付：三条路由可被调用，且中央守卫先于业务逻辑'
   }
 
   test('负向对照：同一处理器在凭据格式畸形时同样被拒（不是因为"没解析 body"而 401）', async () => {
-    const res = await refundPost(new Request('http://localhost/api/payments/refund', {
+    // 路由 handler 的签名是 NextRequest；这里只需要 Request 的语义，
+    // 因此按上面 cases 数组里同样的方式收窄类型（ts-check 实测会拦下不收窄的写法）。
+    const handler = refundPost as unknown as (r: Request) => Promise<Response>;
+    const res = await handler(new Request('http://localhost/api/payments/refund', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: 'Bearer not-a-jwt' },
       body: JSON.stringify({ payment_id: 'x', amount_minor: 100 }),

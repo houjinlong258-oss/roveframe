@@ -321,6 +321,60 @@ class RealProviderTest(unittest.TestCase):
         self.assertTrue(caps)
         self.assertTrue(all(not c.visible_to("marketing") for c in caps))
 
+    def test_social_provider_wiring_is_declared(self) -> None:
+        """能力的"是否已接线"必须是可查事实，而不是注释里的一句话。
+
+        Phase 19 背景：`roveagent/social/` 6 个文件 2641 行、随本测试套件一起跑，
+        但目录级入边分析显示**包外 0 条 import**。与此同时 SocialCapabilityProvider
+        已经对外发布 publish_social_post / validate_social_post —— 能力清单在承诺
+        一个未交付的功能。此前这件事只写在一句注释里（"no platform adapter is
+        wired yet"），注释既能腐烂也无法被断言。
+
+        本用例把两个方向都钉住：
+          · 声明未接线 ⇒ 必须给出理由（否则等于没说）；
+          · 声明已接线 ⇒ `roveagent.social` 必须真的出现在生产 import 里
+            （否则"接线"是假的）。
+        """
+        self.assertIsInstance(cp.SocialCapabilityProvider.WIRED, bool)
+
+        if not cp.SocialCapabilityProvider.WIRED:
+            self.assertTrue(
+                cp.SocialCapabilityProvider.WIRED_REASON.strip(),
+                "声明未接线却给不出理由 —— 那就等于没有声明",
+            )
+            return
+
+        # WIRED = True：必须能在生产代码里找到对 social 包的真实 import
+        repo_root = Path(__file__).resolve().parents[2]
+        import re as _re
+        # 只认"行首（允许缩进）的真实 import 语句"：
+        #   · 不认字符串/注释里的提及 —— 本文件自己的注释里就写着
+        #     "from roveagent.social.content"（作为例子），宽松匹配会把它当成 importer，
+        #     于是这条断言**永远通过**。负向对照实测确认过这一点。
+        #   · 不认包内自引用（见下）。
+        importer_re = _re.compile(r"^\s*(?:from\s+roveagent\.social|import\s+roveagent\.social)", _re.M)
+        pattern_importers = []
+        self_path = Path(__file__).resolve()
+        for path in (repo_root / "roveagent").rglob("*.py"):
+            # ⚠️ 必须排除**整个 social 包**，不能只排除包内的测试文件：
+            # 包内模块互相 import（validators.py 里就有对 content 的 import），
+            # 那些自引用会被当成"生产 importer"。
+            if "social" in path.parts:
+                continue
+            if path.resolve() == self_path:
+                continue  # 本文件是检查者，不是 importer
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if importer_re.search(text):
+                pattern_importers.append(str(path.relative_to(repo_root)))
+        self.assertTrue(
+            pattern_importers,
+            "SocialCapabilityProvider.WIRED = True，但没有任何**包外**生产代码 import "
+            "roveagent.social —— 能力清单会在承诺一个仍未交付的功能",
+        )
+
     def test_plugin_provider_scopes_to_the_plugin(self) -> None:
         provider = cp.PluginCapabilityProvider(
             plugin_name="acme", allowed_agents=("developer",),

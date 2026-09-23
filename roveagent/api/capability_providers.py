@@ -551,6 +551,26 @@ class SocialCapabilityProvider(CapabilityProvider):
     #: be able to block startup.
     tier = ProviderTier.OPTIONAL
 
+    #: 实现是否已接到这条能力上。
+    #:
+    #: Phase 19 加入：此前"还没接线"只写在注释里，而注释不是可查事实。
+    #: 实测（目录级入边分析）：`roveagent/social/` 6 个文件 2641 行，
+    #: **0 条来自包外的 import**；而本 provider 已经对外发布了
+    #: publish_social_post / validate_social_post 两条能力 ——
+    #: 也就是说能力清单在承诺一个未交付的功能（capability_router.py 亦如此记载）。
+    #:
+    #: 这个标志让"未接线"变成可断言的事实：
+    #:   · WIRED = False 时，WIRED_REASON 必须非空（说明为什么没接线）；
+    #:   · 一旦有人真的接线，必须把 WIRED 改成 True —— 此时测试会反过来要求
+    #:     `roveagent.social` 确实出现在生产 import 里。
+    #: 见 capability_governance_test.py::test_social_provider_wiring_is_declared。
+    WIRED: bool = False
+    WIRED_REASON: str = (
+        "roveagent/social 已实现并通过测试（2641 行，随 python 测试套件一起跑），"
+        "但没有任何生产代码 import 它，平台适配器也未接入；"
+        "是否接线属产品决策（禁止无分析删除）。"
+    )
+
     SOCIAL_TOOLS: tuple[tuple[str, str, str], ...] = (
         ("publish_social_post", "social", "Publish an approved social post."),
         ("validate_social_post", "social", "Validate content against platform rules."),

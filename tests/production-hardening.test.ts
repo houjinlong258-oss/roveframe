@@ -13,7 +13,6 @@ import {
   isPublicApiPath,
   injectRfHeaders,
   stripRfHeaders,
-  getAuthContext,
   resolveRequestUser,
   RF_HEADERS,
 } from '../src/lib/auth-guard';
@@ -129,28 +128,13 @@ describe('Auth Guard: rf header injection', () => {
     assert.equal(h.get(RF_HEADERS.tenantId), TENANT);
   });
 
-  test('getAuthContext returns null without injected headers', () => {
-    const req = new Request('http://localhost/api/x');
-    assert.equal(getAuthContext(req), null);
-  });
-
-  test('getAuthContext parses injected headers', () => {
-    const h = new Headers();
-    injectRfHeaders(h, makeUser());
-    const req = new Request('http://localhost/api/x', { headers: h });
-    const ctx = getAuthContext(req);
-    assert.ok(ctx);
-    assert.equal(ctx.tenantId, TENANT);
-    assert.equal(ctx.role, 'owner');
-  });
-
-  test('getAuthContext rejects invalid role header', () => {
-    const h = new Headers();
-    injectRfHeaders(h, makeUser());
-    h.set(RF_HEADERS.role, 'superadmin');
-    const req = new Request('http://localhost/api/x', { headers: h });
-    assert.equal(getAuthContext(req), null);
-  });
+  // Phase 19：这里原有 3 条 getAuthContext 的用例，随该函数一起删除。
+  //
+  // 说明清楚，避免被读成"删测试让流水线变绿"：那 3 条测试的唯一作用是
+  // 测试一个**没有任何生产调用点**的函数（全仓 0 读取，见 auth-guard.ts 文件头
+  // 的记录与 Dead_Code_Deletion_Stop_Report.md §6）。函数没了，测它的用例也就
+  // 没有对象了。真正的边界（proxy 注入/剥离 + withAuth 完整校验 + 中央变更守卫）
+  // 的用例在本文件其余部分与 api-rbac-contract.test.ts 里，一条都没动。
 });
 
 // ---------------------------------------------------------------------------

@@ -1,18 +1,35 @@
 /**
  * Production Hardening — 统一 API 鉴权中间件（withAuth）+ Tenant Context
  *
- * 设计（三层）：
+ * 设计（**两层**，不是三层）：
  *   1. proxy.ts 网络边界层：对所有 /api/** 非公开路由做全量 Supabase 校验，
  *      通过后注入 x-rf-* 租户上下文请求头（注入前先剥离客户端伪造头）。
  *   2. withAuth 路由层包装器：敏感路由在 handler 内再做一次完整校验（纵深防御，
  *      不依赖 proxy 的执行），并支持角色门控。
- *   3. getAuthContext 快速路径：普通路由读取 proxy 注入的 x-rf-* 头获得
- *      租户上下文，避免每个请求重复打 Supabase。
+ *
+ * ## 原文写的第三层已被删除（Phase 19，附证据）
+ *
+ * 原文此处写着"3. getAuthContext 快速路径：普通路由读取 proxy 注入的 x-rf-* 头
+ * 获得租户上下文"。那句话描述的是一个**从未被调用**的层：
+ *
+ *   · 全仓检索 `getAuthContext`（src / tests / scripts / docs / packages）→
+ *     `src/` 内 **0 个调用点**，只有定义与文件头这句话；
+ *   · 没有任何 `export *` 再导出，`packages/` 下没有消费者；
+ *   · 两轮独立审计早已记为死代码并建议删除
+ *     （`RoveFrame_Technical_Debt_Register.md` DEL-4、
+ *      `Dead_Code_Deletion_Stop_Report.md` §6：仅 `injectRfHeaders` 被 proxy 实际
+ *      调用，`getAuthContext` 符合"0 读取"）。
+ *
+ * 为什么必须删而不是留着：它让"纵深防御"读起来是三层，实际是两层 ——
+ * 审计者会以为普通路由还有一道快速校验。删掉后文件头描述的层数与代码一致。
+ *
+ * 保留的是**真正在被调用**的那部分：`RF_HEADERS` / `injectRfHeaders` /
+ * `stripRfHeaders` 由 `src/proxy.ts` 使用（注入前剥离伪造头是安全属性，不能动）。
  *
  * 安全说明：
  *   - x-rf-* 头只在 proxy 校验成功后由服务端写入；proxy 会先删除客户端传入的
  *     同名头，因此路由可以信任这些头（前提：请求必须经过 proxy —— matcher 已覆盖
- *     全部 /api 路径）。敏感操作不要使用该快速路径，必须用 withAuth 完整校验。
+ *     全部 /api 路径）。敏感操作不要依赖这些头，必须用 withAuth 完整校验。
  *   - token → user 的解析结果做 60s 进程内 TTL 缓存，降低页面并行请求的延迟。
  */
 
@@ -360,37 +377,6 @@ export async function resolveRequestUser(
     if (cached) tokenCache.delete(token);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
-}
-
-// ---------------------------------------------------------------------------
-// getAuthContext —— 快速路径（读取 proxy 注入头）
-// ---------------------------------------------------------------------------
-
-/**
- * 读取 proxy 注入的租户上下文。请求未经 proxy 校验时返回 null。
- * 仅用于普通路由的租户信息读取；敏感操作请使用 withAuth。
- */
-export function getAuthContext(request: Request): AuthContext | null {
-  const h = request.headers;
-  const userId = h.get(RF_HEADERS.userId);
-  const tenantId = h.get(RF_HEADERS.tenantId);
-  const role = h.get(RF_HEADERS.role) as Role | null;
-  if (!userId || !tenantId || !role) return null;
-  if (role !== 'owner' && role !== 'manager' && role !== 'staff') return null;
-  const businessId = h.get(RF_HEADERS.businessId) || null;
-  return {
-    user: {
-      userId,
-      tenantId,
-      businessId,
-      role,
-      email: h.get(RF_HEADERS.email) ?? '',
-      name: null,
-    },
-    tenantId,
-    businessId,
-    role,
-  };
 }
 
 // ---------------------------------------------------------------------------

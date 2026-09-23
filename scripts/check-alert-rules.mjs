@@ -246,12 +246,37 @@ if (base) {
       const referenced = new Set(
         allRules.flatMap((r) => [...r.expr.matchAll(/roveframe_[a-z0-9_]+/g)].map((m) => m[0])),
       );
-      const missingLive = [...referenced].filter((m) => !live.has(m));
+      /**
+       * 指标"不在实时输出里"有两种原因：
+       *   · 目标实例的构建根本不导出它 -> 规则永远不会触发，必须红；
+       *   · 导出了，但当前表为空（例如没有支付行）-> 可以放行，但必须是**显式**放行。
+       *
+       * 第一版把两者都当 note 放过，结果是：同一个命令对**旧构建**也报"通过"
+       * （实测：对 5067 上跑着的老实例，outbox/payment 指标一条都没有，却仍然通过）。
+       * 那让这条检查失去了检测能力 —— 一个对旧构建和正确构建给出同样结论的探针
+       * 等于没有探针。所以改成默认严格：缺席即失败，除非用 --allow-absent 显式列出
+       * 并给出理由。放行必须看得见。
+       */
+      const allowAbsent = new Set(
+        (getArg('--allow-absent') ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+      );
+      const missingLive = [];
+      const allowedAbsent = [];
+      for (const m of referenced) {
+        if (live.has(m)) continue;
+        if (allowAbsent.has(m)) allowedAbsent.push(m);
+        else missingLive.push(m);
+      }
       if (missingLive.length) {
         fail(`这些指标在 ${base}/api/metrics 的实际输出里不存在：${missingLive.join(', ')}`
-          + '（代码里有定义但当前实例没导出，规则在该实例上无法评估）');
+          + '\n    若确认是"表为空所以没有样本"，请显式加 --allow-absent <指标名> 并说明理由；'
+          + '\n    没有显式放行就一律按失败处理（否则该检查对旧构建也会报通过）。');
       } else {
-        console.log(`[live] ${referenced.size} 个被引用的指标都能在 ${base}/api/metrics 里找到`);
+        console.log(`[live] ${referenced.size - allowedAbsent.length}/${referenced.size}`
+          + ` 个被引用的指标在 ${base} 上有实时样本`);
+      }
+      for (const m of allowedAbsent) {
+        console.log(`[live][allow-absent] ${m} 当前无样本（已显式放行 —— 表为空，不是缺陷）`);
       }
     }
   } catch (e) {

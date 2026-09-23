@@ -279,15 +279,36 @@ export async function isHostAuthorizedForCertificate(host: string): Promise<bool
   const platformDomain = normalizeHost(process.env.SITE_DOMAIN ?? '');
   if (platformDomain && normalized === platformDomain) return true;
 
-  const { data, error } = await getSupabaseClient()
-    .from('public_sites')
-    .select('id')
-    .eq('custom_domain', normalized)
-    .eq('domain_status', 'active')
-    .eq('enabled', true)
-    .maybeSingle();
-  if (error || !data) return false;
-  return true;
+  // ⚠️ fail-closed 必须覆盖"客户端根本建不起来"这一种失败。
+  //
+  // 此前只有 `if (error || !data) return false` —— 那覆盖的是**查询失败**；
+  // 而 `getSupabaseClient()` 在凭据缺失/环境不完整时会**直接抛错**，
+  // 于是这个函数抛而不是返回 false。
+  //
+  // 这是被测试逼出来的：`tests/site-certificate-authorization.test.ts` 的
+  // describe 就叫「异常也必须拒绝」，它在本地（有凭据、查询正常返回空）通过，
+  // 在 CI（无凭据、客户端构造即抛）变红 —— 也就是说它此前**因为错误的原因通过**。
+  //
+  // 影响面：本函数是 Caddy on-demand TLS 的授权判断。路由侧另有 catch 保持拒绝
+  // （见该测试的"接线契约"一节），所以线上并未敞开；但"函数契约是返回 false、
+  // 而不是抛"这一点必须由函数自己保证，不能依赖调用方兜底。
+  try {
+    const { data, error } = await getSupabaseClient()
+      .from('public_sites')
+      .select('id')
+      .eq('custom_domain', normalized)
+      .eq('domain_status', 'active')
+      .eq('enabled', true)
+      .maybeSingle();
+    if (error || !data) return false;
+    return true;
+  } catch (error) {
+    console.error(
+      '[public-site] certificate host lookup failed, denying:',
+      error instanceof Error ? error.message : String(error),
+    );
+    return false;
+  }
 }
 
 /** 公开站点入口用的"网页桌号"。约定 table_no='WEB'，与堂食桌码并列可见。 */

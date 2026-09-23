@@ -12,6 +12,24 @@ import {
   type StaffSettingsRow,
 } from '../src/app/api/staff/preferences/route';
 import { mergeVisibleCareNotes } from '../src/app/api/staff/export/route';
+import { getSupabaseClient } from '../src/storage/database/supabase-client';
+
+/**
+ * 本节有两条用例依赖**真实库**：验证的是"凭据有效、角色是 owner，但库里没有
+ * 对应 staff 行"这一状态。没有库的环境（CI 不带任何 Supabase 凭据）必须记为
+ * UNVERIFIED，而不是把"连不上库"当成断言失败 —— 那会让守卫在干净机器上恒红，
+ * 训练人忽略它。本仓库的纪律是：无法测量就写 UNVERIFIED。
+ *
+ * 实测：首次 CI 运行（无凭据）该条实得 500 而不是 409。
+ */
+async function databaseReachable(): Promise<boolean> {
+  try {
+    const { error } = await getSupabaseClient().from('staff').select('id').limit(1);
+    return !error;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * 员工数据权利（Phase 18 §5.7）—— 本轮修复的两处缺口的守卫。
@@ -635,7 +653,12 @@ describe('GET /api/staff/export：真实调用 handler 的门禁（行为证据�
     );
   });
 
-  test('有凭据但账号未关联员工档案 → 409 staff_not_linked（不是"空导出"）', async () => {
+  test('有凭据但账号未关联员工档案 → 409 staff_not_linked（不是"空导出"）', async (t) => {
+    if (!(await databaseReachable())) {
+      console.log('  [skip] 数据库不可达（无凭据）→ 本条 UNVERIFIED（不是通过）');
+      t.skip('no database');
+      return;
+    }
     const userId = 'export-gate-probe-no-staff';
     _seedRoleForTest(userId, 'owner');
     const { GET } = await import('../src/app/api/staff/export/route');

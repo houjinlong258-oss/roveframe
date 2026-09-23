@@ -17,7 +17,11 @@ scripts/*.env
 .pnpm-store
 .roveagent
 .worktrees
-artifacts
+# 与 .gitignore 同一个坑：Docker 的裸 `artifacts` 也匹配任意深度，会把源码目录
+# src/lib/artifacts/ 排除出构建上下文，于是 `next build` 报
+# "Can't resolve '@/lib/artifacts'"（实测 9 个错误）。锚定到根目录，
+# 只排除根下的构建产物目录。
+/artifacts
 coverage
 dist
 node_modules

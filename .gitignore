@@ -174,7 +174,13 @@ Desktop.ini
 # Local RoveAgent/runtime state and production-hardening work logs
 .roveagent/
 .pnpm-store/
-artifacts/
+# ⚠️ 必须锚定到仓库根。Git 的裸 `artifacts/` 是**任意深度**匹配，会把
+# `src/lib/artifacts/`（9 个源文件）与 `src/app/api/artifacts/`（4 个路由）
+# 一并忽略。实测后果：第一次推送到 GitHub 之后 CI 的 ts-check 报
+# "Cannot find module '@/lib/artifacts'"，Docker 构建同样失败 ——
+# **发布出去的仓库缺了一整个源码目录**，而本地完全看不出来
+# （文件在本地存在，只是从未被提交，`git status` 也不会提示）。
+/artifacts/
 task_plan.md
 findings.md
 progress.md

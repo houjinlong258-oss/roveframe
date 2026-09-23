@@ -158,7 +158,7 @@ public_sites(
 
 ```
 {
-  on_demand_tls { ask http://web:5000/api/site/domain/authorize }
+  on_demand_tls { ask http://web:5000/api/site/authorize }
 }
 <域名> {
   tls { on_demand }
@@ -166,7 +166,14 @@ public_sites(
 }
 ```
 
-`POST /api/site/domain/authorize` 只在 Host 命中 `public_sites.custom_domain` 且状态允许时才 200，
+> **更正（Phase 19）**：这段原文写的是 `/api/site/domain/authorize`，而那个路由**不存在** ——
+> 真实实现是 `src/app/api/site/authorize/route.ts`。Caddy 的 `ask` 契约是"非 2xx 即拒绝"，
+> 所以 404 等于对**每个**域名拒绝签发，商家绑定自定义域名后永远拿不到证书，且没有任何
+> 报错指向这里。Caddyfile、`docker-compose.selfhosted.yml` 的注释与本文都已改正，
+> 并加了接线守卫（`tests/site-certificate-authorization.test.ts`：解析 ask 路径 →
+> 去文件系统确认 route.ts 存在 → 确认它在公开白名单里）。
+
+`POST /api/site/authorize` 只在 Host 命中 `public_sites.custom_domain` 且状态允许时才 200，
 否则 404（fail-closed）。这样别人的域名无法借我们的服务器签证书。
 
 `<slug>.<SITE_DOMAIN>` 走同一套；没有 DNS API token 时用 HTTP-01（要求该主机名已指向本服务器）。

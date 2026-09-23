@@ -143,7 +143,15 @@ describe('self-hosted deploy: database API boundary', () => {
 
   test('证书签发必须问过后端（on_demand_tls.ask）', () => {
     assert.match(CADDYFILE, /on_demand_tls \{/);
-    assert.match(CADDYFILE, /ask http:\/\/web:5000\/api\/site\/domain\/authorize/);
+    // ⚠️ 这条断言此前写的是 `/api/site/domain/authorize` —— 一个**从不存在**的路由。
+    // 它把缺陷钉成了"预期"：Caddyfile 与测试都写错，于是两边一致、全绿，
+    // 而真实路由是 /api/site/authorize。后果是 Caddy 对每个域名拿到 404
+    // （ask 的契约是"非 2xx 即拒绝"）→ 商家自定义域名永远签不出证书，且没有报错。
+    //
+    // 现在这里断言真实路径；更强的守卫在
+    // tests/site-certificate-authorization.test.ts —— 它解析本文件里的 ask 指令，
+    // 去文件系统里确认有对应的 route.ts，因此不会再出现"两边一起写错还全绿"。
+    assert.match(CADDYFILE, /ask http:\/\/web:5000\/api\/site\/authorize/);
     assert.match(CADDYFILE, /tls \{\s*on_demand\s*\}/);
   });
 

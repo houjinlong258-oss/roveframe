@@ -100,6 +100,55 @@ the build when a translation drifts.
 
 ---
 
+## Product Surface
+
+Four views of the product, from the owner's command centre down to the module set.
+
+> These are **product overview graphics rendered from the application's own screens** — not
+> captures of a live deployment. The platform has no public origin yet (`app.roveframe.ai` in the
+> mockup chrome is a design placeholder), and the panels show an empty workspace on purpose, so
+> no customer data is ever depicted. Real, unedited screenshots belong in `docs/screenshots/`,
+> which is still empty and says why — see [that note](docs/screenshots/README.md).
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/product-overview.png" alt="Command centre and AI COO assistant" /></td>
+<td width="50%"><img src="docs/assets/operations-modules.png" alt="Operations modules" /></td>
+</tr>
+<tr>
+<td><b>Command centre.</b> The owner's morning brief: what the AI team did overnight, revenue /
+orders / customers / conversion — with an honest <code>no comparative data</code> state instead of
+an invented delta — and the agent roster (CEO, Operations, Marketing, Customer) with per-agent
+activity. On the left, the AI COO assistant drafts and reasons over the same data.</td>
+<td><b>Operations modules.</b> The daily operational surface: business data (products, orders,
+inventory), reservations with a live status calendar, team management with roles, access control
+and the workforce centre (benefits, attendance exceptions, care tasks), and the AI website
+builder for a public storefront with custom domain and online ordering.</td>
+</tr>
+<tr>
+<td><img src="docs/assets/integrations-control-layer.png" alt="Integrations and control layer" /></td>
+<td><img src="docs/assets/content-customer-intelligence.png" alt="Content and customer intelligence" /></td>
+</tr>
+<tr>
+<td><b>Integrations &amp; control layer.</b> One place to connect the outside world and to bound
+what the agents may do: delivery-map provider, third-party service credentials, AI model access
+(per-capability routing), ERPNext connectivity, POS and payment connectors — alongside outbound
+and inbound mailbox setup, send rate and daily caps, and the switches for customer auto-reply,
+anomaly push and the daily brief.</td>
+<td><b>Content &amp; customer intelligence.</b> The knowledge and communication surfaces: a file
+centre for uploads and AI-generated reports, a knowledge brain answering from your own SOPs and
+policies with citations, review intelligence with sentiment and reply drafting, and an email
+centre that classifies incoming mail into inquiry / opportunity / complaint / supplier / other.</td>
+</tr>
+</table>
+
+Every panel above maps to a real route in this repository: the command centre is
+`src/app/[locale]/dashboard`, the assistant `agent`, the knowledge brain `knowledge`, reviews
+`reviews`, mail `emails`, operations `business` / `reservations` / `team` / `website`, and the
+control layer `settings`.
+
+---
+
 ## System Architecture
 
 The system is two planes with one contract.
@@ -356,6 +405,157 @@ The packager runs the production scan before writing:
 ```bash
 pnpm package:source -- --output ../roveframe-ai-business-os-source.zip
 ```
+
+---
+
+## Deployment
+
+**Two supported paths. Pick one; do not mix them.** The distinction is where the database lives.
+
+| | Path A — built-in database | Path B — external Supabase |
+|---|---|---|
+| Command | `bash install.sh` | `docker compose --env-file docker/deploy.env up -d --build` |
+| Database | Postgres 17 in a container, plus PostgREST, GoTrue and Storage | your own Supabase project |
+| Credentials | generated for you into `docker/deploy.env` (mode 600) | you fill in every value marked REQUIRED |
+| Best for | a bare server, self-hosting, no signups | an existing Supabase project, managed backups |
+| Compose files | `docker-compose.yml` + `docker-compose.selfhosted.yml` | `docker-compose.yml` |
+
+### Path A — one command on a bare server
+
+```bash
+git clone https://github.com/houjinlong258-oss/roveframe.git
+cd roveframe
+bash install.sh --domain app.example.com --email ops@example.com --llm-key sk-...
+```
+
+`install.sh` brings up the whole platform behind Caddy with automatic HTTPS:
+
+| Container | Role |
+|---|---|
+| `db` | `supabase/postgres:17.6.1.136` — the database, on a named volume |
+| `rest` | PostgREST `v14.17` — the data API the app talks to |
+| `auth` | GoTrue `v2.196.0` — identity (runs with autoconfirm, so no mail relay is required) |
+| `storage` | Storage API `v1.74.0` — product images and videos |
+| `gateway` | nginx `1.27-alpine` — exposes **only** `/storage/v1/object/public/*`; PostgREST and GoTrue are not reachable from the internet |
+| `edge` | Caddy `2-alpine` — TLS, on-demand certificates for merchant custom domains |
+| `web` | the Next.js control plane (bound to `127.0.0.1:5000`; everything public goes through `edge`) |
+
+Useful flags: `--registry docker.m.daocloud.io/` when Docker Hub is blocked, `--admin-email` /
+`--admin-password` / `--business "My Shop"` to create the first owner account, `--yes` for
+unattended installs.
+
+It is **idempotent** — re-running keeps the existing `docker/deploy.env`, so it will not rotate
+the JWT secret out from under logged-in users or change the database password after the volume
+is initialised — and it **fails loudly**: every wait has a deadline and prints the container logs
+on timeout.
+
+It deliberately does **not** touch DNS (point an A/AAAA record at the server first, or install
+without `--domain` and use `http://<server-ip>`), and it does not configure a mail relay.
+
+### Path B — external Supabase
+
+```bash
+cp docker/deploy.env.example docker/deploy.env
+# fill in every value marked REQUIRED, then:
+docker compose --env-file docker/deploy.env up -d --build
+```
+
+### What production requires
+
+Three of these make the app **refuse to start** rather than run half-configured:
+
+| Variable | Notes |
+|---|---|
+| `COZE_SUPABASE_URL` / `_ANON_KEY` | Project endpoint and public key |
+| `COZE_SUPABASE_SERVICE_ROLE_KEY` | **Required in production** — the web service refuses to start without it. Server-side only, never shipped to a browser |
+| `COZE_SUPABASE_JWT_SECRET` | Recommended: verifies sessions locally instead of a round trip per request |
+| `ENCRYPTION_SECRET` | **Required in production.** AES-256-GCM key for stored credentials, 32+ chars. Must **differ** from the service-role key — reusing it means rotating the database credential makes every stored secret permanently undecryptable. Rotate via `ENCRYPTION_SECRET_PREVIOUS` (decryption-only) |
+| `ROVEAGENT_API_KEY` / `ROVEAGENT_APPROVAL_SECRET` | Service-to-service auth. They must be **different values**: the runtime answers 503 when they match, so that holding the caller key does not also confer approval-signing authority |
+| `ROVEAGENT_LLM_API_KEY` | The agent runtime answers 503 without it rather than fabricating an answer |
+| `NEXT_PUBLIC_APP_URL` | Public origin — read at runtime, not baked into the image |
+| `SITE_DOMAIN` | Empty means an IP-only install |
+| Platform model (`ROVEFRAME_PLATFORM_LLM_*`) | Optional but worth setting on self-hosted installs: without a platform model, a **newly registered** tenant whose `model_assign` is `auto` has no working model, because signup creates tenant, business, user and profile but no `settings` row |
+
+### Health, readiness and metrics
+
+The image ships its own readiness probe, so an orchestrator needs no extra wiring:
+
+```
+HEALTHCHECK --interval=30s --timeout=20s --start-period=90s --retries=3
+  → fetch http://127.0.0.1:5000/api/health     (non-2xx ⇒ unhealthy)
+```
+
+`/api/health` returns **503** unless all three hold — the live schema matches the expected
+52 tables / 600+ columns, the agent runtime answers, and the scheduler's heartbeat is fresh. That
+means "container up, database drifted" is exactly the state that stops receiving traffic.
+
+```bash
+curl -fsS http://localhost:5000/api/health            # 200 when ready, 503 with reasons when not
+curl -fsS -H "X-RoveAgent-Key: $ROVEAGENT_API_KEY" \
+     http://localhost:5000/api/metrics                # Prometheus text format
+```
+
+`ops/alerts/roveframe.rules.yml` holds 13 ready-to-load alert rules (availability, scheduler,
+queue backlog, payments, memory) with a zero-dependency validator:
+
+```bash
+node scripts/check-alert-rules.mjs --base http://localhost:5000 --key "$ROVEAGENT_API_KEY"
+```
+
+### Schema creation and migration on first boot
+
+`autoMigrate()` applies all **20** migration files (idempotent: `create … if not exists`,
+`add column if not exists`, `drop policy if exists` + `create policy`) and then the preflight
+verifies the result. It runs from the production entry point only — `next start` does **not**
+load `src/server.ts`, so it will not migrate anything.
+
+Migration needs **one** of `DATABASE_URL` / `POSTGRES_URL` / `DIRECT_URL` /
+`COZE_SUPABASE_DATABASE_URL` / `SUPABASE_DATABASE_URL` / `PG_CONNECTION_STRING`, or
+`SUPABASE_ACCESS_TOKEN`. Without them the process still starts and logs it plainly:
+
+```
+⚠️ [migrate] 未配置 DATABASE_URL 或 SUPABASE_ACCESS_TOKEN，跳过自动建表。
+✓ [boot-check] 数据库 schema 完整
+```
+
+That is the safe failure mode: refuse to guess, say what is missing, and let `/api/health`
+report the consequence.
+
+### Custom domains (merchant storefronts)
+
+A merchant binds their own domain in the app; Caddy issues the certificate on demand, asking the
+application first so the server can never be used to mint certificates for arbitrary hostnames:
+
+```caddyfile
+on_demand_tls { ask http://web:5000/api/site/authorize }
+```
+
+That endpoint answers **200** only when the host matches `SITE_DOMAIN`, or a `public_sites` row
+whose `custom_domain` is active *and* enabled; anything else is 404, fail-closed. A wiring test
+asserts that this `ask` path really has a route and is on the public allowlist, because a typo
+here fails silently: Caddy treats any non-2xx as denial, so every merchant domain would simply
+never obtain a certificate.
+
+### Scaling constraint: run one replica
+
+Rate limiting and chat concurrency slots live in process memory, so the current build is
+**single-replica by definition**. Setting `ROVEFRAME_RATE_LIMIT_SHARED=1` is a *declaration* that
+a shared backend exists, not a switch — the startup contract check fails loudly if it is set and
+the backend is not. Likewise, run exactly one process that owns the scheduler; a second one would
+double the ticks.
+
+### Post-deploy checklist
+
+1. `curl -fsS http://<host>/api/health` → 200 (503 means schema drift or an unreachable runtime;
+   the response says which).
+2. Log in with the owner account created by `install.sh --admin-email`, or create/reset one with
+   `npx tsx scripts/ensure-initial-user.ts` (idempotent; resets the password if the account
+   exists).
+3. `curl -H "X-RoveAgent-Key: …" /api/metrics` → counters present, and
+   `roveframe_metrics_collection_ok` is 1 for every collector.
+4. Scrape `/api/metrics` and load `ops/alerts/roveframe.rules.yml` — without this, a stalled
+   scheduler or a growing queue is invisible.
+5. Rotate any credential that was generated or shared during setup, then re-check health.
 
 ---
 

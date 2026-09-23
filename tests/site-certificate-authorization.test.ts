@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { NextRequest } from 'next/server';
 
@@ -195,5 +195,49 @@ describe('接线契约', () => {
         `删掉 ${condition} 条件后，本断言必须能察觉`,
       );
     }
+  });
+
+  test('Caddyfile 的 on_demand_tls.ask 指向**真实存在**的路由', () => {
+    // 为什么需要这条：Caddyfile 里此前写的是
+    // `ask http://web:5000/api/site/domain/authorize`，而那个路由不存在
+    // （真实路由是 /api/site/authorize）。Caddy 的 ask 契约是"非 2xx 即拒绝"，
+    // 于是一个 404 会让**每一个**自定义域名的证书签发被静默拒绝 ——
+    // 商家绑好域名、状态改成 active，证书永远签不出来，也没有任何报错指向这里。
+    //
+    // 这条断言把"Caddyfile 里写的路径"与"src/app/api 下真实存在的路由"钉在一起，
+    // 任何一侧改名而另一侧没跟上都会立刻变红。
+    const caddy = read('docker/caddy/Caddyfile');
+    // 只认**指令行**（行首可选空白 + ask + 一个 URL + 行尾），不认注释里的散文。
+    // 第一版写成 /ask\s+(\S+)/，结果匹配到文件头注释里的
+    // "…but ask the app before spending a certificate…"，把 "the" 当成 URL，
+    // 报 ERR_INVALID_URL —— 探针自己先撒了谎。锚定行首之后才不会。
+    const askUrl = /^[ \t]*ask[ \t]+(\S+)[ \t]*$/m.exec(caddy)?.[1];
+    assert.ok(askUrl, 'Caddyfile 里找不到 on_demand_tls.ask 指令行');
+    const askPath = new URL(askUrl).pathname;
+
+    const routeFile = join(
+      process.cwd(), 'src', 'app', ...askPath.split('/').filter(Boolean), 'route.ts',
+    );
+    assert.ok(
+      existsSync(routeFile),
+      `Caddyfile 的 ask 指向 ${askPath}，但 ${routeFile} 不存在 —— `
+      + 'Caddy 会对每个域名拿到 404 并拒绝签发证书（静默失败）',
+    );
+
+    // 该路径还必须公开（Caddy 没有站内会话），否则 ask 恒 401 ⇒ 同样全拒
+    assert.match(
+      read('src/lib/auth-guard.ts'),
+      new RegExp(`'${askPath}'`),
+      `${askPath} 不在公开白名单里 —— Caddy 的 ask 会恒 401，等于全拒`,
+    );
+
+    // 负向对照：那个曾经写错的路径必须**没有**路由，否则本断言没有分辨力
+    const wrongRoute = join(
+      process.cwd(), 'src', 'app', 'api', 'site', 'domain', 'authorize', 'route.ts',
+    );
+    assert.ok(
+      !existsSync(wrongRoute),
+      'domain/authorize 现在存在了？那要重新确认 Caddyfile 指的到底是哪一个',
+    );
   });
 });

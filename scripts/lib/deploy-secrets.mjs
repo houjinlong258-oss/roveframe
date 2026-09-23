@@ -187,7 +187,7 @@ export function buildDeployEnv(options = {}) {
   push('# === Public origin, domain and certificates ================================');
   push('# Read at RUNTIME (verified: NEXT_PUBLIC_APP_URL is not baked into the build).');
   push(`NEXT_PUBLIC_APP_URL=${publicOrigin}`);
-  push('# Empty for an IP-only install. When set, /api/site/domain/authorize approves');
+  push('# Empty for an IP-only install. When set, /api/site/authorize approves');
   push('# this hostname for certificate issuance.');
   push(`SITE_DOMAIN=${existing.get('SITE_DOMAIN') ?? domain}`);
   push('# Optional: Let\'s Encrypt uses it for expiry warnings. Certificates are still');

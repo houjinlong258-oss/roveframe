@@ -25,7 +25,15 @@
 		# Approved hostnames only. The endpoint answers 200 for the platform's
 		# own SITE_DOMAIN and for any custom_domain that is active in
 		# public_sites, and 404 for everything else (fail-closed).
-		ask http://web:5000/api/site/domain/authorize
+		#
+		# ⚠️ 路径必须是 /api/site/authorize —— 这里此前写的是
+		# `/api/site/domain/authorize`，而那个路由**不存在**。Caddy 的 ask
+		# 契约是"非 2xx 即拒绝"，所以 404 会让**每一个**自定义域名的证书签发
+		# 被拒（商家绑定域名后永远签不出证书），而且失败是静默的：Caddy 只是
+		# 拒绝，不会说是因为路径打错了。
+		# 守卫：tests/site-certificate-authorization.test.ts 的"接线契约"一节
+		# 会解析本文件并断言这个路径真的有对应的 route.ts。
+		ask http://web:5000/api/site/authorize
 	}
 }
 

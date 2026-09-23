@@ -3,9 +3,20 @@
 This directory is where product screenshots live **when they are real**.
 
 There are none yet. The product surface exists and runs, but no screenshots have been captured
-for publication, and this project does not ship mockups or generated images that pretend to be
-the running application. The architecture overview and logo under `docs/assets/` are diagrams and
-brand assets — they are labelled as such in the README and are not presented as screenshots.
+for publication, and this project does not ship mockups that pretend to be a running application.
+
+## What is in `docs/assets/` instead
+
+`docs/assets/` holds **brand and product-overview graphics**, and they are labelled as such:
+the logo, an architecture diagram, and four product panels rendered from the application's own
+screens. Those four are composites, not captures: the browser chrome shows a placeholder origin
+(`app.roveframe.ai`) because no public deployment exists yet, and the panels deliberately show an
+empty test workspace so that no customer data is ever depicted. The README says all of this next
+to the images rather than letting them pass as screenshots.
+
+The distinction matters because the two answer different questions. A README panel answers
+"what does this product do?"; a screenshot answers "does this actually run?". Only the second
+one is evidence, and this directory is where that evidence goes — when there is some.
 
 ## How to add a screenshot properly
 

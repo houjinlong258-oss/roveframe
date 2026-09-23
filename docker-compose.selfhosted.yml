@@ -269,7 +269,9 @@ services:
       # URL that gets stored/rendered; unset, behaviour is unchanged.
       STORAGE_PUBLIC_BASE_URL: ${NEXT_PUBLIC_APP_URL:?set NEXT_PUBLIC_APP_URL (public origin)}
 
-      # Lets /api/site/domain/authorize approve the platform's own hostname.
+      # Lets /api/site/authorize approve the platform's own hostname.
+      #（此前这里写的是 /api/site/domain/authorize —— 那个路由不存在。
+      #  见 docker/caddy/Caddyfile 的说明与该接线守卫测试。）
       SITE_DOMAIN: ${SITE_DOMAIN:-}
     # Keep the raw port reachable from the server itself (SSH tunnel) but not
     # from the internet: everything public must go through `edge`.

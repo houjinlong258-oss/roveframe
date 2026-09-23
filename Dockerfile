@@ -134,16 +134,21 @@ USER node
 
 EXPOSE 5000
 
-# /api/health is the app's own readiness probe: it verifies the database tables
-# it depends on. A 503 here means "app up, database not migrated", which is
-# exactly when this container should NOT be routed traffic.
+# /api/health is the app's own readiness probe: it verifies the database schema
+# it depends on. A 503 here means "app up, database not migrated or drifted",
+# which is exactly when this container should NOT be routed traffic.
 #
 # Node 22 global fetch, so no curl and no apt layer are needed.
-# Phase 14：timeout 从 5s 提到 20s。
-# /api/health 会查 11+ 张表，而生产库是**跨公网的远程 Supabase**；5s 是照本地库
-# 设的，实测在真实库上稳定超时（docker inspect 报 "Health check exceeded timeout
-# (5s)"），使一个功能完全正常的容器被标记 unhealthy。
-# 这是只有把容器连到真实远程库才会暴露的缺陷 —— 本地/占位凭据下永远看不到。
+#
+# Phase 14：timeout 从 5s 提到 20s —— 当时 /api/health 逐张表串行探测（11+ 次远程
+# 往返），5s 是照本地库设的，实测在真实远程库上稳定超时（docker inspect 报
+# "Health check exceeded timeout (5s)"），使一个功能完全正常的容器被标记 unhealthy。
+# 这是只有把容器连到真实远程库才会暴露的缺陷。
+#
+# Phase 19：探测换成"一次拉取 schema 文档 + 与 schema.ts 全量比对"
+# （52 张表 / 600+ 列，见 src/lib/schema-drift.ts），往返从 11+ 次降到 1 次；
+# 本机实测 p50 由 5145ms 降到 1062ms。20s 的余量因此更宽裕，保留不变 ——
+# 它同时覆盖"远端库慢"与"DNS 慢"两种真实情况，收紧只会换来误报。
 HEALTHCHECK --interval=30s --timeout=20s --start-period=90s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||5000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 

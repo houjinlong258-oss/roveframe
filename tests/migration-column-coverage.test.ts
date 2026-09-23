@@ -190,6 +190,26 @@ describe('migration column coverage (Phase 15)', () => {
     return /\b(delete\s+from|truncate\s+table)\b/i.test(remainder);
   }
 
+  /**
+   * Phase 19：第二类合法迁移 —— **RLS 策略**。
+   *
+   * `migrate-rls.sql` / `migrate-rls-gaps.sql` 不改表结构、不插数据，只做
+   * `alter table … enable row level security` 与 `create policy`。
+   * `enable row level security` 本身幂等；`create policy` 的幂等性来自紧跟其前的
+   * `drop policy if exists`（两个文件都是这个成对写法，实测连跑两次 policies 计数不变）。
+   *
+   * 这里不把它算作"什么都没做"，但也不放宽成"含有 policy 字样即可"：
+   * 必须同时出现 RLS 开启语句 + 策略语句 + 成对的 drop，且不得含未登记删除。
+   * 只有 `create policy` 没有 `drop policy if exists` 的文件仍会被拦下。
+   */
+  function isRlsPolicyMigration(rel: string, sql: string): boolean {
+    if (!/enable\s+row\s+level\s+security/i.test(sql)) return false;
+    if (!/create\s+policy/i.test(sql)) return false;
+    if (!/drop\s+policy\s+if\s+exists/i.test(sql)) return false;
+    if (unregisteredDeletes(rel, sql)) return false;
+    return true;
+  }
+
   test('自动清单内的每个文件都真的创建/修改了对象，或是**幂等的**数据种子', async () => {
     const mod = await import('../src/lib/migration');
     const empty: string[] = [];
@@ -207,13 +227,17 @@ describe('migration column coverage (Phase 15)', () => {
       return true;
     };
 
+    /**
+     * Phase 19：第二类合法迁移 —— **RLS 策略**（判定函数见上方 isRlsPolicyMigration）。
+     */
     for (const rel of mod.MIGRATION_FILE_LIST) {
       const sql = read(rel);
       const creates = /create table if not exists/i.test(sql);
       const columns = /add column if not exists/i.test(sql);
       const views = /create or replace view/i.test(sql);
       const indexes = /create (unique )?index if not exists/i.test(sql);
-      if (!creates && !columns && !views && !indexes && !isIdempotentSeed(rel, sql)) {
+      if (!creates && !columns && !views && !indexes
+        && !isIdempotentSeed(rel, sql) && !isRlsPolicyMigration(rel, sql)) {
         empty.push(rel);
       }
     }
@@ -237,6 +261,30 @@ describe('migration column coverage (Phase 15)', () => {
       '这些迁移含**未登记**的删除语句。自动迁移不得做无界删除；'
       + '如果确实需要清理过期行，必须是以"父行不存在"为条件的有界 GC，'
       + `并在 ALLOWED_ORPHAN_GC 里显式登记：${offenders.join(', ')}`,
+    );
+  });
+
+  test('RLS 策略判定有负向对照：缺 drop / 含未登记删除 / 未开 RLS 都必须判否', () => {
+    const good = [
+      "alter table public.t enable row level security;",
+      "drop policy if exists t_svc on public.t;",
+      "create policy t_svc on public.t to service_role using (true) with check (true);",
+    ].join('\n');
+    assert.equal(isRlsPolicyMigration('scripts/x.sql', good), true,
+      '正例被误判 —— 判定函数过严，真文件会重新掉回"什么都没做"');
+
+    // 负向对照：三种残缺形态都必须判否，否则判定器等于免死金牌
+    assert.equal(
+      isRlsPolicyMigration('scripts/x.sql', good.replace(/drop policy if exists[^\n]*\n/, '')),
+      false, '缺 `drop policy if exists` 的 create policy 不是幂等迁移，必须判否',
+    );
+    assert.equal(
+      isRlsPolicyMigration('scripts/x.sql', `${good}\ndelete from public.t;`),
+      false, '含未登记删除的 RLS 文件必须判否',
+    );
+    assert.equal(
+      isRlsPolicyMigration('scripts/x.sql', 'create policy t on public.t to anon using (true);'),
+      false, '没有 enable row level security 的策略文件必须判否',
     );
   });
 

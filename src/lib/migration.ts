@@ -91,6 +91,28 @@ const MIGRATION_FILES = [
   // 后者是 ETA 的**唯一诚实来源**：地址是文本，没有地理编码服务就换不出坐标；
   // 顾客下单时由本人设备定位提供，取不到就为 NULL，ETA 返回 null 而不是编一个。
   'scripts/migrate-delivery-positions.sql',
+  // Phase 19（上线阻断项 1）：RLS 覆盖。
+  //
+  // 这两个文件此前都**不在**清单里，而这正是缺口长期存在的制度原因：
+  //   · `migrate-rls.sql`（33 张表）是 Phase 15 **手工**应用的，从未在任何自动
+  //     迁移路径上执行过 —— 于是"全新部署有数据库层隔离"这句话没有代码支撑；
+  //   · 它用的是**手写的表清单**，Phase 17/18 新增的表从未被加进去。
+  //
+  // 实测后果（独立审查用项目自己的 anon key 读到）：`delivery_orders` 21/21 行
+  // （含收件人姓名/电话/地址）、`delivery_positions` 16/16（骑手经纬度轨迹）、
+  // `staff_attendance` 3/3、`public_sites` 1/1（含一个**可用**的点餐 token，
+  // 用它调 /api/store/menu 返回 200 与真实菜单）。
+  //
+  // 我这轮用只读的 `pg_policies` 复核后发现未启用 RLS 的是 **12 张** ——
+  // 审查者只能看见当时**有数据**的 4 张；另 8 张是空表，"anon 读到 0 行"与
+  // "RLS 拦住了"在他那里不可区分。
+  //
+  // 顺序放在最后：策略要引用 public.users / tenants / businesses，必须先存在。
+  // 两个文件都幂等（to_regclass 判断 + drop policy if exists + create policy），
+  // 且都在末尾带自检 notice（同时检查"未启用 RLS"与"启用了却零策略"——
+  // 只查前者会把后者判成通过，Phase 15 §3.2 正是栽在那上面）。
+  'scripts/migrate-rls.sql',
+  'scripts/migrate-rls-gaps.sql',
 ] as const;
 
 /** 供回归测试断言"自动迁移覆盖了代码真正读写的列"。 */

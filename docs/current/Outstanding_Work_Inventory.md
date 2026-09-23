@@ -98,7 +98,7 @@ Cloudflare token、R2 访问密钥、LLM API key。
 | 目录 | 大小 |
 |---|---|
 | `%LOCALAPPDATA%\Docker\wsl\disk\docker_data.vhdx` | 20.79 GB（daemon 未运行，不会自动收缩） |
-| `%LOCALAPPDATA%\hermes` | 3.14 GB（另一套代理框架） |
+| `<另一套代理框架的数据目录>` | 3.14 GB（另一套代理框架） |
 | `%LOCALAPPDATA%\Google`（Chrome） | 2.51 GB |
 | `%LOCALAPPDATA%\ms-playwright` | 0.67 GB（**本项目不用 Playwright**，是死重量） |
 

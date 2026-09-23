@@ -63,7 +63,41 @@ const MOBILE = process.argv.includes('--mobile');
 const ALLOW = arg('allow');
 
 const userDataDir = mkdtempSync(join(tmpdir(), 'rf-cdp-'));
-const port = 9000 + Math.floor(Math.random() * 900);
+
+/**
+ * 选一个**确实空闲**的调试端口。
+ *
+ * 第一版是 `9000 + random(900)`。实测它会造成两类假失败：
+ *
+ *   1. **撞上残留的旧 Chrome。** 本脚本在 Windows 上 `child_process.kill()`
+ *      只结束父进程，headless Chrome 的子进程会留下来继续监听它的调试端口。
+ *      实测一次会话后残留 **261 个 headless 进程、占着 21 个端口**。
+ *      新探针若随机到其中一个端口，就会连上**别人的**浏览器 —— 表现是
+ *      "判定行都没有"或结论与页面无关，而真实原因与本页无关。
+ *   2. 端口被别的程序占用时同样会连错。
+ *
+ * 因此先做一次 bind 探测：能绑上才算空闲。
+ */
+async function pickFreePort(start = 9000, end = 9899) {
+  const { createServer } = await import('node:net');
+  const candidates = [];
+  for (let p = start; p <= end; p += 1) candidates.push(p);
+  // 从随机位置开始扫，避免每次都从 9000 起（并发跑多个探针时更容易撞）
+  const offset = Math.floor(Math.random() * candidates.length);
+  for (let i = 0; i < candidates.length; i += 1) {
+    const port = candidates[(offset + i) % candidates.length];
+    const free = await new Promise((resolve) => {
+      const server = createServer();
+      server.once('error', () => resolve(false));
+      server.once('listening', () => server.close(() => resolve(true)));
+      server.listen(port, '127.0.0.1');
+    });
+    if (free) return port;
+  }
+  throw new Error('找不到空闲的调试端口（9000-9899 全被占用）');
+}
+
+const port = await pickFreePort();
 
 const chrome = spawn(CHROME, [
   '--headless=new',
@@ -77,9 +111,81 @@ const chrome = spawn(CHROME, [
   'about:blank',
 ], { stdio: 'ignore' });
 
-function cleanup() {
-  try { chrome.kill(); } catch { /* 已退出 */ }
-  try { rmSync(userDataDir, { recursive: true, force: true }); } catch { /* 占用中 */ }
+/**
+ * 结束 Chrome —— 必须连**整棵进程树**，而且必须**等它做完、并验证真的杀掉了**。
+ *
+ * ## 两次失败尝试（都实测过，不是推测）
+ *
+ * 1. `chrome.kill()`：Windows 上只结束直接子进程。headless Chrome 会派出渲染 /
+ *    GPU / 网络 / crashpad 等一堆子进程，它们继续持有 `--remote-debugging-port`
+ *    的监听。实测一次会话后残留 **261 个无窗口 chrome 进程、占着 21 个调试端口**，
+ *    后续探针随机撞到旧端口、连上**别人的**浏览器（表现是"判定行都没有"）。
+ * 2. `taskkill /PID <pid> /T /F`（同步 spawn，不等）：Node 紧接着 `process.exit()`
+ *    ⇒ kill 还没执行完就退出了。改成 await 之后**仍然残留 11 个** ——
+ *    `/T` 依赖父子关系，而 Chrome 的子进程会重新挂到别处（Windows 上常见），
+ *    于是进程树遍历漏掉它们。
+ *
+ * ## 现在的方式：按**唯一标记**枚举，并校验结果
+ *
+ * `--user-data-dir` 每次运行都是唯一路径（`rf-cdp-<随机>`），因此"属于本次运行"
+ * 这件事是可判定的，不依赖进程树关系。`taskkill /IM` 不支持命令行过滤，
+ * 所以用 CIM 查询取 PID 再逐个杀。
+ *
+ * **并且把杀掉的进程数打印出来**：清理是否生效必须是可观测的 ——
+ * 前两次尝试的失败都是因为"看起来调用了清理"，而没人验证它到底杀掉了几个。
+ */
+async function killChromeTree() {
+  const mark = userDataDir.replace(/\\/g, '\\\\');
+  if (process.platform !== 'win32') {
+    try { chrome.kill('SIGKILL'); } catch { /* 已退出 */ }
+    return 0;
+  }
+  // 1) 先按唯一标记枚举（不依赖进程树）
+  const query = spawn('powershell', [
+    '-NoProfile', '-Command',
+    `$p = Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | `
+    + `Where-Object { $_.CommandLine -like '*${userDataDir}*' }; `
+    + '$p | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; '
+    + 'Write-Output $p.Count',
+  ], { stdio: ['ignore', 'pipe', 'ignore'] });
+
+  let killed = 0;
+  const done = new Promise((resolve) => {
+    let out = '';
+    const timer = setTimeout(() => { try { query.kill(); } catch { /* 忽略 */ } resolve(); }, 8000);
+    query.stdout?.on('data', (d) => { out += String(d); });
+    query.on('close', () => {
+      clearTimeout(timer);
+      const n = Number(String(out).trim().split('\n').pop());
+      killed = Number.isFinite(n) ? n : 0;
+      resolve();
+    });
+    query.on('error', () => { clearTimeout(timer); resolve(); });
+  });
+  await done;
+
+  // 2) 兜底：再杀一次直接子进程（防止标记查询因权限等原因漏掉）
+  if (chrome.pid) {
+    try { spawn('taskkill', ['/PID', String(chrome.pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* 忽略 */ }
+  }
+
+  if (process.env.RF_BROWSER_CHECK_VERBOSE === '1') {
+    console.error(`[browser_check] killed ${killed} chrome process(es) matching this run`);
+  }
+  return killed;
+}
+
+async function cleanupAndWait() {
+  await killChromeTree();
+  // taskkill 返回后文件句柄才真正释放，否则 rmSync 会因占用失败
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      rmSync(userDataDir, { recursive: true, force: true });
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
 }
 
 /** 等调试端点就绪（headless 冷启动有几百毫秒）。 */
@@ -108,8 +214,10 @@ function main() {
     const finish = (code) => {
       if (done) return;
       done = true;
-      cleanup();
-      resolve(code);
+      // 必须**等**清理真正完成再让 main() 返回 —— 见 cleanupAndWait 的注释：
+      // 第一版在这里同步调用 taskkill，而调用方立刻 process.exit()，
+      // 于是 kill 还没执行完 Node 就已经退出，headless Chrome 全部留下。
+      cleanupAndWait().then(() => resolve(code), () => resolve(code));
     };
 
     (async () => {

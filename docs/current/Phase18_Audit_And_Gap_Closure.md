@@ -178,7 +178,7 @@ amber 警示色），三语文案齐备。
 | 目录 | 大小 | 说明 |
 |---|---|---|
 | `%LOCALAPPDATA%\Docker\wsl\disk\docker_data.vhdx` | **20.79 GB** | Docker Desktop 虚拟磁盘；daemon 当前没运行，不会自动收缩 |
-| `%LOCALAPPDATA%\hermes` | 3.14 GB | 另一套代理框架的数据 |
+| `<另一套代理框架的数据目录>` | 3.14 GB | 另一套代理框架的数据 |
 | `%LOCALAPPDATA%\Google`（Chrome） | 2.51 GB | 浏览数据 |
 | `%LOCALAPPDATA%\com.crow5.desktop` | 2.46 GB | 第三方应用 |
 | `%LOCALAPPDATA%\ms-playwright` | 0.67 GB | **本项目不用 Playwright**（本轮的浏览器验证零依赖自建） |

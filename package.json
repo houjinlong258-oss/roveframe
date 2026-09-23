@@ -21,6 +21,7 @@
     "scan:production": "node scripts/production-scan.mjs all",
     "package:source": "python scripts/package-source.py",
     "validate:migrations": "node scripts/verify-migrations.mjs",
+    "validate:alerts": "node scripts/check-alert-rules.mjs",
     "backup": "node scripts/backup.mjs",
     "backup:verify": "node scripts/backup.mjs --verify",
     "drill:rollback": "node scripts/rollback-drill.mjs",

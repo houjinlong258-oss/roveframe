@@ -1,0 +1,239 @@
+# RoveFrame 告警规则（Phase 19 上线阻断项 3）
+#
+# ## 为什么是文件而不是文档里的一段示例
+#
+# 独立审查的结论是："指标端点存在，但仓库里零个告警规则文件。'有指标'不等于
+# '会有人被叫醒'。" 本文件是那件缺失的东西：一条可被 Prometheus 加载的规则集。
+#
+# ## 机器校验（不用 promtool，也不新增依赖）
+#
+#     node scripts/check-alert-rules.mjs                 # 校验结构 + 指标名 + 注释
+#     node scripts/check-alert-rules.mjs --base <url>    # 再与真实 /api/metrics 对照
+#     pnpm test                                          # tests/alert-rules.test.ts 同源断言
+#
+# 校验器会拒绝：引用了代码里不存在的指标名、缺 runbook、缺 severity、重复的 alert 名、
+# 空的 expr、以及**解析到的规则数与文件里 `- alert:` 出现次数不一致**（防止解析器
+# 静默漏读，那正是"探针自己撒谎"的形态）。
+#
+# ## 每条规则的 runbook 回答"值班第一步做什么"
+#
+# 规则里 `runbook` 注释是给人看的，不是给告警系统的装饰。写不出来就说明这条
+# 规则不该存在。
+#
+# ## 指标来源
+#
+# 全部来自 `GET /api/metrics`（`src/lib/observability/metrics.ts` 渲染）。
+# 该端点需要 `X-RoveAgent-Key` 或平台管理员会话。
+
+groups:
+  - name: roveframe-availability
+    rules:
+      # ---------------------------------------------------------------
+      # P1 可达性：抓不到就是最严重的一种故障
+      # ---------------------------------------------------------------
+      - alert: RoveFrameScrapeAbsent
+        # 用 absent() 而不是 up == 0：absent() 表达的是"这个指标**一条都没有**"，
+        # 即采集目标整个消失（进程死了、端口没了、鉴权坏了）。up==0 由 Prometheus
+        # 自身提供，但这条规则的价值恰恰在于**不需要**假设采集器配置正确。
+        expr: absent(roveframe_health_database_ok)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "RoveFrame 指标端点在 5 分钟内一次都没有被抓取到"
+          runbook: >-
+            第一步：在能访问部署机的终端上执行
+            `curl -sS -o /dev/null -w '%{http_code}' -H "X-RoveAgent-Key: $ROVEAGENT_API_KEY" http://<host>:<port>/api/metrics`。
+            200 = 采集器侧配置/网络问题（查 Prometheus targets 页与防火墙）；
+            401 = 密钥不匹配（比对部署环境里的 ROVEAGENT_API_KEY 与采集器里的值）；
+            连不上 = 进程挂了，去看容器状态与启动日志。
+
+      - alert: RoveFrameHealthEndpointFailing
+        # /api/health 的总体判定：数据库 schema 漂移、运行时不可达、调度器无心跳
+        # 三者任一都会让它返回 503。指标侧用 database_ok 代表"自检能给出结论"。
+        expr: roveframe_health_database_ok == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "启动自检报告 schema 漂移或无法读取真实 schema（超过 5 分钟）"
+          runbook: >-
+            第一步：`curl -sS -H "X-RoveAgent-Key: $ROVEAGENT_API_KEY" http://<host>:<port>/api/health | jq .`，
+            看 `database.missingCount` 与服务端日志里的
+            `[boot-check]`/`[health] database is missing required tables:` 行。
+            该行会列出具体的表/列。缺表缺列 = 迁移没跑完（检查自动迁移清单
+            `src/lib/migration.ts`）；若是"无法读取真实 schema"，那是网络或凭据问题，
+            此时自检按失败处理，不要当成通过。
+
+      - alert: RoveFrameMetricsCollectionFailing
+        # 队列/用量/支付采集失败时，数据指标会**缺席**而不是报 0。
+        # 没有这条规则，采集失败就表现为"一切正常"。
+        expr: roveframe_metrics_collection_ok == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "指标采集器 {{ $labels.collector }} 连续 10 分钟查询失败"
+          runbook: >-
+            第一步：看服务端日志里 `[metrics] ... 采集失败` 那一行（会带 Supabase 的
+            原始错误）。常见原因是表被改列名、RLS 策略把 service_role 也挡了、
+            或连接数打满。注意：此时 `roveframe_outbox_*` / `roveframe_payment_*`
+            **不会出现**，不要把它们缺席读成"队列是空的"。
+
+      # ---------------------------------------------------------------
+      # P2 静默降级：最难长期发现的一类
+      # ---------------------------------------------------------------
+      - alert: RoveFrameSchedulerNotAdvancing
+        expr: roveframe_scheduler_last_tick_age_seconds > 300
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "调度器心跳已过期 {{ $value }} 秒（阈值 300 秒，tick 间隔 60 秒）"
+          runbook: >-
+            第一步：确认进程是用**生产入口**启动的：`node dist/server.js`
+            （`scripts/start.sh`）。`next start` 不会加载 `src/server.ts`，
+            因此 `startScheduler()` 永远不会跑 —— 这正是一次实际发生过的故障形态，
+            症状就是这条规则持续触发而应用看起来"还能用"。
+            第二步：若入口正确，看启动日志里有没有 `startScheduler` 之后的未捕获异常。
+            影响面：每日简报、异常推送、超时关单、`purgeOldPositions` 全部停摆。
+
+      - alert: RoveFrameSchedulerUnhealthy
+        expr: roveframe_health_scheduler_ok == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "调度器未被证据表明在运行（心跳缺失或降级）"
+          runbook: >-
+            第一步：`curl -sS -H "X-RoveAgent-Key: $ROVEAGENT_API_KEY" http://<host>:<port>/api/health | jq .scheduler`。
+            `source: "unknown"` = 从未写过心跳（进程不是生产入口）；
+            `heartbeatStale: true` = 曾经跑过但停了（查 crash-loop）；
+            `degraded: true` = `cron_state` 读不了（库/权限问题）。
+
+      - alert: RoveFrameRuntimeUnhealthy
+        expr: roveframe_health_runtime_ok == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Python Agent 运行时不响应存活探测（超过 10 分钟）"
+          runbook: >-
+            第一步：`docker ps` 看 `roveframe-roveagent-1` 是否 healthy；不健康就看
+            `docker logs --tail 200 roveframe-roveagent-1`。
+            注意宿主机**刻意不映射** 8788，所以从宿主机直接 curl 该端口必然失败 ——
+            那不算这条告警的成因。影响面：AI 对话、知识库问答、所有 Agent 工具不可用。
+
+      # ---------------------------------------------------------------
+      # 队列积压（外发邮件 / 推送）
+      # ---------------------------------------------------------------
+      - alert: RoveFrameNotificationBacklog
+        # 按**最老一条的年龄**触发，不按行数：一次正常批量入队会造成瞬时堆积，
+        # 按行数会误报；排了 15 分钟还没人处理才是故障。
+        expr: roveframe_outbox_oldest_pending_seconds{queue="notification"} > 900
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "推送队列最老一条已等待 {{ $value }} 秒（阈值 900 秒）"
+          runbook: >-
+            第一步：`select status, count(*), min(created_at) from notification_outbox group by status;`
+            （或用 service_role 走 PostgREST）。若 status 全是 queued 且 created_at 很旧
+            ⇒ 没有消费者：先查调度器（见 RoveFrameSchedulerNotAdvancing）。
+            若有 failed/attempts >= max_attempts ⇒ 看 last_error 是投递失败还是 web-push 密钥失效。
+            修好后把 available_at 提前即可让消费者重新拾取。
+
+      - alert: RoveFrameEmailBacklog
+        expr: roveframe_outbox_oldest_pending_seconds{queue="email"} > 1800
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "外发邮件队列最老一条已等待 {{ $value }} 秒（阈值 1800 秒）"
+          runbook: >-
+            第一步：`select status, count(*), min(created_at) from email_send_tasks group by status;`。
+            反复失败通常是 SMTP 凭据失效或被限流（查 `last_error`）。
+            注意营销邮件按客户逐封生成，队列变长本身正常；**年龄**变长才是问题。
+            若长期积压且发件凭据已失效，先暂停活动，避免积压后在恢复瞬间集中外发。
+
+      - alert: RoveFrameOutboxDeadLetter
+        expr: roveframe_outbox_failed_total > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "队列 {{ $labels.queue }} 有 {{ $value }} 条进入失败/死信状态"
+          runbook: >-
+            第一步：取出这些行的 `last_error`（最近 20 条即可），按错误文本分组。
+            同一种错误占多数 ⇒ 是系统性原因（凭据/上游 5xx/格式），修根因后批量重试；
+            错误各不相同 ⇒ 逐条看，多半是收件地址或设备订阅失效，直接标记丢弃并记录。
+
+      # ---------------------------------------------------------------
+      # 支付：webhook 卡住 / 对账不一致
+      # ---------------------------------------------------------------
+      - alert: RoveFramePaymentWebhookStuck
+        expr: roveframe_payment_events_oldest_unprocessed_seconds > 600
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "支付 webhook 回执最老一条已 {{ $value }} 秒未处理（阈值 600 秒）"
+          runbook: >-
+            第一步：`select id, provider, event_type, created_at, last_error from payment_events
+            where processed_at is null order by created_at limit 20;`。
+            `last_error` 非空 ⇒ 处理逻辑报错（看服务端日志对应 requestId）；
+            为空且很旧 ⇒ 回执写入成功但处理没有继续（进程重启/异常），
+            用 `POST /api/payments/reconcile`（owner 角色）按 provider 重新对账。
+            **在确认每条回执的最终状态前，不要手工改 `payments.status`** —— 那会让
+            本地状态与 Stripe 不一致，事后无法对账。
+
+      - alert: RoveFramePaymentFailuresAppearing
+        # 用 delta 而不是 increase：这是"当前有多少行处于该状态"的 gauge，
+        # 不是单调递增的计数器（行可能被清理，increase 会算错）。
+        expr: delta(roveframe_payments_total{status="failed"}[1h]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "过去 1 小时新增了支付失败记录"
+          runbook: >-
+            第一步：`select id, provider, amount_minor, currency, failure_reason, updated_at
+            from payments where status = 'failed' order by updated_at desc limit 20;`。
+            集中失败 ⇒ 看 provider 侧状态页与 webhook 签名密钥是否过期；
+            零星失败 ⇒ 属正常业务（卡被拒），确认失败原因已回写即可。
+            若同时触发 RoveFramePaymentWebhookStuck，先修回执积压。
+
+      - alert: RoveFramePaymentsReconcileStale
+        # 对账不一致的间接信号：有支付行但从未被对账过（reconciled_at 为空）。
+        # 直接断言"不一致"需要 Stripe 侧数据，那属于 reconcile 任务的输出，
+        # 不适合在无凭据的环境里写成一条会误报的规则 —— 这里只报"从未对账"。
+        expr: roveframe_payments_total{status="paid"} > 0
+        for: 24h
+        labels:
+          severity: info
+        annotations:
+          summary: "存在已支付记录且已持续 24 小时（提醒核对对账任务是否在跑）"
+          runbook: >-
+            第一步：`POST /api/payments/reconcile`（owner 角色）拉一次 provider 侧状态，
+            比较返回的 `checked` 与 `mismatches`。若 `mismatches` 长期为 0 且
+            `checked` 也在增长，说明对账链路是通的，可以把本条降级为记录项。
+            注意：本规则**不**断言存在不一致（那需要 provider 侧数据），
+            它只保证"有人在看对账"。
+
+      # ---------------------------------------------------------------
+      # P4 资源
+      # ---------------------------------------------------------------
+      - alert: RoveFrameHeapHigh
+        expr: roveframe_process_heap_used_bytes > 1.5e9
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node 堆内存持续高于 1.5 GiB"
+          runbook: >-
+            第一步：确认是否伴随 502/超时（有则先扩容或重启，再排查）。
+            第二步：抓一份堆快照前先看 `/api/metrics` 的
+            `roveframe_process_resident_memory_bytes` 是否也在涨（涨 = 真实泄漏，
+            不涨 = 常见的高水位不回收）。已知的进程内缓存在
+            `src/lib/auth-guard.ts`（token 60s / role 5min）与 `src/lib/rate-limit.ts`
+            （三个 Map，上限 20000 键），两者都有硬上限，先排除它们。

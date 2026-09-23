@@ -157,3 +157,127 @@ export function aiUsageMetrics(rows: readonly { status?: string | null }[]): Met
     value: n,
   }));
 }
+
+// ---------------------------------------------------------------------------
+// Phase 19：队列积压 / 支付事件积压 —— 让"没人被叫醒"这件事可被告警
+// ---------------------------------------------------------------------------
+//
+// 上线阻断项 3 要求告警至少覆盖"队列积压（外发邮件/推送）"与"支付 webhook
+// 失败或对账不一致"。而这两类此前**没有任何指标** —— 没有指标就写不出可执行的
+// 规则，只能写出永远不触发的规则。所以先补指标，再写规则。
+//
+// 全部取自既有表，不新增埋点存储（沿用本模块的设计取舍）：
+//   · notification_outbox —— 推送队列
+//   · email_send_tasks    —— 外发邮件队列
+//   · payment_events      —— 支付 webhook 回执
+
+export interface OutboxSnapshot {
+  /** 队列名，出现在 label 里。 */
+  queue: 'notification' | 'email';
+  /** 仍在等待处理的行数。 */
+  pending: number;
+  /** 最老一条待处理项的年龄（秒）；没有待处理项时为 null。 */
+  oldestPendingAgeSeconds: number | null;
+  /** 已进入失败/死信状态的行数。 */
+  failed: number;
+}
+
+/**
+ * 队列快照 → 指标。
+ *
+ * 为什么用"最老一条的年龄"而不只是"行数"：一次正常的批量入队会产生瞬时堆积，
+ * 按行数告警会误报；而**有东西排了很久没人处理**才是真正的故障信号。
+ * 两个都导出，规则按年龄触发、按行数写进注释值。
+ */
+export function queueMetrics(snapshots: readonly OutboxSnapshot[]): MetricSample[] {
+  const pending: MetricSample[] = [];
+  const oldest: MetricSample[] = [];
+  const failed: MetricSample[] = [];
+  for (const s of snapshots) {
+    pending.push({
+      name: 'roveframe_outbox_pending',
+      help: 'Rows still waiting to be processed, by queue',
+      type: 'gauge',
+      labels: { queue: s.queue },
+      value: s.pending,
+    });
+    failed.push({
+      name: 'roveframe_outbox_failed_total',
+      help: 'Rows in a failed/dead-letter state, by queue',
+      type: 'gauge',
+      labels: { queue: s.queue },
+      value: s.failed,
+    });
+    if (s.oldestPendingAgeSeconds !== null) {
+      oldest.push({
+        name: 'roveframe_outbox_oldest_pending_seconds',
+        help: 'Age of the oldest row still waiting, by queue',
+        type: 'gauge',
+        labels: { queue: s.queue },
+        value: s.oldestPendingAgeSeconds,
+      });
+    }
+  }
+  return [...pending, ...oldest, ...failed];
+}
+
+export interface PaymentEventSnapshot {
+  /** `payment_events.processed_at is null` 的行数（webhook 收到了但没处理完）。 */
+  unprocessed: number;
+  /** 最老一条未处理回执的年龄（秒）。 */
+  oldestUnprocessedSeconds: number | null;
+  /** 按 status 分组的支付行数。 */
+  byStatus: Record<string, number>;
+}
+
+export function paymentMetrics(snapshot: PaymentEventSnapshot): MetricSample[] {
+  const samples: MetricSample[] = [
+    {
+      name: 'roveframe_payment_events_unprocessed',
+      help: 'Payment webhook receipts that have not been marked processed',
+      type: 'gauge',
+      value: snapshot.unprocessed,
+    },
+  ];
+  if (snapshot.oldestUnprocessedSeconds !== null) {
+    samples.push({
+      name: 'roveframe_payment_events_oldest_unprocessed_seconds',
+      help: 'Age of the oldest unprocessed payment webhook receipt',
+      type: 'gauge',
+      value: snapshot.oldestUnprocessedSeconds,
+    });
+  }
+  for (const [status, n] of Object.entries(snapshot.byStatus).sort()) {
+    samples.push({
+      name: 'roveframe_payments_total',
+      help: 'Payment rows by current status',
+      type: 'gauge',
+      labels: { status },
+      value: n,
+    });
+  }
+  return samples;
+}
+
+/**
+ * 采集自检：**每个采集器的查询是否成功**。
+ *
+ * ## 为什么必须有这个指标（这是"会撒谎的探针"的防线）
+ *
+ * 如果队列查询失败时把 `roveframe_outbox_pending` 报成 0，那么后端故障会表现为
+ * "队列是空的" —— 依赖它的告警永远不会触发，而且看起来一切正常。
+ * 那比没有指标更糟。所以：查询失败时**不导出数据指标**，并把
+ * `roveframe_metrics_collection_ok{collector=...}` 置 0，让"采集失败"本身可被告警。
+ */
+export function collectionMetrics(
+  results: readonly { collector: string; ok: boolean }[],
+): MetricSample[] {
+  return results.map((r) => ({
+    name: 'roveframe_metrics_collection_ok',
+    help: '1 when this collector queried successfully; 0 means the data metric is absent/misleading',
+    type: 'gauge' as const,
+    labels: { collector: r.collector },
+    value: r.ok ? 1 : 0,
+  }));
+}
+

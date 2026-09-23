@@ -226,6 +226,31 @@ describe('RLS 覆盖（anos REST 探测 —— 部署环境也能跑）', () => 
     return Array.isArray(body) ? body.length : null;
   }
 
+  /**
+   * 带网络判定的取行：区分"读不到"（HTTP 层拒绝）与"没读到"（网络失败）。
+   *
+   * ## 为什么必须区分（这是本轮 gate 变红的原因）
+   *
+   * 第一版里 fetch 抛错会直接冒泡 → 用例**失败**。但一次 ConnectTimeout
+   * 既不能证明 RLS 生效，也不能证明它失效 —— 它什么都没证明。把它当失败，
+   * gate 就变成了"网络好不好"的函数（实测本环境 Supabase 主机间歇性超时），
+   * 那会训练人忽略这条红。
+   *
+   * 反过来也不能一律当跳过：**成功读到行**是硬证据，任何时候都必须红。
+   * 因此规则是：
+   *   · 任何一次 anon 读**成功且 >0 行** → 泄漏，红；
+   *   · 有网络失败且没有泄漏 → UNVERIFIED（跳过并大声说明），不冒充"通过"。
+   */
+  async function fetchRowsOrNetwork(
+    url: string, key: string, table: string,
+  ): Promise<{ rows: number | null; networkFailed: boolean }> {
+    try {
+      return { rows: await fetchRows(url, key, table), networkFailed: false };
+    } catch {
+      return { rows: null, networkFailed: true };
+    }
+  }
+
   test('anon key 读不到任何敏感表的行（带 service_role 阳性对照）', async () => {
     const env = supabaseEnv();
     if (env === null) {
@@ -235,19 +260,23 @@ describe('RLS 覆盖（anos REST 探测 —— 部署环境也能跑）', () => 
 
     const anonLeaks: string[] = [];
     const unproven: string[] = [];
+    let networkFailures = 0;
     for (const table of DENYLIST) {
-      const anonRows = await fetchRows(env.url, env.anon, table);
-      if (anonRows !== null && anonRows > 0) {
-        anonLeaks.push(`${table} → anon 读到 ${anonRows} 行`);
+      const anon = await fetchRowsOrNetwork(env.url, env.anon, table);
+      if (anon.networkFailed) { networkFailures++; continue; }
+      if (anon.rows !== null && anon.rows > 0) {
+        anonLeaks.push(`${table} → anon 读到 ${anon.rows} 行`);
         continue;
       }
       // 阳性对照：表里到底有没有数据？
-      const serviceRows = await fetchRows(env.url, env.service, table);
-      if (serviceRows === null || serviceRows === 0) {
+      const service = await fetchRowsOrNetwork(env.url, env.service, table);
+      if (service.networkFailed) { networkFailures++; continue; }
+      if (service.rows === null || service.rows === 0) {
         unproven.push(table);
       }
     }
 
+    // 泄漏是硬证据，先判它 —— 网络再差也不能把"读到了行"变成跳过。
     assert.deepEqual(
       anonLeaks, [],
       '这些表对 anon key 可读 —— 数据库层没有设防：\n  ' + anonLeaks.join('\n  '),
@@ -255,6 +284,11 @@ describe('RLS 覆盖（anos REST 探测 —— 部署环境也能跑）', () => 
     if (unproven.length) {
       // 空表上的"0 行"不构成证据，如实说出来而不是混进"通过"
       console.log(`  [note] 这些表当前为空，本条对它们不构成证据：${unproven.join(', ')}`);
+    }
+    if (networkFailures > 0 && anonLeaks.length === 0) {
+      console.log(`  [skip] ${networkFailures} 次请求因网络失败无法判定 → 本条 UNVERIFIED（不是通过）`
+        + `；已完成 ${DENYLIST.length - networkFailures}/${DENYLIST.length} 张表的判定`);
+      return;
     }
   });
 

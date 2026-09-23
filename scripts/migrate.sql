@@ -651,6 +651,22 @@ end;
 $$;
 
 -- 通知 dispatcher 使用同样的原子 claim 语义；检测器永远不会直接调用渠道。
+--
+-- ⚠️ Phase 19 修复：本函数此前**每次调用都失败**（42702），因此通知队列从未被消费。
+--
+--   原因与 claim_agent_task_runs 是同一类：`returns table (...)` 里的 OUT 参数
+--   包含 `attempts` / `max_attempts`，而租约回收的 UPDATE 里写的是**未限定**的
+--   `attempts >= max_attempts` —— PL/pgSQL 无法判断它指变量还是表列，直接报
+--   `column reference "attempts" is ambiguous`。实测（service_role 调 RPC）：
+--     {"code":"42702","message":"column reference \"attempts\" is ambiguous"}
+--   后果：48 行 notification_outbox 满足全部认领条件（status=queued、
+--   available_at 已过、claimed_at 为空），attempts 永远是 0，最久 5.1 天。
+--   只有把进程换成生产入口（node dist/server.js）跑起来才看得见 —— 这是
+--   "验证形态 ≠ 生产形态"的直接代价。
+--
+--   修法：给目标表加别名并把列引用写全（`n.attempts` / `n.max_attempts`）。
+--   凡是 OUT 参数名与表列同名的函数，都必须这样写；测试
+--   tests/sql-claim-function-guard.test.ts 守着这一条。
 create or replace function public.claim_notification_outbox(p_worker_id text, p_limit integer default 20)
 returns table (
   id varchar(36), tenant_id varchar(36), business_id varchar(36), event_id varchar(36),
@@ -660,11 +676,11 @@ returns table (
 language plpgsql security definer set search_path = public
 as $$
 begin
-  update public.notification_outbox
-  set status = case when attempts >= max_attempts then 'failed' else 'queued' end,
+  update public.notification_outbox n
+  set status = case when n.attempts >= n.max_attempts then 'failed' else 'queued' end,
       claimed_by = null, claimed_at = null,
-      last_error = coalesce(last_error, 'Notification lease expired')
-  where status = 'sending' and claimed_at < now() - interval '15 minutes';
+      last_error = coalesce(n.last_error, 'Notification lease expired')
+  where n.status = 'sending' and n.claimed_at < now() - interval '15 minutes';
 
   return query
   with candidates as (

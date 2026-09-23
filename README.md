@@ -8,6 +8,8 @@
 
 Agents do the work. Humans keep the authority.
 
+**English** · [简体中文](README.zh-CN.md) · [Español](README.es.md)
+
 [![CI](https://github.com/houjinlong258-oss/roveframe/actions/workflows/ci.yml/badge.svg)](https://github.com/houjinlong258-oss/roveframe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5_strict-3178C6?logo=typescript&logoColor=white)
@@ -102,50 +104,52 @@ the build when a translation drifts.
 
 ## Product Surface
 
-Four views of the product, from the owner's command centre down to the module set.
+Four views of the product — from the owner's command centre down to the module set. Each panel is
+shown full width so the detail is readable; every one maps to a real route in this repository.
 
-> These are **product overview graphics rendered from the application's own screens** — not
-> captures of a live deployment. The platform has no public origin yet (`app.roveframe.ai` in the
-> mockup chrome is a design placeholder), and the panels show an empty workspace on purpose, so
-> no customer data is ever depicted. Real, unedited screenshots belong in `docs/screenshots/`,
+> **What these are.** Product overview graphics rendered from the application's own screens —
+> not captures of a live deployment. The platform has no public origin yet (`app.roveframe.ai` in
+> the mockup chrome is a design placeholder), and the panels show an empty workspace on purpose,
+> so no customer data is ever depicted. Real, unedited screenshots belong in `docs/screenshots/`,
 > which is still empty and says why — see [that note](docs/screenshots/README.md).
 
-<table>
-<tr>
-<td width="50%"><img src="docs/assets/product-overview.png" alt="Command centre and AI COO assistant" /></td>
-<td width="50%"><img src="docs/assets/operations-modules.png" alt="Operations modules" /></td>
-</tr>
-<tr>
-<td><b>Command centre.</b> The owner's morning brief: what the AI team did overnight, revenue /
-orders / customers / conversion — with an honest <code>no comparative data</code> state instead of
-an invented delta — and the agent roster (CEO, Operations, Marketing, Customer) with per-agent
-activity. On the left, the AI COO assistant drafts and reasons over the same data.</td>
-<td><b>Operations modules.</b> The daily operational surface: business data (products, orders,
-inventory), reservations with a live status calendar, team management with roles, access control
-and the workforce centre (benefits, attendance exceptions, care tasks), and the AI website
-builder for a public storefront with custom domain and online ordering.</td>
-</tr>
-<tr>
-<td><img src="docs/assets/integrations-control-layer.png" alt="Integrations and control layer" /></td>
-<td><img src="docs/assets/content-customer-intelligence.png" alt="Content and customer intelligence" /></td>
-</tr>
-<tr>
-<td><b>Integrations &amp; control layer.</b> One place to connect the outside world and to bound
-what the agents may do: delivery-map provider, third-party service credentials, AI model access
-(per-capability routing), ERPNext connectivity, POS and payment connectors — alongside outbound
-and inbound mailbox setup, send rate and daily caps, and the switches for customer auto-reply,
-anomaly push and the daily brief.</td>
-<td><b>Content &amp; customer intelligence.</b> The knowledge and communication surfaces: a file
-centre for uploads and AI-generated reports, a knowledge brain answering from your own SOPs and
-policies with citations, review intelligence with sentiment and reply drafting, and an email
-centre that classifies incoming mail into inquiry / opportunity / complaint / supplier / other.</td>
-</tr>
-</table>
+### Command centre and the AI COO
 
-Every panel above maps to a real route in this repository: the command centre is
-`src/app/[locale]/dashboard`, the assistant `agent`, the knowledge brain `knowledge`, reviews
-`reviews`, mail `emails`, operations `business` / `reservations` / `team` / `website`, and the
-control layer `settings`.
+<img src="docs/assets/product-overview.png" alt="Command centre, AI COO assistant and system integration" width="100%" />
+
+The owner's morning brief: what the AI team did overnight, revenue / orders / customers /
+conversion — with an honest `no comparative data` state instead of an invented delta — and the
+agent roster (CEO, Operations, Marketing, Customer) with per-agent activity. Beside it, the AI COO
+assistant drafts and reasons over the same data. → `src/app/[locale]/dashboard`, `agent`
+
+### Operations modules
+
+<img src="docs/assets/operations-modules.png" alt="Business data, reservations, team management and the AI website builder" width="100%" />
+
+The daily operational surface: business data (products, orders, inventory), reservations with a
+live status calendar, team management with roles, access control and the workforce centre
+(benefits, attendance exceptions, care tasks), and the AI website builder for a public storefront
+with custom domain and online ordering. → `business`, `reservations`, `team`, `website`
+
+### Integrations and the control layer
+
+<img src="docs/assets/integrations-control-layer.png" alt="Integrations and the configuration control layer" width="100%" />
+
+One place to connect the outside world and to bound what the agents may do: delivery-map provider,
+third-party service credentials, AI model access (per-capability routing), ERPNext connectivity,
+POS and payment connectors — alongside outbound and inbound mailbox setup, send rate and daily
+caps, and the switches for customer auto-reply, anomaly push and the daily brief.
+→ `settings`
+
+### Content and customer intelligence
+
+<img src="docs/assets/content-customer-intelligence.png" alt="File centre, knowledge brain, review intelligence and email centre" width="100%" />
+
+The knowledge and communication surfaces: a file centre for uploads and AI-generated reports, a
+knowledge brain answering from your own SOPs and policies with citations, review intelligence with
+sentiment analysis and reply drafting, and an email centre that classifies incoming mail into
+inquiry / opportunity / complaint / supplier / other.
+→ `files`, `knowledge`, `reviews`, `emails`
 
 ---
 
@@ -576,7 +580,7 @@ earlier version of this project shipped a defect no test could see.
 | Honest documentation | Audit reports state what is *not* finished. Where a test needs credentials that are not present, it is reported as `UNVERIFIED` rather than passing silently. |
 
 Gate status on the current checkout: **1,461 TypeScript tests** (0 failures), **815 Python
-tests** (0 failures), production scan clean across 2,492 tracked files.
+tests** (0 failures), and the production scan is clean across the whole tree (2,500+ files).
 
 ---
 

@@ -1,14 +1,34 @@
 import { insertWithScope } from '@/lib/tenant-db';
 import type { AgentAuditEvent, AgentToolContext } from '@/lib/agent/types';
 
+// ---------------------------------------------------------------------------
+// 测试缝：设置后 writeAgentAction 走注入的 sink（不连库）。
+// 仅供 tests/ 使用，生产代码不应调用。与 src/lib/audit.ts 的
+// `_setAuditSinkForTest` 同一约定。
+//
+// 为什么需要它：`executeEnterpriseTool` 的失败语义（审计写不进去时该不该
+// 报成功）必须能被**确定性地**测到。没有这个缝，测试只能靠"制造一次真实的
+// 数据库写入失败"——那要么依赖库的当前状态，要么往生产库里塞坏数据。
+// ---------------------------------------------------------------------------
+export type AgentAuditSink = (context: AgentToolContext, event: AgentAuditEvent) => Promise<void>;
+let _testSink: AgentAuditSink | null = null;
+
+export function _setAgentAuditSinkForTest(sink: AgentAuditSink | null): void {
+  _testSink = sink;
+}
+
 /**
  * Persist one Agent lifecycle event. The caller must supply a business-scoped
  * context; the database row is always tenant/business-injected by insertWithScope.
+ *
+ * 失败语义：**抛错**。调用方必须决定"记录不下来时该报什么"，
+ * 不允许静默当成写成功（见 `executeEnterpriseTool` 的 fail-closed 处理）。
  */
 export async function writeAgentAction(
   context: AgentToolContext,
   event: AgentAuditEvent,
 ): Promise<void> {
+  if (_testSink) return _testSink(context, event);
   const result = await insertWithScope(context, 'agent_actions', {
     user_id: context.userId,
     session_id: context.sessionId,

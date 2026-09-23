@@ -15,7 +15,7 @@ import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { insertWithScope } from '@/lib/tenant-db';
 import { hasPermission, type RoleKey } from '@/lib/rbac';
 import { writeAgentAction } from '@/lib/agent/audit';
-import type { AgentToolContext } from '@/lib/agent/types';
+import type { AgentAuditEvent, AgentToolContext } from '@/lib/agent/types';
 import { generateDeploymentPlan } from '@/lib/deployment/generator';
 import { roleCanUseTool, type AgentRoleId } from './agents';
 
@@ -204,6 +204,13 @@ export interface ToolExecutionResult {
   error?: string;
   blocked?: boolean;
   durationMs: number;
+  /**
+   * 审计写入失败时为 true。
+   *
+   * 存在的理由：调用方需要能区分「被拒绝」与「被拒绝、但这次拒绝没能记下来」。
+   * 两者都不是成功，但后者是**证据链的缺口**，必须能被告警/排查看见。
+   */
+  auditFailed?: boolean;
 }
 
 const TOOL_TIMEOUT_MS = 30_000;
@@ -246,6 +253,33 @@ export async function executeEnterpriseTool(
     completedAt: new Date().toISOString(),
   });
 
+  /**
+   * 写审计并**如实报告失败**（fail-closed）。
+   *
+   * ## 为什么不能用 `.catch(() => undefined)`
+   *
+   * 这里原本四处都是 `.catch(() => undefined)`。危险的方向只有一个：
+   * **工具已经执行完成、而记录它的那行没写进去，调用方却拿到 `ok: true`** ——
+   * 那是"做了一件无法证明做过的事"，审计链从此有一个看不见的洞。
+   *
+   * 同一条链上的 `src/lib/mutation-guard.ts` 是 fail-closed：
+   * 审计写不进去就 503「security audit unavailable」，绝不把未记录的操作报成成功。
+   * 本函数把工具运行时对齐到同一语义：**返回审计错误，由调用方决定怎么报**。
+   */
+  const recordAudit = async (event: AgentAuditEvent): Promise<string | null> => {
+    try {
+      await writeAgentAction(auditCtx, event);
+      return null;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error('[tool-runtime] agent action audit failed:', toolId, message);
+      return message;
+    }
+  };
+
+  /** 审计失败时的统一措辞：调用方与被拒绝/普通失败区分得开。 */
+  const auditUnavailable = (message: string) => `security audit unavailable: ${message}`;
+
   const tool = getEnterpriseTool(toolId);
   if (!tool) {
     return { ok: false, toolId, error: `unknown tool: ${toolId}`, durationMs: Date.now() - t0 };
@@ -253,12 +287,30 @@ export async function executeEnterpriseTool(
 
   // 1. Permission —— RBAC 权限 + Agent 角色命名空间
   if (!hasPermission(ctx.role, tool.requiredPermission)) {
-    await writeAgentAction(auditCtx, auditEvent('blocked', `permission denied: ${tool.requiredPermission}`)).catch(() => undefined);
-    return { ok: false, toolId, error: `permission denied: ${tool.requiredPermission}`, blocked: true, durationMs: Date.now() - t0 };
+    const deniedReason = `permission denied: ${tool.requiredPermission}`;
+    const auditError = await recordAudit(auditEvent('blocked', deniedReason));
+    return {
+      ok: false,
+      toolId,
+      blocked: true,
+      // 拒绝本身也必须有记录。记不下来时把两件事都写进 error：
+      // 调用方既要看得出"被拒绝"，也要看得出"这次拒绝没有留下证据"。
+      error: auditError ? `${deniedReason} | ${auditUnavailable(auditError)}` : deniedReason,
+      auditFailed: auditError ? true : undefined,
+      durationMs: Date.now() - t0,
+    };
   }
   if (!roleCanUseTool(ctx.agentRole, toolId)) {
-    await writeAgentAction(auditCtx, auditEvent('blocked', `agent role '${ctx.agentRole}' may not use ${toolId}`)).catch(() => undefined);
-    return { ok: false, toolId, error: `agent role '${ctx.agentRole}' may not use ${toolId}`, blocked: true, durationMs: Date.now() - t0 };
+    const deniedReason = `agent role '${ctx.agentRole}' may not use ${toolId}`;
+    const auditError = await recordAudit(auditEvent('blocked', deniedReason));
+    return {
+      ok: false,
+      toolId,
+      blocked: true,
+      error: auditError ? `${deniedReason} | ${auditUnavailable(auditError)}` : deniedReason,
+      auditFailed: auditError ? true : undefined,
+      durationMs: Date.now() - t0,
+    };
   }
 
   // 2. 输入校验
@@ -280,11 +332,28 @@ export async function executeEnterpriseTool(
         setTimeout(() => reject(new Error('tool timed out')), TOOL_TIMEOUT_MS)
       ),
     ]);
-    await writeAgentAction(auditCtx, auditEvent('succeeded', 'ok')).catch(() => undefined);
+    // ⚠️ 这里是本次修复的核心：工具**已经执行完了**才写审计。
+    // 审计失败时绝不能报 ok:true —— 那等于"做了一件无法证明做过的事"。
+    const auditError = await recordAudit(auditEvent('succeeded', 'ok'));
+    if (auditError) {
+      return {
+        ok: false,
+        toolId,
+        error: auditUnavailable(auditError),
+        auditFailed: true,
+        durationMs: Date.now() - t0,
+      };
+    }
     return { ok: true, toolId, data, durationMs: Date.now() - t0 };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    await writeAgentAction(auditCtx, auditEvent('failed', message.slice(0, 200))).catch(() => undefined);
-    return { ok: false, toolId, error: message, durationMs: Date.now() - t0 };
+    const auditError = await recordAudit(auditEvent('failed', message.slice(0, 200)));
+    return {
+      ok: false,
+      toolId,
+      error: auditError ? `${message} | ${auditUnavailable(auditError)}` : message,
+      auditFailed: auditError ? true : undefined,
+      durationMs: Date.now() - t0,
+    };
   }
 }

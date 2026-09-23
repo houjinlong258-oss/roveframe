@@ -3,7 +3,7 @@
  * tests/enterprise-kernel.test.ts
  */
 
-import { test, describe } from 'node:test';
+import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { AGENT_TEAM, roleCanUseTool, listAgentTeam } from '../src/lib/enterprise/agents';
@@ -13,6 +13,7 @@ import {
   getEnterpriseTool,
 } from '../src/lib/enterprise/tool-runtime';
 import { assembleMemoryContext } from '../src/lib/enterprise/memory';
+import { _setAgentAuditSinkForTest } from '../src/lib/agent/audit';
 
 const BASE_CTX = {
   tenantId: 'tenant_test',
@@ -44,6 +45,23 @@ describe('Enterprise: agent team', () => {
 });
 
 describe('Enterprise: tool runtime permission gate', () => {
+  /**
+   * 本组用例**必须**注入审计 sink，否则它们测的不是权限门，而是数据库连接。
+   *
+   * 实测（fail-closed 修复后暴露）：`BASE_CTX` 用的是 `tenant_test` / `biz_test`
+   * 这类假 id，`writeAgentAction` 的插入会撞
+   * `agent_actions_tenant_id_fkey` 外键约束而**抛错**。
+   *
+   * 在修复之前，`executeEnterpriseTool` 用 `.catch(() => undefined)` 把这个抛错吞了，
+   * 于是 "deployment.deploy works for owner+devops" 这条用例**一直是在审计写入失败
+   * 的情况下被判为通过**的 —— 它的绿色并不证明审计链是通的。
+   * 现在审计失败会变成显式失败，假 id 就再也混不过去了，因此这里注入一个
+   * 成功 sink：本组要断言的是权限/命名空间/输入校验，不是审计存储。
+   * 审计失败本身的语义由 tests/enterprise-tool-audit-fail-closed.test.ts 覆盖。
+   */
+  beforeEach(() => { _setAgentAuditSinkForTest(async () => undefined); });
+  afterEach(() => { _setAgentAuditSinkForTest(null); });
+
   test('unknown tool rejected', async () => {
     const r = await executeEnterpriseTool('no.such.tool', {}, { ...BASE_CTX, role: 'owner', agentRole: 'ceo' });
     assert.equal(r.ok, false);

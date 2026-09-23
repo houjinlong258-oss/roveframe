@@ -39,7 +39,21 @@ function readSource(rel: string): string {
 }
 
 describe('existential probes must not fail open (Phase 15)', () => {
-  test('boot-check 的存在性探测不使用 head:true', () => {
+  /**
+   * ⚠️ 本节在 Phase 19 被**收窄**过，原文保留在此：
+   *
+   *   原文断言的是"每张 REQUIRED_TABLE 都配了探针列"与"PROBE_COLUMN 的值不是 *"。
+   *   那两条守卫的对象是**探针形态**（11 张手写表 + 每表一个探针列）。
+   *   Phase 19 上线阻断项 6 把 boot-check 换成**从 schema.ts 派生的全量漂移检测**，
+   *   探针列这个机制整个不存在了 —— 继续断言它只会锁住一个已被淘汰的设计。
+   *
+   *   取而代之的守卫在 `tests/schema-drift-gate.test.ts`：期望清单必须覆盖
+   *   全部表与全部列（而不是子集），且缺表/缺列必须被报出来。
+   *
+   * 仍然保留的 `head:true` 两条：那条形态是"永远通过"的根源，与本次改造无关，
+   * 且 scheduler.ts 里还有同一形态。任何把它写回去的改动都必须立刻变红。
+   */
+  test('boot-check 不使用 head:true', () => {
     const src = readSource('src/lib/boot-check.ts');
     // 只检查非注释行：注释里提到 head:true 是在解释这个坑，不算违规。
     const code = src
@@ -49,8 +63,18 @@ describe('existential probes must not fail open (Phase 15)', () => {
     assert.equal(
       /head:\s*true/.test(code), false,
       'boot-check.ts 又用回了 head:true —— 该形态对不存在的表返回 204 且 error 为 null，'
-      + '自检会重新变成"永远通过"。改用列投影（见 PROBE_COLUMN）。',
+      + '自检会重新变成"永远通过"。',
     );
+  });
+
+  test('boot-check 不再维护手写的表子集清单（期望值必须派生）', () => {
+    const src = readSource('src/lib/boot-check.ts');
+    assert.equal(
+      /const REQUIRED_TABLES\s*=/.test(src), false,
+      'boot-check.ts 又出现了手写的 REQUIRED_TABLES —— 手写清单会腐烂，且腐烂是静默的'
+      + '（migrate-rls.sql 漏掉 12 张表就是同一形态）。期望值必须从 schema.ts 派生。',
+    );
+    assert.match(src, /expectedSchemaFromModule/, '期望值必须来自 schema.ts');
   });
 
   test('scheduler 的 cron_state 就绪判定不使用 head:true', () => {
@@ -66,28 +90,16 @@ describe('existential probes must not fail open (Phase 15)', () => {
     );
   });
 
-  test('每张 REQUIRED_TABLE 都配了探针列（新增表不得漏配）', async () => {
-    const mod = await import('../src/lib/boot-check');
-    const tables = mod.BOOT_CHECK_REQUIRED_TABLES;
-    const columns = mod.BOOT_CHECK_PROBE_COLUMN;
-
-    assert.ok(tables.length > 0, 'REQUIRED_TABLES 不应为空');
-
-    const unconfigured = tables.filter((t) => !columns[t]);
-    assert.deepEqual(
-      unconfigured, [],
-      `这些表没有配置探针列，会退回默认 'id'：${unconfigured.join(', ')}。`
-      + '若该表没有 id 列，探测会报 42703 并被误判为"表缺失"。',
+  test('从 schema.ts 派生的期望清单是完整的（≥52 张表）', async () => {
+    // Phase 19：探针列机制已随全量漂移检测一起移除（见本节顶部说明）。
+    // 这里改为断言"派生出的期望清单是完整的"，而不是断言子集的配置完整性。
+    const { expectedSchemaFromModule } = await import('../src/lib/schema-drift');
+    const schema = await import('../src/storage/database/shared/schema');
+    const expected = expectedSchemaFromModule(schema as unknown as Record<string, unknown>);
+    const tables = Object.keys(expected);
+    assert.ok(
+      tables.length >= 52,
+      `从 schema.ts 只派生出 ${tables.length} 张表（应为 52 张）—— 派生逻辑失效会让漂移检查静默通过`,
     );
-  });
-
-  test('PROBE_COLUMN 的值必须是非空字符串（不得是 * 或空）', async () => {
-    const mod = await import('../src/lib/boot-check');
-    const columns = mod.BOOT_CHECK_PROBE_COLUMN;
-    for (const [table, col] of Object.entries(columns)) {
-      assert.equal(typeof col, 'string', `${table} 的探针列不是字符串`);
-      assert.ok(col.length > 0, `${table} 的探针列为空`);
-      assert.notEqual(col, '*', `${table} 的探针列是 '*' —— 等于退回被证伪的形态`);
-    }
   });
 });

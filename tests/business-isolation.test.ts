@@ -59,6 +59,15 @@ describe('P0-5 business isolation contracts', () => {
       'src/lib/notifications/outbox.ts:notification_outbox',
       'src/lib/email/outgoing.ts:email_send_tasks',
       'src/lib/email/imap-sync.ts:emails',
+      // Phase 19：平台级运维指标。与上面两个队列 worker 同一形态 ——
+      // 它们按定义要跨租户工作（一次抓取要看全平台积压），并且**只导出计数**：
+      // 没有 tenant_id、没有金额、没有任何单行。指标端点自身需要
+      // X-RoveAgent-Key 或平台管理员会话（见 src/app/api/metrics/route.ts）。
+      //
+      // 为什么必须在这里登记而不是"在语句里写上 business_id"：那会让指标变成
+      // 只统计某一个租户，而这条指标的全部意义是回答"平台有没有东西卡住"。
+      'src/app/api/metrics/route.ts:payment_events',
+      'src/app/api/metrics/route.ts:payments',
     ]);
     const unexplained: string[] = [];
 

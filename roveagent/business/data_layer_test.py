@@ -23,6 +23,18 @@ class _BusinessHandler(BaseHTTPRequestHandler):
     requests: list[dict[str, object]] = []
     expected_key = "test-service-key"
 
+    #: 必须显式声明 HTTP/1.1。
+    #:
+    #: `BaseHTTPRequestHandler` 默认是 HTTP/1.0，即**每个响应后关闭连接**。
+    #: 而并发用例（16 线程 × 100 请求）里客户端会复用连接池中的连接：
+    #: 服务端已经关了、客户端还在复用时就会抛
+    #: `ConnectionResetError: [Errno 104] Connection reset by peer`。
+    #: 实测：本地通过、CI（ubuntu runner）上稳定复现为 ERROR。
+    #: 下面已经正确发送 Content-Length，因此 HTTP/1.1 的分帧是合法的，
+    #: 开启后连接可以正常保活，竞态消失 —— 这是修测试的固有问题，
+    #: 不是放宽断言。
+    protocol_version = "HTTP/1.1"
+
     def do_POST(self) -> None:  # noqa: N802 (stdlib callback name)
         length = int(self.headers.get("content-length", "0"))
         body = json.loads(self.rfile.read(length).decode("utf-8"))

@@ -4,6 +4,7 @@ import { encrypt, decrypt, mask } from '@/lib/crypto';
 import { PROVIDER_PRESETS } from '@/lib/ai/providers';
 import { PROVIDER_CATALOG, getCatalogEntry, catalogSummary } from '@/lib/ai/provider-catalog';
 import { checkBaseUrl } from '@/lib/ai/url-utils';
+import { testProviderConnection } from '@/lib/ai/connection-test';
 import { writeAudit } from '@/lib/audit';
 import { getTenantContext, requireBusinessContext, requirePermission } from '@/lib/tenant';
 import { protectBusinessMutation } from '@/lib/mutation-guard';
@@ -167,7 +168,7 @@ async function saveModel(request: NextRequest) {
   record.business_id = context.businessId;
   const { data: existing } = await supabase
     .from('model_configs')
-    .select('id')
+    .select('id, api_key_encrypted')
     .eq('tenant_id', context.tenantId)
     .eq('business_id', context.businessId)
     .eq('provider', provider)
@@ -198,7 +199,52 @@ async function saveModel(request: NextRequest) {
       maskedKey: rotated ? mask(body.apiKey.trim()) : undefined,
     },
   });
-  return NextResponse.json({ ok: true });
+
+  // ---- 保存即拉取该供应商的模型列表 ----
+  //
+  // 老板的心智模型是「填完 key 就应该看到这家有哪些模型，再按用途挑」。
+  // 而原先只有手动点「测试连接」才会打 /models 并落 models_cache —— 保存后
+  // 弹窗里的「默认模型」下拉仍是空的，看起来像"没识别到模型"。
+  //
+  // 这里保存后自动拉一次。**失败不影响保存结果**：保存是写配置，拉列表是增强；
+  // 把两者绑死会让网络抖动变成"配置存不进去"。拉取失败的原因仍可由
+  // 「测试连接」给出（它返回结构化 error）。
+  const keyForProbe = typeof body.apiKey === 'string' && body.apiKey.trim()
+    ? body.apiKey.trim()
+    : (() => {
+        const stored = (existing as { api_key_encrypted?: string | null } | null)?.api_key_encrypted;
+        if (!stored) return null;
+        try {
+          return decrypt(stored);
+        } catch {
+          return null;
+        }
+      })();
+
+  let discovered: string[] | null = null;
+  try {
+    const probe = await testProviderConnection({
+      provider,
+      apiKey: keyForProbe,
+      baseUrl,
+      model: (record.default_model as string | null) ?? null,
+      timeoutMs: (record.timeout_ms as number | null) ?? undefined,
+      allowLocal,
+    });
+    if (probe.models && probe.models.length > 0) {
+      discovered = probe.models;
+      await supabase
+        .from('model_configs')
+        .update({ models_cache: probe.models, models_updated_at: new Date().toISOString() })
+        .eq('tenant_id', context.tenantId)
+        .eq('business_id', context.businessId)
+        .eq('provider', provider);
+    }
+  } catch {
+    // 拉取失败不阻断保存；旧表缺 models_cache 列时也会走到这里
+  }
+
+  return NextResponse.json({ ok: true, models: discovered });
 }
 
 async function deleteModel(request: NextRequest) {

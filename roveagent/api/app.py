@@ -952,8 +952,20 @@ def create_app():
         ctx = get_context()
         path, security = install_ex(ctx.root, req.tenant_id, req.name, req.industry)
         if path is None:
+            reason = security.get("scanner_error") or security.get("reason") or "not allowed"
             ctx.audit(req.tenant_id, "marketplace", "skill_install_refused",
-                      f"{req.name}: {security.get('scanner_error') or security.get('reason') or 'not allowed'}")
+                      f"{req.name}: {reason}")
+            # 区分「目录里没有这个技能」与「有、但装不了」。
+            # 实测缺陷（2026-09-25）：行业包 15 个技能正文全为空，装出来是 0 字符的空壳；
+            # 加上内容检查后它们会被拒 —— 此时再报 404「not found in marketplace」
+            # 会让人以为技能名写错了，而真实原因是技能还没写内容。
+            if "no content" in str(reason):
+                raise HTTPException(
+                    422,
+                    f"skill '{req.name}' exists but has no content yet "
+                    f"(skills_library/<category>/{req.name}/SKILL.md is missing); refusing to "
+                    f"install an empty skill",
+                )
             raise HTTPException(404, f"skill not found in marketplace: {req.name}")
         # 安装即写 L2 租户记忆（检索可见）+ 确保行业知识已入库
         ctx.memory.add(f"安装技能 {req.name}", MemoryLayer.L2_TENANT,

@@ -296,6 +296,21 @@ def install_ex(root: Path, tenant_id: str, name: str,
         return None, report
     # ---------------------------------------------------------------------
 
+    # 空正文的技能装出来是个空壳：只有 frontmatter，agent 拿不到任何指令。
+    #
+    # 这不是假设 —— 实测（2026-09-25）：4 个行业包 JSON 里列举的 **15 个技能全部**
+    # workflow 为空（catalog() 第 1 步就写着「描述来自包 JSON 的 skills 清单，无正文」），
+    # 装进租户后 SKILL.md 只有 121~122 字节，正文 0 字符。
+    # 用户看到"安装成功"，agent 却什么都没多会 —— 这正是最该 fail-closed 的形状：
+    # 宁可明确拒绝并给出原因，也不要静默交付一个空文件。
+    if not (entry.workflow or "").strip():
+        report["allowed"] = False
+        report["reason"] = (
+            "skill has no content: pack manifest lists the name but "
+            "skills_library/<category>/<name>/SKILL.md is missing"
+        )
+        return None, report
+
     dest = Path(root) / "skills" / f"tenant-{tenant_id}" / safe
     dest.mkdir(parents=True, exist_ok=True)
     md = dest / "SKILL.md"

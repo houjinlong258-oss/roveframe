@@ -15,6 +15,8 @@
 """
 from __future__ import annotations
 
+import json
+import re
 import sys
 import tempfile
 import unittest
@@ -31,6 +33,7 @@ from roveagent.skills import (  # noqa: E402
     install,
     install_ex,
 )
+from roveagent.skills.packs import PACKS_DIR  # noqa: E402
 
 
 def _write_skill(directory: Path, *, name: str, body: str, version: str = "1.0.0",
@@ -201,6 +204,98 @@ class InstallBehaviourUnchangedTest(unittest.TestCase):
                 self.assertFalse(
                     (Path(tmp) / "skills" / "tenant-tenant-ok-4" / target).exists(),
                     "refused install still wrote to disk",
+                )
+        finally:
+            mp.evaluate_install = original  # type: ignore[assignment]
+
+
+class PackSkillContentTest(unittest.TestCase):
+    """行业包技能不得静默装成空壳。
+
+    实测缺陷（2026-09-25）：4 个行业包 JSON 里列举的 **15 个技能全部** workflow 为空
+    —— ``catalog()`` 第 1 步的注释就写着「描述来自包 JSON 的 skills 清单，无正文」。
+    装进租户后 SKILL.md 只有 121~122 字节、正文 0 字符：HTTP 200、界面显示"安装成功"，
+    而 agent 什么都没多会。这正是最该 fail-closed 的形状。
+
+    修法两条：
+      1. 拒绝空正文技能（返回 None + 明确 reason），不再静默交付空文件；
+      2. 为餐厅行业包补齐真实内容（用户所在行业）。
+
+    本测试同时守住"补了内容的不能被写空"和"没补内容的必须被拒"。
+    """
+
+    RESTAURANT = [
+        "menu-optimization", "inventory-forecast", "reservation-triage",
+        "win-back-campaign", "daily-briefing", "review-response",
+    ]
+
+    def test_restaurant_pack_skills_have_real_content(self) -> None:
+        """用户行业包必须真的有内容 —— 这是本次修复的目标本身。"""
+        by_name = {s.name: s for s in catalog(None)}
+        for name in self.RESTAURANT:
+            entry = by_name.get(name)
+            self.assertIsNotNone(entry, f"{name!r} 不在技能目录中")
+            body = (entry.workflow or "").strip()
+            self.assertGreater(
+                len(body), 200,
+                f"{name!r} 正文只有 {len(body)} 字符 —— 行业包技能必须给出可执行的步骤，"
+                "而不是只有 frontmatter 的空壳",
+            )
+
+    def test_no_pack_skill_installs_with_an_empty_body(self) -> None:
+        """不变量：包清单里的每个技能，要么装出有内容的文件，要么被明确拒绝。"""
+        pack_names: list[str] = []
+        for path in sorted(PACKS_DIR.glob("*.json")):
+            pack = json.loads(path.read_text(encoding="utf-8"))
+            for name in pack.get("skills", []):
+                if name not in pack_names:
+                    pack_names.append(name)
+        self.assertGreater(len(pack_names), 0, "没有解析到任何行业包技能，本测试会空转")
+
+        for name in pack_names:
+            with tempfile.TemporaryDirectory() as tmp:
+                md, report = install_ex(Path(tmp), "tenant-content-1", name)
+                if md is None:
+                    self.assertIn(
+                        "no content", str(report.get("reason", "")),
+                        f"{name!r} 被拒绝，但原因不是「没有内容」—— 拒绝理由必须能指向真正的原因",
+                    )
+                    continue
+                text = md.read_text(encoding="utf-8")
+                body = re.sub(r"\A---.*?---\s*", "", text, flags=re.S).strip()
+                self.assertGreater(
+                    len(body), 50,
+                    f"{name!r} 装出了一个只有 {len(body)} 字符正文的空壳文件",
+                )
+
+    def test_empty_content_refusal_is_not_the_security_pipeline(self) -> None:
+        """负向对照：把安全流水线放行到底，空壳技能仍必须被拒。
+
+        证明拒绝来自**内容检查**，而不是碰巧被安全判定拦住。
+        若目录里已无空壳技能，说明内容已全部补齐 —— 那时本对照自动失去对象。
+        """
+        import roveagent.skills.marketplace as mp
+
+        empty = next((s for s in catalog(None) if not (s.workflow or "").strip()), None)
+        if empty is None:
+            self.skipTest("目录里已无空壳技能（内容已补齐），本对照不再成立")
+
+        original = mp.evaluate_install
+
+        def _allow(entry, *, granted=None, enforce=None):
+            report = original(entry, granted=granted, enforce=enforce)
+            report["allowed"] = True
+            return report
+
+        mp.evaluate_install = _allow  # type: ignore[assignment]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                md, report = install_ex(Path(tmp), "tenant-empty-1", empty.name)
+                self.assertIsNone(md, "安全流水线已全部放行，空壳技能仍必须被内容检查拒绝")
+                self.assertIn("no content", str(report.get("reason", "")))
+                self.assertFalse(
+                    (Path(tmp) / "skills" / "tenant-tenant-empty-1" / empty.name).exists(),
+                    "被拒绝的安装仍写了磁盘",
                 )
         finally:
             mp.evaluate_install = original  # type: ignore[assignment]

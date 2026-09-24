@@ -1,7 +1,12 @@
 """RoveFrame Executive Layer personas (single RoveAgent runtime).
 
-四个高管角色共享同一 runtime，仅以 persona/skills/permissions/workflows
-区分：CEO Insight / COO / CMO / CTO(system health)。
+五个角色共享同一 runtime，仅以 persona/skills/permissions/workflows
+区分：CEO Insight / COO / CMO / CTO(system health) / Developer(研发)。
+
+Developer 是后补的一个**真实能力黑洞**：运行时 `api/capability_router.py` 里
+`developer` 一直存在且工具集最全（file/terminal/git/skills），但前端只暴露了
+前四个 persona，没有任何一个映射到它 —— 用户在界面上永远选不到会写代码的角色，
+只会得到 CEO Agent 的一句 "I don't have access to a terminal or file system"。
 """
 
 from __future__ import annotations
@@ -47,6 +52,16 @@ PERSONAS: dict[str, dict[str, object]] = {
         ),
         "focus": "system health",
     },
+    "developer": {
+        "name": "Developer Agent",
+        "label": "Developer",
+        "employee_key": "developer",
+        "mission": (
+            "负责产品研发：读写代码、打补丁、跑测试、提交变更；"
+            "写文件与终端命令需业主审批后执行。"
+        ),
+        "focus": "code, patch, test & ship",
+    },
 }
 
 # persona key -> employee key（兼容旧 employee key 直接传）
@@ -59,6 +74,7 @@ PERSONA_ALIASES: dict[str, str] = {
     "cmo": "marketing",
     "devops": "devops",
     "cto": "devops",
+    "developer": "developer",
 }
 
 

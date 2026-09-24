@@ -235,6 +235,8 @@ const PERSONA_SIGNALS: Record<PersonaKey, readonly string[]> = {
   coo: ['revenue', 'orders', 'inventory', 'reservations', 'approvals'],
   cmo: ['churn', 'reviews', 'revenue', 'orders'],
   cto: ['approvals', 'system', 'payments'],
+  // 研发 Agent：关心的是「有改动等我批」与「系统在报错」，而不是营收类信号。
+  developer: ['approvals', 'system'],
 };
 
 export function deriveMissions(input: MissionInput): MissionBoard {

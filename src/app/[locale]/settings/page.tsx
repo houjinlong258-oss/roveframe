@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { fmtDateTime } from '@/lib/format';
 import { saveJson } from '@/lib/fetch-utils';
+import { chatModelOptions } from '@/lib/ai/model-options';
 import { CHANNEL_PRESETS, type ChannelKey } from '@/lib/channels-presets';
 import { SMTP_PRESETS } from '@/lib/email/smtp-presets';
 import { useTheme, type ThemeMode } from '@/components/theme/theme-provider';
@@ -49,6 +50,12 @@ interface Provider {
   catalogModels: { id: string }[];
   capabilities: { streaming: boolean; tools: boolean; vision: boolean; embeddings: boolean; reasoning: boolean };
   connection: ProviderConnection | null;
+  /**
+   * 服务端算好的、带能力分类的模型清单。
+   * 分类函数在 `model-registry.ts`（引入了服务端专用的 supabase 客户端），
+   * 客户端不能直接 import，因此由 GET /api/settings/models 一并返回。
+   */
+  modelsCatalog?: { id: string; capability: string; strength: string }[];
 }
 
 interface AIRouteInfo {
@@ -680,11 +687,25 @@ export default function SettingsPage() {
     <>
       <option value="auto">{t('autoMode')}</option>
       <option value="platform">{t('builtin')}</option>
-      {enabledProviders.map((p) => (
-        <option key={p.id} value={`${p.id}:${p.connection?.defaultModel ?? ''}`}>
-          {p.displayName}{p.connection?.defaultModel ? ` · ${p.connection.defaultModel}` : ''}
-        </option>
-      ))}
+      {enabledProviders.map((p) => {
+        const models = chatModelOptions(p);
+        if (models.length === 0) {
+          return (
+            <option key={p.id} value={`${p.id}:${p.connection?.defaultModel ?? ''}`}>
+              {p.displayName}
+            </option>
+          );
+        }
+        return (
+          <optgroup key={p.id} label={p.displayName}>
+            {models.map((m) => (
+              <option key={`${p.id}:${m.id}`} value={`${p.id}:${m.id}`}>
+                {m.id}{m.strength ? ` · ${m.strength}` : ''}
+              </option>
+            ))}
+          </optgroup>
+        );
+      })}
       {!enabledProviders.length && cap === 'agent' && <option disabled>—</option>}
     </>
   );

@@ -3,6 +3,7 @@ import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { encrypt, decrypt, mask } from '@/lib/crypto';
 import { PROVIDER_PRESETS } from '@/lib/ai/providers';
 import { PROVIDER_CATALOG, getCatalogEntry, catalogSummary } from '@/lib/ai/provider-catalog';
+import { classifyModelCapability, classifyModelStrength } from '@/lib/ai/model-registry';
 import { checkBaseUrl } from '@/lib/ai/url-utils';
 import { testProviderConnection } from '@/lib/ai/connection-test';
 import { writeAudit } from '@/lib/audit';
@@ -65,6 +66,31 @@ function toConnectionView(row: ModelConfigRow) {
   };
 }
 
+/**
+ * 供 UI 按能力分组的模型清单。
+ *
+ * 为什么要服务端算：分类函数在 `model-registry.ts`，而那个模块引入了
+ * `getSupabaseClient`（服务端专用）—— 客户端组件直接 import 它会把
+ * 数据库客户端拖进浏览器包。服务端算好、客户端只管展示，是唯一干净的做法。
+ *
+ * 顺序：先用真实发现的 models_cache，再补目录里的静态提示，最后补当前默认模型，
+ * 去重。分类是命名模式启发式（见 classifyModelCapability），不是官方元数据。
+ */
+function modelsCatalogFor(
+  stored: ReturnType<typeof toConnectionView> | undefined,
+  models: ReadonlyArray<{ id: string }>,
+): Array<{ id: string; capability: string; strength: string }> {
+  const ids = new Set<string>();
+  for (const id of stored?.modelsCache ?? []) ids.add(id);
+  for (const m of models) ids.add(m.id);
+  if (stored?.defaultModel) ids.add(stored.defaultModel);
+  return [...ids].map((id) => ({
+    id,
+    capability: classifyModelCapability(id),
+    strength: classifyModelStrength(id),
+  }));
+}
+
 export async function GET(request: NextRequest) {
   const context = requireBusinessContext(await getTenantContext(request));
   requirePermission(context, 'settings:read');
@@ -105,6 +131,8 @@ export async function GET(request: NextRequest) {
         reasoning: entry.supportsReasoning,
       },
       connection: stored ?? null,
+      // 已分类的模型清单，供「模型分流」按能力挑选（只列 chat，见前端 chatModelOptions）
+      modelsCatalog: modelsCatalogFor(stored, entry.models),
     };
   });
 

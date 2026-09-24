@@ -20,6 +20,7 @@ import {
 import { putArtifact, mimeForFormat, type ArtifactRecord, type ArtifactScope } from '@/lib/artifacts/store';
 import { buildZip } from '@/lib/artifacts/doc-writers';
 import { extensionForMime, generateImage } from '@/lib/ai/image-generation';
+import { generateVideo } from '@/lib/ai/video-generation';
 import { discoverPdfFont } from '@/lib/artifacts/pdf-writer';
 import type { ModelRegistry } from '@/lib/ai/model-registry';
 import type { AgentNoticeEvent } from '@/lib/agent/stream-events';
@@ -104,7 +105,12 @@ export async function deliverRequestedFiles(input: DeliverInput): Promise<Delive
   if (requests.length === 0) return out;
 
   const answer = (input.answer ?? '').trim();
-  if (answer.length < MIN_ANSWER_CHARS) {
+  // 媒体生成（图片/视频）的提示词来自**用户原话**，不来自模型的文字回答，
+  // 所以「回答太短就不出文件」这条护栏不该管它们。
+  // 实测踩过：让 agent 出一张海报，模型只回了 9 个字，于是
+  // deliver_skipped_short_answer 把它挡掉，看起来像"出图功能坏了"。
+  const mediaOnly = requests.every((request) => request.format === 'png' || request.format === 'mp4');
+  if (!mediaOnly && answer.length < MIN_ANSWER_CHARS) {
     out.notices.push({
       type: 'notice',
       level: 'info',
@@ -119,8 +125,8 @@ export async function deliverRequestedFiles(input: DeliverInput): Promise<Delive
     return out;
   }
 
-  // 只有确实需要文档/表格时才解析（出图不需要）
-  const needsParsing = requests.some((request) => request.format !== 'png');
+  // 只有确实需要文档/表格时才解析（出图/出片不需要）
+  const needsParsing = requests.some((request) => request.format !== 'png' && request.format !== 'mp4');
   const parsed = needsParsing
     ? parseForDeliverable(answer, deriveTitle(input.message))
     : null;
@@ -145,6 +151,81 @@ export async function deliverRequestedFiles(input: DeliverInput): Promise<Delive
     if (input.alreadyProduced.has(request.format)) continue;
     // zip 是收尾步骤，等其余文件都构建完再打包
     if (request.format === 'zip') continue;
+
+    if (request.format === 'mp4') {
+      if (input.allowImage === false) continue;
+      // 视频走异步任务接口，提示词用用户原话（模型只负责写内容，不决定出不出片）
+      const prompt = input.message.replace(/^(请|帮我|麻烦|给我|我要|我想要)+/g, '').trim();
+      const video = await generateVideo(prompt, input.registry ?? emptyRegistry(), input.scope, {});
+      if (!video.ok) {
+        out.notices.push({
+          type: 'notice',
+          level: 'warning',
+          code: `video_${video.reason}`,
+          message: video.reason === 'no_video_model'
+            ? t(
+                input.locale,
+                '还没有接入可出片的模型，所以本次只给了分镜方案。管理员在「设置 → AI 服务商」接入视频模型（如 agnes-video-v2.0）后，我就能直接出片。',
+                'No video-capable model is connected yet, so I delivered the storyboard only. Connect one in Settings → AI Providers to get real video.',
+                'Aún no hay un modelo de video conectado; se entregó solo el guion gráfico.',
+              )
+            : t(
+                input.locale,
+                '出片服务这次没有返回结果，已保留分镜方案。稍后可以让我重试。',
+                'The video service did not return a result this time; the storyboard is kept above.',
+                'El servicio de video no devolvió resultado; se conserva el guion.',
+              ),
+          technical: video.message,
+        });
+        continue;
+      }
+      try {
+        const ext = video.mime === 'video/webm' ? 'webm' : 'mp4';
+        const record = await putArtifact(input.scope, {
+          name: request.fileName.replace(/\.(mp4|webm)$/i, `.${ext}`),
+          format: ext,
+          data: video.data,
+          mime: video.mime,
+          source: 'agent',
+          agent: input.agent,
+          sessionId: input.sessionId,
+          title: deriveTitle(input.message),
+        });
+        out.artifacts.push(record);
+        out.markers.push(artifactMarker(record.id));
+        collected.push({ name: record.name, data: video.data });
+        // 候选轮换**不是静默 fallback**：换过模型就要说清楚换的是哪个、为什么换，
+        // 否则用户看到成片却不知道为什么本来选的模型没用上。
+        if (video.skipped && video.skipped.length > 0) {
+          out.notices.push({
+            type: 'notice',
+            level: 'info',
+            code: 'video_model_rotated',
+            message: t(
+              input.locale,
+              `本次改用 ${video.model} 出片：前一个视频模型不接受该接口的请求。`,
+              `Delivered via ${video.model}: the previously selected video model rejected the request.`,
+              `Entregado con ${video.model}: el modelo anterior rechazó la solicitud.`,
+            ),
+            technical: video.skipped.join(' | '),
+          });
+        }
+      } catch (error) {
+        out.notices.push({
+          type: 'notice',
+          level: 'warning',
+          code: 'video_store_failed',
+          message: t(
+            input.locale,
+            '视频生成成功但保存失败，请稍后重试。',
+            'The video was generated but could not be saved. Please retry.',
+            'El video se generó pero no se pudo guardar.',
+          ),
+          technical: error instanceof Error ? error.message : String(error),
+        });
+      }
+      continue;
+    }
 
     if (request.format === 'png') {
       if (input.allowImage === false) continue;

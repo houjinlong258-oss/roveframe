@@ -28,7 +28,8 @@ export type DeliverableFormat =
   | 'html'
   | 'json'
   | 'zip'
-  | 'png';
+  | 'png'
+  | 'mp4';
 
 export interface DeliverableRequest {
   format: DeliverableFormat;
@@ -63,6 +64,14 @@ const FORMAT_RULES: FormatRule[] = [
   { format: 'html', pattern: /\bhtml\b|网页版|网页报告/i, label: 'Report', bare: false },
   { format: 'json', pattern: /\bjson\b/i, label: 'Data', bare: false },
   { format: 'txt', pattern: /纯文本|plain text|\btxt\b/i, label: 'Notes', bare: false },
+  // 视频：与图片同属「媒体生成」，但走的是异步任务接口，见 lib/ai/video-generation.ts。
+  // bare=false：只说"视频"两个字通常是在聊视频，不是在要一份成片文件。
+  {
+    format: 'mp4',
+    pattern: /\bmp4\b|\bwebm\b|短视频|宣传片|广告片|\bvideo\b|video ?clip/i,
+    label: 'Video',
+    bare: false,
+  },
 ];
 
 const IMAGE_INTENT = /(海报|宣传图|配图|封面图|banner|poster|logo|生图|生成图|画一?[张幅个]|图片生成)/i;

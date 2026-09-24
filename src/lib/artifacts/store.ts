@@ -79,6 +79,9 @@ const MIME_BY_FORMAT: Record<string, string> = {
   jpeg: 'image/jpeg',
   webp: 'image/webp',
   gif: 'image/gif',
+  // 视频：由 lib/ai/video-generation.ts 生成后落进文件中心（不走文本围栏）。
+  mp4: 'video/mp4',
+  webm: 'video/webm',
 };
 
 /** 未知扩展名一律 application/octet-stream，绝不伪造可执行类型。 */
@@ -293,14 +296,20 @@ export async function listArtifacts(
 
   const ids = (folders ?? [])
     .map((entry) => entry.name)
-    .filter((name) => isArtifactId(name))
-    .slice(0, options.limit ?? MAX_LISTED_ARTIFACTS);
+    .filter((name) => isArtifactId(name));
 
   const records = await mapLimited(ids, LIST_CONCURRENCY, (id) => readManifest(scope, id));
   let filtered = records.filter((record): record is ArtifactRecord => record !== null);
   if (options.sessionId) filtered = filtered.filter((record) => record.sessionId === options.sessionId);
   if (options.source) filtered = filtered.filter((record) => record.source === options.source);
   filtered.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  // `limit` 必须在**排序之后**才截断。
+  //
+  // 实测缺陷（2026-09-25）：原先在 storage.list 的返回顺序上先截断再排序，而该顺序
+  // 是任意的（不是按时间）。于是 `?limit=5` 拿到的是"随便 5 个产物"，刚生成的视频
+  // 明明在桶里却不出现在列表头部 —— 文件中心看起来像"没保存成功"。
+  // 代价是列表要读完全部 manifest（上限 MAX_LISTED_ARTIFACTS，并发 8），可接受。
+  if (options.limit) filtered = filtered.slice(0, options.limit);
 
   if (!options.sign) return filtered;
   return mapLimited(filtered, LIST_CONCURRENCY, async (record) => ({

@@ -881,8 +881,11 @@ async function runChat(request: Request) {
         if (deliverableRequests.length > 0) {
           emit({ type: 'status', phase: 'creating_file' });
         }
-        const needsImage = /海报|图片|配图|封面|poster|image|logo/i.test(body.message);
-        const registry = needsImage
+        // 媒体生成（图片/视频）才需要模型注册表：它要挑出具备 image/video 能力的
+        // 服务商与凭据。视频同样要走这里，否则交付层拿到空注册表只会报
+        // no_video_model —— 看起来像"没接视频模型"，实际是这里根本没去查。
+        const needsMedia = /海报|图片|配图|封面|poster|image|logo|视频|短片|宣传片|广告片|mp4|webm|video/i.test(body.message);
+        const registry = needsMedia
           ? await buildModelRegistry({ tenantId: ctx.tenantId, businessId: ctx.businessId })
           : null;
         const delivered = await deliverRequestedFiles({

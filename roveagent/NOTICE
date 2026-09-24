@@ -7,3 +7,69 @@ The original license text is included in the LICENSE file in this
 directory. All modifications and the enterprise layer
 (tenant/RBAC/approval/audit/connectors) are Copyright (c) 2026
 RoveFrame.
+
+
+Vendored Agent Skills
+=====================
+
+Skills under `skills_library/` that were vendored from third-party
+open-source repositories are listed here with their original license.
+Vendoring went through `skills_market`'s install pipeline (content scan,
+capability grant, atomic write) — nothing was copied by hand.
+
+--------------------------------------------------------------------------------
+obra/superpowers — MIT License
+--------------------------------------------------------------------------------
+
+Source : https://github.com/obra/superpowers (branch `main`, fetched 2026-09-25)
+License: MIT (LICENSE file at the repository root)
+Copyright (c) 2025 Jesse Vincent
+
+Vendored into `skills_library/software-development/`:
+
+  brainstorming
+  dispatching-parallel-agents
+  executing-plans
+  finishing-a-development-branch
+  receiving-code-review
+  using-git-worktrees
+  verification-before-completion
+  writing-plans
+  writing-skills
+
+Each was installed granting exactly the one capability it requested
+(`files:read`); nothing broader.
+
+Refused by the scanner and therefore NOT vendored:
+
+  subagent-driven-development
+    reason: CRITICAL finding `destructive_command` (evidence: `rm -rf`)
+            reported against its SKILL.md. The install pipeline is
+            fail-closed on blocking findings, so the skill was not
+            written to disk. Re-vendoring it requires either an upstream
+            change or an explicit decision to grant that capability —
+            neither was taken here.
+
+License text as shipped upstream:
+
+  MIT License
+
+  Copyright (c) 2025 Jesse Vincent
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.

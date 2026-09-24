@@ -28,7 +28,7 @@
  * 退出码：有 console error / 未捕获异常 / 失败请求 / 未挂载 → 非 0。
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -41,11 +41,39 @@ function arg(name, fallback = null) {
 }
 const URL_TARGET = process.argv[2];
 if (!URL_TARGET) {
-  console.error('用法: node scripts/_browser_check.mjs <url> [--eval "<js>"] [--wait ms] [--click sel] [--mobile] [--allow <regex>]');
+  console.error('用法: node scripts/_browser_check.mjs <url> [--eval "<js>"] [--eval-file <path>] [--wait ms] [--click sel] [--mobile] [--allow <regex>] [--cookie "name=value"]');
   process.exit(2);
 }
 const WAIT_MS = Number(arg('wait', '2500'));
-const EVAL_EXPR = arg('eval');
+/**
+ * `--eval-file <path>`：从文件读表达式。
+ *
+ * 为什么需要：要驱动"点开弹窗 → 填两个输入框 → 点保存 → 读结果"这种多步交互，
+ * 表达式是几十行 JS。塞进命令行会立刻变成引号地狱（这个仓库为此翻过车：
+ * `node -e` 的引号转义坏掉，注入根本没生效，却被读成"守卫无效"）。
+ * 写成文件就没有转义问题。
+ */
+const EVAL_EXPR = (() => {
+  const file = arg('eval-file');
+  if (file) {
+    try {
+      return readFileSync(file, 'utf8');
+    } catch (e) {
+      console.error(`读不到 --eval-file ${file}: ${e.message}`);
+      process.exit(2);
+    }
+  }
+  return arg('eval');
+})();
+/**
+ * `--cookie "name=value"`：在导航**之前**注入会话 cookie。
+ *
+ * 为什么需要：受 AppShell 守卫保护的页面（设置页就是）在未登录时会被重定向到登录页，
+ * 于是没法用 DOM 驱动真实 UI。会话 cookie 是 httpOnly 的，页面里 `document.cookie`
+ * 写不了；用 CDP 的 Network.setCookie 才能注入。探针每次运行都是全新的
+ * user-data-dir，所以必须在同一次运行里注入。
+ */
+const COOKIE = arg('cookie') ?? process.env.RF_COOKIE ?? null;
 const CLICK_SEL = arg('click');
 const MOBILE = process.argv.includes('--mobile');
 /**
@@ -308,6 +336,20 @@ function main() {
       await send('Runtime.enable');
       await send('Page.enable');
       await send('Network.enable');
+      if (COOKIE) {
+        const eq = COOKIE.indexOf('=');
+        if (eq <= 0) {
+          console.error('--cookie 必须是 name=value 形式');
+          process.exit(2);
+        }
+        const name = COOKIE.slice(0, eq).trim();
+        const value = COOKIE.slice(eq + 1).trim();
+        const origin = new URL(URL_TARGET).origin;
+        const set = await send('Network.setCookie', {
+          name, value, url: origin, path: '/', httpOnly: true, secure: origin.startsWith('https:'),
+        });
+        console.log(`已注入会话 cookie: ${name}（CDP success=${set?.success ?? '?'}）`);
+      }
       if (MOBILE) {
         await send('Emulation.setDeviceMetricsOverride', {
           width: 390, height: 844, deviceScaleFactor: 2, mobile: true,

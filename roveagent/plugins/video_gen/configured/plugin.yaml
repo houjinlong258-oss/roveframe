@@ -1,0 +1,8 @@
+name: configured
+version: 1.0.0
+description: "OpenAI-compatible video generation over the endpoint you already configured (reuses ROVEAGENT_LLM_BASE_URL / ROVEAGENT_LLM_API_KEY). Handles the LiteLLM-style 'mode' field required by aggregator hubs."
+author: RoveFrame
+kind: backend
+requires_env:
+  - ROVEAGENT_LLM_BASE_URL
+  - ROVEAGENT_LLM_API_KEY

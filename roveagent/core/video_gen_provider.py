@@ -460,6 +460,41 @@ class OpenAICompatibleVideoGenProvider(VideoGenProvider):
         override = os.environ.get(f"{self.name.upper()}_BASE_URL", "").strip()
         return override or self._default_base_url
 
+    def _provider_extra_body(self) -> Dict[str, Any]:
+        """Provider-specific fields merged into ``extra_body``.
+
+        Override when the backend needs a field the OpenAI ``videos.create``
+        signature does not name. The concrete case that motivated this hook:
+        the LiteLLM-style hubs (e.g. an OpenAI-compatible aggregator serving
+        ``agnes-video-*`` models) require a ``mode`` parameter and reject the
+        request without it::
+
+            POST /v1/videos {"model": ..., "prompt": ...}
+            -> 400 {"code":"invalid_request","message":"mode is required"}
+
+        Values returned here are merged *after* the shared fields, so a
+        provider may also override ``image_url``/``aspect_ratio`` if its API
+        spells them differently.
+        """
+        return {}
+
+    def _output_url(self, video: Any) -> Optional[str]:
+        """Delivery URL for a finished job, or ``None``.
+
+        Default scans OpenAI's ``data[].url`` shape. **Override when the backend
+        publishes the URL elsewhere** — required for agregator hubs that put it in
+        a top-level ``url`` field and do **not** implement
+        ``GET /videos/{id}/content``. Measured on such a hub: that route answers
+        ``502`` with an HTML error page, so the SDK download fallback in
+        :meth:`generate` can only ever produce
+        ``"no output could be retrieved: <!DOCTYPE html>"``.
+        """
+        for item in getattr(video, "data", None) or []:
+            candidate = item.get("url") if isinstance(item, dict) else getattr(item, "url", None)
+            if candidate:
+                return str(candidate)
+        return None
+
     def generate(
         self,
         prompt: str,
@@ -514,6 +549,10 @@ class OpenAICompatibleVideoGenProvider(VideoGenProvider):
             }.items()
             if v is not None
         }
+        # 厂商特有字段（如 LiteLLM 风格 hub 要求的 mode）由子类提供，见钩子文档。
+        for key, value in (self._provider_extra_body() or {}).items():
+            if value is not None:
+                extra_body[key] = value
         call_kwargs: Dict[str, Any] = {"model": model_id, "prompt": prompt}
         if duration:
             call_kwargs["seconds"] = str(duration)
@@ -559,12 +598,7 @@ class OpenAICompatibleVideoGenProvider(VideoGenProvider):
             # download endpoint (OpenAI/Sora). Download the bytes and save locally
             # so the caller gets a durable file — DeepInfra's delivery URLs in
             # particular are short-lived. Matches plugins/image_gen/deepinfra.
-            url = None
-            for item in getattr(video, "data", None) or []:
-                candidate = item.get("url") if isinstance(item, dict) else getattr(item, "url", None)
-                if candidate:
-                    url = candidate
-                    break
+            url = self._output_url(video)
 
             try:
                 if url:

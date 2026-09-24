@@ -702,19 +702,35 @@ export default function SettingsPage() {
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-sm text-on-surface-variant mt-1">{t('subtitle')}</p>
         </div>
-        {savedTip && (
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success bg-success/10 px-3 py-1.5 rounded-md">
-            <CircleCheck className="w-3.5 h-3.5" />
-            {savedTip}
-          </span>
-        )}
-        {saveError && (
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-error bg-error/10 px-3 py-1.5 rounded-md">
-            <CircleX className="w-3.5 h-3.5" />
-            {saveError}
-          </span>
-        )}
       </div>
+
+      {/*
+        保存反馈必须是 fixed 且 z 高于**所有**弹窗，而本页 6 个弹窗都是 z-50。
+        原来这两个提示渲染在页头的正常文档流里（position: static / z-index: auto）：
+        保存被服务端拒绝时弹窗不会关闭，提示就被压在弹窗遮罩底下 —— 用户点了保存
+        看不到任何反馈，看起来就是"假保存"。这不是猜测，是命中测试实测的：
+        document.elementFromPoint(提示中心) 在弹窗打开时返回的是弹窗内的 INPUT，
+        关掉弹窗后返回的才是提示本身。
+        另外固定定位顺带修掉一个问题：页面滚到下方（如地图/集成面板）保存时，
+        页头提示会滚出视口，同样看不见。
+        守卫见 tests/save-feedback-visibility.test.ts，回退成 static 会变红。
+      */}
+      {(savedTip || saveError) && (
+        <div className="fixed top-4 right-4 z-[60] pointer-events-none max-w-[calc(100vw-2rem)] sm:max-w-sm">
+          {savedTip && (
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success bg-surface border border-success/30 shadow-lg px-3 py-1.5 rounded-md">
+              <CircleCheck className="w-3.5 h-3.5" />
+              {savedTip}
+            </span>
+          )}
+          {saveError && (
+            <span className="inline-flex items-start gap-1.5 text-xs font-medium text-error bg-surface border border-error/30 shadow-lg px-3 py-1.5 rounded-md">
+              <CircleX className="w-3.5 h-3.5 shrink-0 mt-px" />
+              {saveError}
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-[11rem_1fr] gap-6 items-start max-w-4xl">
         {/* 左侧分组菜单 */}
@@ -1650,17 +1666,25 @@ export default function SettingsPage() {
                   <input type="number" min={0} max={5} value={modelForm.maxRetries} onChange={(e) => setModelForm({ ...modelForm, maxRetries: e.target.value })} placeholder="2" className={inputCls} />
                 </div>
               </div>
-              {(modelModal.category === 'local' || modelModal.id === 'custom') && (
-                <label className="flex items-center gap-2.5 text-xs text-on-surface-variant">
-                  <input
-                    type="checkbox"
-                    checked={modelForm.optInLocal}
-                    onChange={(e) => setModelForm({ ...modelForm, optInLocal: e.target.checked })}
-                    className="accent-primary"
-                  />
-                  {t('optInLocal')}
-                </label>
-              )}
+              {/*
+                这个开关**不能**按 provider 的 category 来决定渲染与否。
+                反例（真实存在）：catalog 的 litellm 默认 URL 是 http://localhost:4000/v1，
+                但 category 是 gateway —— 按 category 判断会让它的默认 URL 必然被
+                checkBaseUrl 拒绝，而唯一能授权它的开关又不渲染，用户在界面上永远
+                保存不了这个 provider（实测：同一请求补上 optInLocal:true 后返回 200）。
+                category 只用于分组展示，不该承载安全策略；服务端本来就对任意 provider
+                承认 optInLocal，且云 metadata 地址任何情况下都拒绝。
+                守卫见 tests/base-url-local-optin.test.ts。
+              */}
+              <label className="flex items-center gap-2.5 text-xs text-on-surface-variant">
+                <input
+                  type="checkbox"
+                  checked={modelForm.optInLocal}
+                  onChange={(e) => setModelForm({ ...modelForm, optInLocal: e.target.checked })}
+                  className="accent-primary"
+                />
+                {t('optInLocal')}
+              </label>
               <div className="flex flex-wrap gap-1.5">
                 {(Object.entries(modelModal.capabilities) as [string, boolean][]).filter(([, v]) => v).map(([k]) => (
                   <span key={k} className="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-high text-on-surface-variant font-mono">{k}</span>

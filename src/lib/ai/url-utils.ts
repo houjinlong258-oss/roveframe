@@ -64,6 +64,23 @@ function isPrivateIPv6Literal(host: string): boolean {
   return isBlockedIPv6(bytes);
 }
 
+/**
+ * host 是否为**字面量的** loopback / 私网 / 链路本地地址。
+ *
+ * 注意必须用 isIPv4 严格判定，不能用 `startsWith('127.')`：后者会把
+ * `127.0.0.1.nip.io` 这种**域名**误判成本地字面量 —— 那正是重绑定攻击的典型形态，
+ * 报「这是本地地址」会掩盖真实性质。（这个坑是写守卫时被自己的断言抓到的。）
+ */
+function isLocalLiteralHost(host: string): boolean {
+  return (
+    host === 'localhost' ||
+    host === '::1' ||
+    (isIPv4(host) && host.startsWith('127.')) ||
+    isPrivateIPv4(host) ||
+    isPrivateIPv6Literal(host)
+  );
+}
+
 export interface BaseUrlCheck {
   ok: boolean;
   reason?: string;
@@ -93,12 +110,19 @@ export function checkBaseUrl(raw: string, policy: BaseUrlPolicy = {}): BaseUrlCh
   if (BLOCKED_HOSTNAMES.has(host) || BLOCKED_IPS.has(host) || isMetadataHostname(host)) {
     return { ok: false, reason: 'metadata_endpoint_blocked' };
   }
+
+  const isLoopback = host === 'localhost' || host === '::1' || host.startsWith('127.');
+
+  // 本机别名（localhost / *.local / *.internal …）本来就落在 REBINDING_HOSTNAME_PATTERNS 里，
+  // 但它被拒的真实原因是「这是本地地址」，不是「域名会重绑定」。原因串要说对，
+  // 否则用户看到 rebinding_hostname_blocked 根本猜不到该去勾「允许本地/内网地址」。
+  if (!allowLocal && isLocalLiteralHost(host) && isRebindingHostname(host)) {
+    return { ok: false, reason: 'local_address_requires_optin' };
+  }
   // DNS 重绑定域名：默认拒绝；本地模型显式 opt-in 才放行
   if (!allowLocal && isRebindingHostname(host)) {
     return { ok: false, reason: 'rebinding_hostname_blocked' };
   }
-
-  const isLoopback = host === 'localhost' || host === '::1' || host.startsWith('127.');
 
   if (url.protocol === 'https:') {
     if (production && !allowLocal && (isLoopback || isPrivateIPv4(host) || isPrivateIPv6Literal(host))) {

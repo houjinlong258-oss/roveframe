@@ -132,8 +132,33 @@ async function call<T>(path: string, init: RequestInit = {}, timeoutMs = DEFAULT
   }
 }
 
-function signedBody(value: Record<string, unknown>): { body: string; headers: Record<string, string> } {
-  const body = JSON.stringify(value);
+/**
+ * 列出技能市场里该租户**已装**的技能（名字 + 描述）。
+ *
+ * 供任务→技能路由使用：只提示已装的技能，否则会把模型引向一个它调不动的技能。
+ * 调用方必须把失败当"没有提示"处理（best-effort），不能让聊天因此失败。
+ */
+export async function listInstalledSkills(scope: {
+  tenantId: string;
+  businessId: string;
+}): Promise<Array<{ name: string; description: string; installed: boolean }>> {
+  const query = new URLSearchParams({
+    tenant_id: scope.tenantId,
+    business_id: scope.businessId,
+  });
+  const payload = await call<{
+    skills?: Array<{ name?: string; description?: string; installed?: boolean }>;
+  }>(`/api/agent/skills/market?${query.toString()}`, { method: 'GET' }, 10_000);
+  return (payload.skills ?? [])
+    .filter((s): s is { name: string; description?: string; installed?: boolean } => Boolean(s?.name))
+    .map((s) => ({
+      name: s.name,
+      description: s.description ?? '',
+      installed: s.installed === true,
+    }));
+}
+
+function signedBody(value: Record<string, unknown>): { body: string; headers: Record<string, string> } {  const body = JSON.stringify(value);
   const signed = signRoveAgentPayload(body);
   return {
     body,

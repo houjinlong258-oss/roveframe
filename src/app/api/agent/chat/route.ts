@@ -16,7 +16,8 @@ import type { AgentSseEvent, AgentStatusPhase } from '@/lib/agent/stream-events'
 import { approvalMarker, stripInternalMarkers } from '@/lib/agent/stream-events';
 import { detectDeliverables } from '@/lib/artifacts/deliverable';
 import { classifyRequest } from '@/lib/agent/request-class';
-import { roveAgentChat, roveAgentChatStream, roveAgentConfigured, RoveAgentUnavailable, type RoveAgentStreamEvent } from '@/lib/roveagent/client';
+import { roveAgentChat, roveAgentChatStream, roveAgentConfigured, listInstalledSkills, RoveAgentUnavailable, type RoveAgentStreamEvent } from '@/lib/roveagent/client';
+import { matchSkills, skillHintsPrompt } from '@/lib/agent/skill-router';
 import { PERSONAS, resolvePersonaKey, type PersonaKey } from '@/lib/agent/personas';
 
 const PERSONA_EMPLOYEE: Record<PersonaKey, string> = Object.fromEntries(
@@ -46,8 +47,31 @@ const requestSchema = z.object({
   attachments: z.array(z.string().uuid()).max(10).optional(),
 });
 
-const RECENT_HISTORY_MESSAGES = 20;
-const MAX_CONVERSATION_SUMMARY_CHARS = 4_000;
+/**
+ * 任务 → 技能提示（best-effort）。
+ *
+ * 运行时只把技能索引（名字+描述）放进提示词，正文要模型自己 `skill_view` 去取；
+ * 仓库自己的注释就记着这个弱点（core/coding_context.py: models do not reliably
+ * reach for skills_list…）。这里拿用户这句话去匹配**本租户已装**的技能，
+ * 命中的名字与用途显式写进本轮上下文，并要求先读取再动手。
+ *
+ * **失败一律当"没有提示"**：技能路由是增强，不该让聊天失败。
+ */
+async function skillHintsFor(
+  scope: { tenantId: string; businessId: string },
+  message: string,
+  locale: string,
+): Promise<string> {
+  if (!roveAgentConfigured()) return '';
+  try {
+    const skills = await listInstalledSkills(scope);
+    return skillHintsPrompt(matchSkills(message, skills), locale);
+  } catch {
+    return '';
+  }
+}
+
+const RECENT_HISTORY_MESSAGES = 20;const MAX_CONVERSATION_SUMMARY_CHARS = 4_000;
 /** 内联进 prompt 的附件：最多 4 个、每个最多 12000 字符 */
 const MAX_INLINE_ATTACHMENTS = 4;
 const MAX_INLINE_ATTACHMENT_CHARS = 12_000;
@@ -566,10 +590,17 @@ async function runChat(request: Request) {
       attachmentIds,
       locale,
     );
+    // 任务→技能提示：算一次，两条链路（TS 兜底 / 运行时）都用同一份。
+    const skillHints = await skillHintsFor(
+      { tenantId: ctx.tenantId, businessId: ctx.businessId },
+      body.message,
+      locale,
+    );
     const systemContent = [
       locale === 'zh' ? SYSTEM_ZH : SYSTEM_EN,
       skillForIndustry(industry),
       contextToPrompt(bizCtx, locale),
+      skillHints,
       memoriesToPrompt(memories, locale),
       attachmentContext,
       sessionSummary
@@ -645,7 +676,7 @@ async function runChat(request: Request) {
           // 与 TS 侧 chat_sessions 同一 session id → 多轮上下文跨调用持久
           sessionId: activeSessionId,
           industry,
-          businessContext: contextToPrompt(bizCtx, locale),
+          businessContext: [contextToPrompt(bizCtx, locale), skillHints].filter(Boolean).join('\n\n'),
         });
         // 先拉第一个事件确认连通（失败会在此抛出 RoveAgentUnavailable）
         const first = await roveAgentStream.next();

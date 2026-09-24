@@ -153,6 +153,95 @@ class CapabilityReportTest(unittest.TestCase):
         )
 
 
+class IndustryPackAgentReachabilityTest(unittest.TestCase):
+    """行业包声明的 agent 必须真的够得到技能。
+
+    实测缺陷（2026-09-25）：`skills` 工具集原先只授予 developer，而行业包清单
+    `packs/restaurant.json` 自己写着
+
+        "agents": ["ceo", "operations", "marketing", "customer", "devops"]
+
+    —— 也就是说包是给这些 agent 用的。但装完 16 个技能（含餐厅包 6 个）之后核对
+    实际解析结果，ceo / operations / marketing / devops **一个都读不到技能**：
+
+        ceo        available_tools=14  skills 工具: 无
+        operations available_tools=14  skills 工具: 无
+        marketing  available_tools=14  skills 工具: 无
+        devops     available_tools=3   skills 工具: 无
+        developer  available_tools=11  skill_manage / skill_view / skills_list
+
+    即"安装了技能，但要用技能的角色看不见" —— 与 Developer persona 那次同一类
+    缺陷：能力清单承诺了，交付路径没接上。
+
+    `customer` 是清单里的历史名称，AGENT_CAPABILITIES 里没有这个 agent，
+    因此只对**已知 agent** 断言（未知名称不算可达性缺陷）。
+    """
+
+    PACKS_DIR = REPO / "roveagent" / "skills" / "packs"
+
+    @staticmethod
+    def _agents_missing_skills(declared_agents: list[str]) -> list[str]:
+        """清单里声明但拿不到 skills 工具集的**已知** agent。
+
+        由下面的负向对照证明它能返回非空 —— 否则这条断言是空转的。
+        """
+        missing = []
+        for agent in declared_agents:
+            if agent not in AGENT_CAPABILITIES:
+                continue  # 历史名称，运行时没有这个 agent
+            if "skills" not in planned_toolsets(agent):
+                missing.append(agent)
+        return sorted(missing)
+
+    def _declared_agents(self) -> list[str]:
+        import json
+
+        names: list[str] = []
+        for path in sorted(self.PACKS_DIR.glob("*.json")):
+            pack = json.loads(path.read_text(encoding="utf-8"))
+            for agent in pack.get("agents", []):
+                if agent not in names:
+                    names.append(agent)
+        return names
+
+    def test_pack_manifests_declare_agents(self) -> None:
+        declared = self._declared_agents()
+        self.assertGreater(len(declared), 0, "没有解析到任何行业包声明的 agent，本测试会空转")
+        self.assertIn("ceo", declared, "餐厅包应当声明 ceo —— 若清单变了，本测试的前提也要复核")
+
+    def test_every_declared_agent_can_reach_skills(self) -> None:
+        missing = self._agents_missing_skills(self._declared_agents())
+        self.assertEqual(
+            missing, [],
+            f"这些 agent 被行业包声明为使用方，却拿不到 skills 工具集: {missing}。"
+            "装了技能而要用它的角色看不见，等于没装。",
+        )
+
+    def test_negative_control_detector_flags_an_agent_without_skills(self) -> None:
+        """负向对照：检测器必须能把「拿不到 skills」判出来。
+
+        先证明它对当前表返回空（上面的用例），再证明它**能**返回非空 ——
+        否则上面那条断言永远为真、永远抓不到东西。
+        """
+        # 伪造一个"有画像但没有 skills"的场景：借 devops 的名字，但用只含 terminal 的画像
+        from roveagent.api import capability_router as cr
+
+        original = cr.AGENT_CAPABILITIES["devops"]
+        try:
+            cr.AGENT_CAPABILITIES["devops"] = cr.AgentCapability(
+                agent="devops", role="engineering",
+                toolsets=("terminal",), max_iterations=16, summary="test-only",
+            )
+            self.assertEqual(
+                self._agents_missing_skills(["devops"]), ["devops"],
+                "检测器必须能识别出拿不到 skills 的 agent",
+            )
+            self.assertEqual(self._agents_missing_skills(["customer"]), [],
+                             "未知 agent 不得被判为可达性缺陷")
+        finally:
+            cr.AGENT_CAPABILITIES["devops"] = original
+
+
 class ConsistencyTest(unittest.TestCase):
     """api/toolsets.py（Step 1.75 表）与 capability_router（Phase 1 表）不得矛盾。"""
 

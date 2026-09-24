@@ -70,16 +70,23 @@ AGENT_CAPABILITIES: Final[dict[str, AgentCapability]] = {
         # knowledge：租户自有文档检索（只读、受运行上下文作用域约束），
         # 与既有的 business 读取同风险等级 —— CEO 回答「我们的退款政策是什么」
         # 必须能查到内部文档，而不是只能联网。
-        toolsets=("safe", "memory", "business", "knowledge", "search"),
+        #
+        # skills：技能市场装进租户的技能（skills_list / skill_view / skill_manage）。
+        # 实测缺陷（2026-09-25）：`skills` 原先只授予 developer，而行业包清单
+        # `packs/restaurant.json` 自己声明了 "agents": ["ceo","operations","marketing",
+        # "customer","devops"] —— 也就是说包是给这些 agent 用的，但装完之后
+        # **只有 developer 能看见**，业务角色一个都读不到。装技能的意义正在于此。
+        toolsets=("safe", "memory", "business", "knowledge", "search", "skills"),
         max_iterations=8,
-        summary="读取经营数据、内部知识库、记忆、联网检索；回答问题与出报告。不碰文件与终端。",
+        summary="读取经营数据、内部知识库、记忆、联网检索与已安装技能；回答问题与出报告。不碰文件与终端。",
     ),
     "operations": AgentCapability(
         agent="operations", role="executive",
         # knowledge：运营流程、SOP、价目表等内部文档。
-        toolsets=("safe", "memory", "business", "knowledge"),
+        # skills：餐厅/酒店等行业包装进来的作业技能（菜单优化、库存预测、预约分诊…）。
+        toolsets=("safe", "memory", "business", "knowledge", "skills"),
         max_iterations=8,
-        summary="日常运营：订单、库存、预约、差评与流程效率（可查内部知识库）。",
+        summary="日常运营：订单、库存、预约、差评与流程效率（可查内部知识库与行业技能）。",
     ),
     "marketing": AgentCapability(
         agent="marketing", role="executive",
@@ -95,10 +102,12 @@ AGENT_CAPABILITIES: Final[dict[str, AgentCapability]] = {
         # 声明与交付必须一致，因此把措辞改成"仅生成、不发布"。
         # 注意必须并上 safe/memory/business —— Phase 1 是 Step 1.75 的**超集**，
         # 不得因为扩展能力而收回既有只读能力（由一致性测试锁定）。
-        toolsets=("safe", "memory", "business", "knowledge", "search", "web", "media", "social"),
+        #
+        # skills：召回活动、竞品舆情等行业技能由市场角色使用。
+        toolsets=("safe", "memory", "business", "knowledge", "search", "web", "media", "social", "skills"),
         max_iterations=8,
         summary=(
-            "客户增长与留存：内部知识库与趋势检索、内容与媒体生成。"
+            "客户增长与留存：内部知识库与趋势检索、内容与媒体生成、行业技能。"
             "注意：社交平台发布**尚未实现**，本角色只能生成内容，不能代发。"
         ),
     ),
@@ -112,7 +121,8 @@ AGENT_CAPABILITIES: Final[dict[str, AgentCapability]] = {
     "devops": AgentCapability(
         agent="devops", role="engineering",
         # terminal 已含 process；docker/monitoring 见 docker_read/monitoring
-        toolsets=("terminal", "docker_read", "monitoring", "todo"),
+        # skills：行业包清单同样声明了 devops，运维手册类技能要能被读到。
+        toolsets=("terminal", "docker_read", "monitoring", "todo", "skills"),
         max_iterations=16,
         summary="AI 运维工程师：服务状态、日志、进程、容器只读巡检（生产变更需审批）。",
     ),

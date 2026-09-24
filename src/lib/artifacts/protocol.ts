@@ -83,6 +83,43 @@ export function sanitizeFileName(raw: string, fallbackExt = 'txt'): string {
   return /\.[a-z0-9]{1,6}$/i.test(safe) ? safe : `${safe}.${fallbackExt}`;
 }
 
+/**
+ * 把**展示用**文件名派生成**存储 key 安全**的 ASCII 名字。
+ *
+ * ## 为什么必须有这一层（真实故障）
+ *
+ * Supabase Storage 对非 ASCII 的 object key 直接返回 `Invalid key`。
+ * 而产物名是从老板原话派生的（`slugifyTitle(slugFromMessage(...))`），中文用户
+ * 的每一个文件名都带中文 —— 于是 PDF / DOCX / XLSX / PPTX / HTML **全部**交付失败。
+ *
+ * 实测差异（同一次对话、同一个存储桶）：
+ *   · `Data_1790267931096.xlsx`（程序生成的 ASCII 名）→ 上传成功，4611 字节
+ *   · `写一份本月经营分析报告内容要完整并_成_报告_20260925.pdf` → `Invalid key`
+ *
+ * `sanitizeFileName` 只防路径穿越与控制字符，**允许任意 Unicode 字母**，所以它
+ * 产出的名字不能直接当 key 用：展示名要保留中文（老板要看懂），key 必须纯 ASCII。
+ * 两者分开，是这个模块存在的唯一理由。
+ *
+ * ## 必须确定性
+ *
+ * `signArtifact` / `deleteArtifact` / `readArtifactText` / `readArtifactBytes`
+ * 都要用同一个函数重算路径，否则写进去的文件再也读不回来。
+ *
+ * 不保证唯一性，也不需要：每个产物有自己的 `{artifactId}/` 目录。
+ */
+export function storageSafeName(raw: string, fallbackExt = 'bin'): string {
+  const rawExt = raw.includes('.') ? (raw.split('.').pop() ?? '') : '';
+  const ext = rawExt.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 6) || fallbackExt;
+  const base = raw
+    .replace(/\.[^.]*$/, '')
+    .normalize('NFKD')
+    .replace(/[^\x20-\x7e]/g, '')
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .slice(0, 80);
+  return `${base || 'artifact'}.${ext}`;
+}
+
 /** 解析单条围栏 info 字符串 `artifact:<format>:<filename>`；非法返回 null。 */
 export function parseFenceInfo(info: string, formatHint?: ArtifactFormat): ExtractedArtifact | null {
   const trimmed = info.trim();

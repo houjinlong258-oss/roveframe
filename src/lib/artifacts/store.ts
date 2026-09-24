@@ -13,7 +13,7 @@
 
 import { getSupabaseClient, getSupabaseCredentials } from '@/storage/database/supabase-client';
 import { writeDocument, writeTable, type DocSection, type TableSpec } from '@/lib/artifacts/doc-writers';
-import { requiresJsonSpec, sanitizeFileName, type ArtifactFormat } from '@/lib/artifacts/protocol';
+import { requiresJsonSpec, sanitizeFileName, storageSafeName, type ArtifactFormat } from '@/lib/artifacts/protocol';
 
 export const ARTIFACT_BUCKET = 'agent-artifacts';
 export const MANIFEST_NAME = '_artifact.json';
@@ -115,6 +115,17 @@ function scopePrefix(scope: ArtifactScope): string {
   return `${scope.tenantId}/${scope.businessId}`;
 }
 
+/**
+ * 产物在存储桶里的**对象名**，永远由展示名确定性派生。
+ *
+ * 展示名（`record.name`）可以是中文，对象名必须是纯 ASCII —— Supabase Storage
+ * 对非 ASCII key 返回 `Invalid key`，那会让中文用户的**每一个**文件交付失败。
+ * 这里集中一处派生：写入、签名、删除、读取若各写各的，写进去的文件就读不回来了。
+ */
+function objectNameFor(record: Pick<ArtifactRecord, 'name' | 'format'>): string {
+  return storageSafeName(record.name, record.format);
+}
+
 /** 从文件名取扩展名（小写、仅字母数字），未知返回 'bin'。 */
 export function formatFromName(name: string): string {
   const ext = (name.split('.').pop() ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -207,7 +218,8 @@ export async function putArtifact(
   };
 
   const storage = getSupabaseClient().storage.from(ARTIFACT_BUCKET);
-  const objectPath = `${scopePrefix(scope)}/${id}/${name}`;
+  // 展示名进 manifest（可以是中文），对象名走 ASCII 派生 —— 见 objectNameFor。
+  const objectPath = `${scopePrefix(scope)}/${id}/${objectNameFor(manifest)}`;
   const upload = await storage.upload(objectPath, input.data, {
     contentType: input.mime,
     upsert: false,
@@ -331,7 +343,10 @@ export async function signArtifact(
   if (!record) return null;
   const { data, error } = await getSupabaseClient()
     .storage.from(ARTIFACT_BUCKET)
-    .createSignedUrl(`${scopePrefix(scope)}/${artifactId}/${record.name}`, expiresIn);
+    // 对象名是 ASCII 派生名；download 让浏览器存成展示名（可以是中文），两者解耦。
+    .createSignedUrl(`${scopePrefix(scope)}/${artifactId}/${objectNameFor(record)}`, expiresIn, {
+      download: record.name,
+    });
   if (error || !data?.signedUrl) return null;
   const signed = data.signedUrl;
   if (/^https?:\/\//i.test(signed)) return signed;
@@ -346,7 +361,7 @@ export async function deleteArtifact(scope: ArtifactScope, artifactId: string): 
   if (!record) return false;
   const prefix = `${scopePrefix(scope)}/${artifactId}`;
   const { error } = await getSupabaseClient().storage.from(ARTIFACT_BUCKET).remove([
-    `${prefix}/${record.name}`,
+    `${prefix}/${objectNameFor(record)}`,
     `${prefix}/${MANIFEST_NAME}`,
   ]);
   if (error) throw new Error(error.message);
@@ -373,7 +388,7 @@ export async function readArtifactText(
   if (!record || !isTextualArtifact(record.format)) return null;
   const { data, error } = await getSupabaseClient()
     .storage.from(ARTIFACT_BUCKET)
-    .download(`${scopePrefix(scope)}/${artifactId}/${record.name}`);
+    .download(`${scopePrefix(scope)}/${artifactId}/${objectNameFor(record)}`);
   if (error || !data) return null;
   const text = await data.text();
   return text.length > maxBytes ? `${text.slice(0, maxBytes)}\n…[truncated]` : text;
@@ -399,7 +414,7 @@ export async function readArtifactBytes(
   if (record.size > maxBytes) return { ok: false, record, reason: 'too_large' };
   const { data, error } = await getSupabaseClient()
     .storage.from(ARTIFACT_BUCKET)
-    .download(`${scopePrefix(scope)}/${artifactId}/${record.name}`);
+    .download(`${scopePrefix(scope)}/${artifactId}/${objectNameFor(record)}`);
   if (error || !data) return { ok: false, record, reason: 'download_failed' };
   return { ok: true, record, data: Buffer.from(await data.arrayBuffer()) };
 }

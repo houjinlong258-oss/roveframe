@@ -46,6 +46,22 @@ export function roveAgentConfigGaps(): string[] {
   return gaps;
 }
 
+/**
+ * 「未配置」时给用户看的那句话 —— **必须点名缺哪个变量**。
+ *
+ * 实测（2026-09-25）：老板的实例只缺 `ROVEAGENT_API_URL` 一个变量，界面上却只说
+ * "roveagent runtime not configured"。于是这个可一行修好的配置问题，被误判成
+ * "整套工具能力没实现"，对方的 AI 还据此编出了一份"重构后端"的工单。
+ * 报错含糊的代价，比报错本身大得多。
+ *
+ * 变量齐备时返回空串（调用方据此判断"不是缺配置，是连不上"）。
+ */
+export function roveAgentConfigDetail(): string {
+  const gaps = roveAgentConfigGaps();
+  if (gaps.length === 0) return '';
+  return `missing ${gaps.join(', ')}`;
+}
+
 /** 健康检查结果。Runtime 可达性探针，不抛错。 */
 export interface RoveAgentHealth {
   ok: boolean;

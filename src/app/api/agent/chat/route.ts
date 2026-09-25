@@ -16,7 +16,7 @@ import type { AgentSseEvent, AgentStatusPhase } from '@/lib/agent/stream-events'
 import { approvalMarker, stripInternalMarkers } from '@/lib/agent/stream-events';
 import { detectDeliverables } from '@/lib/artifacts/deliverable';
 import { classifyRequest } from '@/lib/agent/request-class';
-import { roveAgentChat, roveAgentChatStream, roveAgentConfigured, listInstalledSkills, RoveAgentUnavailable, type RoveAgentStreamEvent } from '@/lib/roveagent/client';
+import { roveAgentChat, roveAgentChatStream, roveAgentConfigured, roveAgentConfigDetail, listInstalledSkills, RoveAgentUnavailable, type RoveAgentStreamEvent } from '@/lib/roveagent/client';
 import { matchSkills, skillHintsPrompt } from '@/lib/agent/skill-router';
 import { PERSONAS, resolvePersonaKey, type PersonaKey } from '@/lib/agent/personas';
 
@@ -46,6 +46,18 @@ const requestSchema = z.object({
   /** 已上传到文件中心的附件 id（用户上传的资料） */
   attachments: z.array(z.string().uuid()).max(10).optional(),
 });
+
+/**
+ * 「未配置」时给用户看的那句话 —— **点名缺哪个变量**。
+ *
+ * 原先三处硬编码 'roveagent runtime not configured'，用户只看到"未配置"，
+ * 不知道**该设哪个**。实测踩过：实例只缺 ROVEAGENT_API_URL 一个变量，
+ * 界面上却只说 not configured，于是被误判成"整套工具能力没实现"。
+ */
+function runtimeNotConfiguredDetail(): string {
+  const detail = roveAgentConfigDetail();
+  return detail ? `roveagent runtime not configured (${detail})` : 'roveagent runtime not configured';
+}
 
 /**
  * 任务 → 技能提示（best-effort）。
@@ -620,7 +632,7 @@ async function runChat(request: Request) {
     let usedRoveAgent = false;
     /** Runtime 状态：由 Agent Router 判定，随流最前面发给前端（Step 2）。 */
     let runtimeStatus: { mode: 'roveagent' | 'fallback' | 'unavailable'; detail?: string } =
-      { mode: 'fallback', detail: 'roveagent runtime not configured' };
+      { mode: 'fallback', detail: runtimeNotConfiguredDetail() };
     /** 内核对流（已消费首事件）；null 表示走 TS 兜底路径 */
     let roveAgentStream: AsyncGenerator<RoveAgentStreamEvent, void, unknown> | null = null;
     /** 已从内核取出但尚未转发的事件（首事件） */
@@ -701,8 +713,8 @@ async function runChat(request: Request) {
       }
     } else if (classification.requestClass === 'tool_execution') {
       // 未配置 Runtime 且是工具类请求：同样必须失败，不能假装
-      runtimeStatus = { mode: 'unavailable', detail: 'roveagent runtime not configured' };
-      runtimeFailureMessage = 'roveagent runtime not configured';
+      runtimeStatus = { mode: 'unavailable', detail: runtimeNotConfiguredDetail() };
+      runtimeFailureMessage = runtimeNotConfiguredDetail();
     }
 
     const tenantId = ctx.tenantId;

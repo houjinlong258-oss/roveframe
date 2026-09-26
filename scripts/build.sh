@@ -39,4 +39,24 @@ NODE_OPTIONS="${NODE_OPTIONS:-} --no-deprecation" pnpm next build
 echo "Bundling server with tsup..."
 pnpm tsup src/server.ts --format cjs --platform node --target node20 --outDir dist --no-splitting --no-minify
 
+# ---------------------------------------------------------------------------
+# 清掉 `.next/dev`。
+#
+# 那是**开发模式**的产物，生产运行时不读它，而且 **`next build` 不会清理它** ——
+# 实测（2026-09-25，生产构建前后各测一次）：`.next/dev` 前后都是 389.6 MB，
+# 而 `.next` 总量 495.8 MB，也就是说 79% 的产物是开发垃圾。
+#
+# 云端部署尤其吃亏：`.coze` 的 [dev] 与 [deploy] 指向同一个 workspace，
+# 开发预览写下的 `.next/dev` 会被原样带进部署产物。Docker 构建因为是全新
+# builder 阶段、只跑一次 next build，所以没这个问题 —— 但删掉在那边也是无操作。
+#
+# 放在 next build **之后**：构建过程本身不受影响，只有确定要产出部署产物时才清。
+# ---------------------------------------------------------------------------
+DEV_ARTIFACTS=".next/dev"
+if [ -d "${DEV_ARTIFACTS}" ]; then
+  DEV_SIZE="$(du -sh "${DEV_ARTIFACTS}" 2>/dev/null | cut -f1 || echo '?')"
+  rm -rf "${DEV_ARTIFACTS}"
+  echo "Removed ${DEV_ARTIFACTS} (${DEV_SIZE}) — dev-mode artifacts are not read in production."
+fi
+
 echo "Build completed successfully!"

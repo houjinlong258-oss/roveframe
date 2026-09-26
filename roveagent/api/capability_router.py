@@ -30,8 +30,27 @@
   工具**能否执行**仍由 ``EnterpriseToolGate`` 独立裁决。
 - **不改 ``runtime.py``**：纯新增模块 + 调用方接线。
 
-当前状态：本模块**尚未接到请求链路**（``api/app.py`` 仍走 ``api/toolsets.py``），
-先以「可测试的能力解析器」形式落地，接线在 Phase 1 的下一步完成。
+当前状态：**已接入真实请求链路**（2026-09-25 更正）。
+
+``api/app.py`` 的两个对话入口都先取本模块的画像，再交给 toolset 解析：
+
+- ``/api/agent/chat``        → ``app.py:525``
+- ``/api/agent/chat/stream`` → ``app.py:573``
+
+两处都是 ``resolve_toolsets_for_request(emp.key, capability_toolsets=planned_toolsets(emp.key))``。
+而 ``api/toolsets.py::resolve_toolsets_for_request`` 在 ``capability_toolsets`` 非 None 时
+**优先采用本模块的画像**，只在它为 None 时才回落到 ``toolsets.py`` 的静态最小表
+（``_AGENT_RUNTIME``）。
+
+因此 **本模块的画像才是生效的权威**，``toolsets.py`` 的静态表只是回退路径
+（供单测与未接线场景使用）。
+
+.. note::
+   这里原先写的是「本模块尚未接到请求链路，接线在下一步完成」——与代码不符。
+   该错误陈述有实际代价：本次排查中它一度让人以为「把 skills toolset 加进本模块」
+   的改动没有生效（事实是生效的，实测 ceo/operations/marketing 各拿到 17 个工具，
+   含 ``skills_list``/``skill_view``/``skill_manage``）。
+   判断接线状态应当看 ``app.py`` 的调用点，而不是本段文档。
 """
 from __future__ import annotations
 

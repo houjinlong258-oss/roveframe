@@ -3,10 +3,11 @@
 import { useTranslations } from 'next-intl';
 import {
   ArrowRight, BarChart3, Bot, Check, ClipboardCheck, Inbox, LineChart,
-  MessageSquareWarning, ShieldCheck, Sparkles, Users, Utensils, Zap,
+  MessageSquareWarning, ShieldCheck, Users, Utensils, Zap,
 } from 'lucide-react';
 import { Link } from '@/i18n/navigation';
 import { Button } from '@/components/ui/button';
+import { RoveFrameLogo } from '@/components/layout/brand-logo';
 
 /**
  * 落地面（Phase 15）。
@@ -49,10 +50,9 @@ export function LandingPage() {
       <header className="sticky top-0 z-40 border-b border-outline-variant/40 bg-background/80 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
           <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <Sparkles className="h-4 w-4" />
-            </span>
-            <span className="text-sm font-semibold">RoveFrame</span>
+            {/* 与工作台顶栏共用同一字标组件：品牌只有一处定义，不会再出现
+                「落地页是纯文本、顶栏是字体拼字」这种两套不一致。 */}
+            <RoveFrameLogo variant="primary" size="md" />
           </div>
           <div className="flex items-center gap-2">
             <Link href="/auth/login">

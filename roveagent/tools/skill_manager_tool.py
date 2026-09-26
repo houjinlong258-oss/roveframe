@@ -1561,6 +1561,10 @@ def apply_skill_pending(payload: Dict[str, Any]) -> str:
     """
     token = _skill_gate_bypass.set(True)
     try:
+        if payload.get("action") == "install":
+            # 已获批准的高影响安装。grants 从记录读（见 _apply_pending_install），
+            # 不走 skill_manage 的签名 —— 那个签名里没有 granted，Agent 无法自授。
+            return _apply_pending_install(payload)
         return skill_manage(
             action=payload.get("action", ""),
             name=payload.get("name", ""),
@@ -1897,9 +1901,181 @@ def _maybe_debounced_sync_push(skill_name: str) -> None:
         _sync_push_timer.start()
 
 
+# =============================================================================
+# 联网取回与安装（Skill_Fetch_Design.md）
+#
+# 为什么不复用 _apply_skill_write_gate：那个门是**按子系统一刀切**的
+# （``evaluate_gate`` 的矩阵里 "gate on, skills (any origin) → stage"）。
+# 把 install 挂进去会变成两个方向都错：设置关掉 → shell 级技能自动安装；
+# 设置打开 → 只读技能也被拦。这里的开关是能力阈值本身，固定在
+# ``install_policy`` 里，任何设置都改不动它。
+#
+# 授权来源（关键）：Agent **无法**指定 granted —— 工具签名里没有该参数。
+#   低影响 → granted 由 auto_grants() 从请求集合推出；
+#   高影响 → granted 来自**人的批准记录**，见 _apply_pending_install。
+# 两条路径都不允许客户端或判定模块自己填。
+# =============================================================================
+
+
+def _caps_from_values(values) -> frozenset:
+    """把 ['files:read', ...] 还原成 Capability 集合。
+
+    只认同 Capability 的 value/name；认不出的一律**丢弃**（而不是当作低影响放行）——
+    丢弃会让 installer 的 missing grants 拒绝生效，方向是安全的。
+    """
+    from roveagent.skills_market.permissions import Capability
+
+    out = set()
+    for raw in values or ():
+        for member in Capability:
+            if raw in (member.value, member.name):
+                out.add(member)
+                break
+    return frozenset(out)
+
+
+def _install_policy_for(source_path: Path):
+    """对一个已隔离的目录做「扫描 + 能力请求」，再套用阈值。
+
+    请求集合取**声明 ∪ 推断**：只用声明的话，技能少写一行就能绕过阈值。
+    """
+    from roveagent.skills_market.install_policy import decide_install_policy
+    from roveagent.skills_market.installer import plan_install
+    from roveagent.skills_market.permissions import capabilities_from_content
+
+    plan = plan_install(Path(source_path), library_root=_skills_dir())
+    requested = frozenset(getattr(plan.permissions, "requested", ()) or ())
+    inferred = capabilities_from_content(
+        detected=getattr(plan.scan, "detected_capabilities", ()) or ()
+    )
+    # 注意：``ScanReport.blocking`` 是 **property**（返回元组），不是方法。
+    # 实测踩过：写成 blocking() 会在真实 ScanReport 上抛
+    # TypeError: 'tuple' object is not callable —— 单测发现不了，因为它们不构造真的
+    # ScanReport，只有端到端冒烟能暴露。
+    blocking = tuple(
+        "%s: %s" % (f.severity.value, f.code)
+        for f in (plan.scan.blocking if plan.scan else ())
+    )
+    decision = decide_install_policy(
+        requested=requested | frozenset(inferred), blocking=blocking
+    )
+    return plan, decision, requested | frozenset(inferred)
+
+
+def _fetch_skill(source: str) -> str:
+    """把技能取回到隔离区。**惰性**：不扫描、不安装、不激活。"""
+    from roveagent.skills_market.fetcher import FetchRefused, fetch_skill
+
+    try:
+        fetched = fetch_skill(source)
+    except FetchRefused as exc:
+        return tool_error("fetch refused: %s" % exc, success=False)
+    return json.dumps(
+        {
+            "success": True,
+            "fetched": True,
+            "source": source,
+            "path": str(fetched.path),
+            "commit": fetched.commit,
+            "digest": fetched.digest,
+            "files": len(fetched.files),
+            "bytes": fetched.total_bytes,
+            "message": (
+                "Fetched into quarantine; nothing is installed yet. "
+                'To install: skill_manage(action="install", source="%s")'
+                % fetched.path
+            ),
+        },
+        ensure_ascii=False,
+    )
+
+
+def _stage_install(source: str, decision, requested) -> str:
+    """挂起等人批，并把**授予集合**写进记录（回放时只认记录，不认请求）。"""
+    from roveagent.tools import write_approval as wa
+
+    grants = sorted(c.value for c in requested)
+    payload = {"action": "install", "source": source, "granted": grants}
+    gist = "install skill from %s (grants: %s)" % (source, ", ".join(grants) or "none")
+    record = wa.stage_write(wa.SKILLS, payload, summary=gist, origin=wa.current_origin())
+    return json.dumps(
+        {
+            "success": True,
+            "staged": True,
+            "pending_id": record["id"],
+            "gist": gist,
+            "policy": decision.as_dict(),
+            "message": decision.reason + " — staged for approval; review with /skills pending.",
+        },
+        ensure_ascii=False,
+    )
+
+
+def _install_skill(source: str) -> str:
+    """安装一个已隔离的技能：拒绝优先，其次阈值，最后才落地。"""
+    from roveagent.skills_market.install_policy import InstallDisposition, auto_grants
+    from roveagent.skills_market.installer import InstallRefused, install_from_directory
+
+    path = Path(source or "")
+    if not path.is_dir():
+        return tool_error(
+            "install source is not a directory: %r (pass the path returned by fetch)"
+            % source,
+            success=False,
+        )
+
+    _plan, decision, requested = _install_policy_for(path)
+    if decision.disposition is InstallDisposition.REFUSE:
+        return tool_error("install refused: %s" % decision.reason, success=False)
+    if decision.disposition is InstallDisposition.NEEDS_APPROVAL:
+        return _stage_install(source, decision, requested)
+
+    try:
+        result = install_from_directory(
+            path, library_root=_skills_dir(), granted=auto_grants(decision, requested)
+        )
+    except InstallRefused as exc:
+        return tool_error("install refused: %s" % exc, success=False)
+    body = result.as_dict() if hasattr(result, "as_dict") else {"result": str(result)}
+    body.update({"success": True, "installed": True, "policy": decision.as_dict()})
+    return json.dumps(body, ensure_ascii=False)
+
+
+def _apply_pending_install(payload: Dict[str, Any]) -> str:
+    """回放一条已获批准的高影响安装。
+
+    grants 只从**记录**读取 —— 那是人在批准时看到并同意的集合。
+    """
+    from roveagent.skills_market.installer import InstallRefused, install_from_directory
+
+    source = payload.get("source") or ""
+    path = Path(source)
+    if not path.is_dir():
+        return tool_error(
+            "approved install source is gone: %r (quarantine may have been cleaned up)"
+            % source,
+            success=False,
+        )
+    granted = _caps_from_values(payload.get("granted"))
+    if not granted:
+        # 没有记录到任何授权 —— fail-closed，不猜。
+        return tool_error(
+            "approved install carries no recorded grants; refusing to guess",
+            success=False,
+        )
+    try:
+        result = install_from_directory(path, library_root=_skills_dir(), granted=granted)
+    except InstallRefused as exc:
+        return tool_error("install refused: %s" % exc, success=False)
+    body = result.as_dict() if hasattr(result, "as_dict") else {"result": str(result)}
+    body.update({"success": True, "installed": True,
+                 "granted": sorted(c.value for c in granted)})
+    return json.dumps(body, ensure_ascii=False)
+
+
 def skill_manage(
     action: str,
-    name: str,
+    name: str = "",
     content: str = None,
     category: str = None,
     file_path: str = None,
@@ -1911,6 +2087,7 @@ def skill_manage(
     task_id: str = None,
     session_id: str = None,
     operations=None,
+    source: str = None,
 ) -> str:
     """
     Manage user-created skills. Dispatches to the appropriate action handler.
@@ -1919,8 +2096,24 @@ def skill_manage(
     ONE skill atomically (see _skill_manage_batch). When set, the flat
     single-op fields are ignored and ``action`` may be omitted/'batch'.
 
+    ``source``: only for ``fetch`` / ``install`` — a git identifier
+    (``owner/repo`` / ``https://…`` / ``git@host:path``) for ``fetch``, and the
+    quarantined path returned by ``fetch`` for ``install``. ``http://`` and
+    ``file://`` are refused; a local path is a human install, not a fetch.
+
+    There is deliberately **no** ``granted`` parameter: an agent cannot name its
+    own capabilities. A low-impact install derives its grants from the request
+    (``install_policy.auto_grants``); a high-impact one takes them from the human
+    approval record (``_apply_pending_install``).
+
     Returns JSON string with results.
     """
+    if action in ("fetch", "install"):
+        # Deliberately NOT routed through _apply_skill_write_gate — see the note
+        # above this function's helpers.
+        if action == "fetch":
+            return _fetch_skill(source or name or "")
+        return _install_skill(source or "")
     if operations is not None:
         return _skill_manage_batch(
             operations, default_name=name or None,

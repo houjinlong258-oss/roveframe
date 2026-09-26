@@ -59,22 +59,40 @@ describe('install 接线前的危险护栏', () => {
     assert.ok(actions.length >= 6, `只解析出 ${actions.length} 个 action，解析可能失效`);
   });
 
-  test('回放通道不携带 source 与授权集（说明 install 回放尚不可用）', () => {
+  test('授权只能来自批准记录，且 Agent 无法在签名里自授', () => {
+    // 这条钉的是「谁授予了哪些能力」。它曾经断言"回放不携带 source"（当时的
+    // 事实是回放无法承载 install）；接线完成后改为断言新的正向不变量。
     const replay = SRC.match(/def apply_skill_pending\([\s\S]*?\n    finally:\n/);
     assert.ok(replay, '找不到 apply_skill_pending —— 前提失效');
-    const body = replay[0];
-    // 自我校验：确认解析到了真实的转发语句。
-    assert.match(body, /payload\.get\("action"/, '未解析到转发语句，断言可能空转');
-    for (const field of ['"source"', '"granted"', '"capabilities"']) {
-      assert.doesNotMatch(
-        body,
-        new RegExp(`payload\\.get\\(${field}`),
-        `apply_skill_pending 开始转发 ${field} 了 —— 好消息，但也意味着` +
-          '「谁授予了哪些能力」这个决定必须同时被写清楚：' +
-          'grants 只能来自人的批准，不能由判定模块或 payload 自己填。' +
-          '请更新 Skill_Fetch_Design.md §3 与相应的审批语义测试。',
-      );
-    }
+    assert.match(
+      replay[0],
+      /_apply_pending_install\(payload\)/,
+      'apply_skill_pending 未把 install 交给专门的回放函数',
+    );
+
+    const pending = SRC.match(/def _apply_pending_install\([\s\S]*?\n    try:\n/);
+    assert.ok(pending, '找不到 _apply_pending_install —— 授权来源无从审计');
+    assert.match(
+      pending[0],
+      /payload\.get\("granted"\)/,
+      '回放的授权不是从批准记录读的 —— 那就等于让写入方自授权',
+    );
+    assert.match(
+      pending[0],
+      /no recorded grants/,
+      '记录里没有授权时没有 fail-closed 分支 —— 会变成"无授权即放行"',
+    );
+
+    // Agent 可见的签名里不得出现 granted：schema 由签名派生，出现即等于可自授。
+    const signature = SRC.match(/def skill_manage\(([\s\S]*?)\) -> str:/);
+    assert.ok(signature, '找不到 skill_manage 签名');
+    const params = signature[1];
+    assert.ok(params.includes('source'), '签名里没有 source —— fetch/install 无法被调用');
+    assert.ok(
+      !/\bgranted\b/.test(params),
+      'skill_manage 签名里出现了 granted —— schema 由签名派生，' +
+        '这等于让 Agent 自己指定能力，是自授权漏洞',
+    );
   });
 
   test('技能门仍由 write_approval 的 SKILLS 子系统决策（阈值层不被它吸收）', () => {

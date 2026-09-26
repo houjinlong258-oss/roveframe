@@ -91,9 +91,9 @@ HIGH_IMPACT: frozenset[Capability] = frozenset({          # permissions.py:77-83
 |---|---|
 | 协议 | 仅 `https://` 与 `ssh://git@`；拒 `file://`、本地路径、`http://`（那些是人工安装路径，不由 Agent 触发） |
 | 复用解析 | 用现成的 `clisupport/plugins_cmd._resolve_git_url()`（已支持 `owner/repo`、GitHub tree URL、`ssh`、`#path`），**不重写** |
-| clone 方式 | `--depth 1 --no-tags --filter=blob:none`，`core.hooksPath=/dev/null` |
-| 交互挂起防护 | `GIT_TERMINAL_PROMPT=0`、`GIT_ASKPASS=`、`GIT_SSH_COMMAND` 加 `BatchMode=yes` —— 否则一次凭据询问就能把 Agent 卡死 |
-| 体积上限 | clone 后 `du` 复核（默认 32 MB），超限即删隔离目录并拒 |
+| clone 方式 | `--depth 1 --no-tags --single-branch --quiet`。**不用** `--filter=blob:none`：它让 checkout 阶段按需拉取 blob，既把网络访问拖到「已通过体积检查」之后，也让体积核算失真 |
+| 体积上限 | 走目录树时**边算边判**（默认 32 MB），超限立即中止而不必先量完；`.git` **计入**上限 —— `--depth 1` 限制的是历史不是单个提交的大小，一次巨型提交的 packfile 照样落盘 |
+| 路径归一 | 文件清单用 `as_posix()` 归一：digest 与 provenance 必须在 Windows 与 Linux 容器里一致 |
 | 时间上限 | 子进程超时即杀并清理 |
 | 隔离目录 | 安装路径**永不**读取它；只有 `install` action 把某个子目录显式传给 `install_from_directory` |
 | 来源记录 | 写 `provenance.json`；复用已有的 `tools/skill_provenance.py` |

@@ -41,6 +41,25 @@
 
 name: roveframe
 
+# ---------------------------------------------------------------------------
+# 内存预算（2 核 / 4 GB VPS）
+#
+# 一律用 `mem_limit`：`deploy.resources.limits` 只在 swarm 模式生效，而 install.sh
+# 走的是普通 `docker compose up`，写在那里等于没写。
+#
+#   db 1024 + rest 192 + auth 192 + storage 320 + gateway 64 + edge 64 = 1856 MB
+#   web 896 + roveagent 640（在 docker-compose.yml 里）              = 1536 MB
+#   合计 3392 MB，留约 0.7 GB 给宿主机内核与页缓存。
+#
+# 实测（本机 RSS）：web 275 MB、roveagent 100 MB —— 上述上限是实测的 3.3× / 6.4×。
+# db/rest/auth/storage/gateway/edge **未实测**，给的是保守上限而不是预估用量：
+# mem_limit 只封顶、不预留，空闲时不占用任何内存。
+#
+# 为什么需要：加限制之前全栈零资源限制，单个容器可以吃满整机，被 OOM killer 杀掉后
+# 又被 `restart: unless-stopped` 拉起来 —— 表现为重启循环，而不是一个明确的报错。
+# 调参依据：`docker stats` 看实际峰值。上调 db 之前先确认宿主机有空闲内存。
+# ---------------------------------------------------------------------------
+
 services:
 
   # -------------------------------------------------------------------------
@@ -51,6 +70,11 @@ services:
   db:
     image: ${IMAGE_REGISTRY:-}supabase/postgres:17.6.1.136
     restart: unless-stopped
+    # /dev/shm 默认仅 64 MB。Postgres 的并行查询 worker 通过 shm 传数据，容量不足时
+    # 报 "could not resize shared memory segment" 并让查询直接失败 —— 容器化 Postgres
+    # 的经典故障。加这个不改变任何正常路径。
+    shm_size: 256m
+    mem_limit: 1024m
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (install.sh generates it)}
       POSTGRES_DB: ${POSTGRES_DB:-postgres}
@@ -80,6 +104,7 @@ services:
   rest:
     image: ${IMAGE_REGISTRY:-}postgrest/postgrest:v14.17
     restart: unless-stopped
+    mem_limit: 192m
     depends_on:
       db:
         condition: service_healthy
@@ -111,6 +136,7 @@ services:
   auth:
     image: ${IMAGE_REGISTRY:-}supabase/gotrue:v2.196.0
     restart: unless-stopped
+    mem_limit: 192m
     depends_on:
       db:
         condition: service_healthy
@@ -152,6 +178,8 @@ services:
   storage:
     image: ${IMAGE_REGISTRY:-}supabase/storage-api:v1.74.0
     restart: unless-stopped
+    # 上传走内存缓冲（FILE_SIZE_LIMIT 50MB，见下），单次上传峰值约 2× 文件大小。
+    mem_limit: 320m
     depends_on:
       db:
         condition: service_healthy
@@ -194,6 +222,7 @@ services:
   gateway:
     image: ${IMAGE_REGISTRY:-}nginx:1.27-alpine
     restart: unless-stopped
+    mem_limit: 64m
     depends_on:
       rest:
         condition: service_started
@@ -223,6 +252,7 @@ services:
   edge:
     image: ${IMAGE_REGISTRY:-}caddy:2-alpine
     restart: unless-stopped
+    mem_limit: 64m
     depends_on:
       gateway:
         condition: service_started

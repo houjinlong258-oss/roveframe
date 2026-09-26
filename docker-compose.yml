@@ -44,6 +44,9 @@ services:
       dockerfile: Dockerfile.roveagent
     image: roveframe/roveagent-runtime:phase12
     restart: unless-stopped
+    # 实测 100 MB RSS；上限 6.4× 是留给 agent 任务（skill 装载、命令执行）的峰值。
+    # 见 docker-compose.selfhosted.yml 顶部的整机内存预算。
+    mem_limit: 640m
     environment:
       <<: *roveagent-secrets
 
@@ -114,6 +117,10 @@ services:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     image: roveframe/web:phase16
     restart: unless-stopped
+    # 实测 275 MB RSS（Next 自定义服务端）。上限 3.3× 留给 AI 流式答复、
+    # RAG 嵌入与产物生成的峰值 —— 这些路径本身不占内存，但并发时会。
+    # 见 docker-compose.selfhosted.yml 顶部的整机内存预算。
+    mem_limit: 896m
     depends_on:
       roveagent:
         condition: service_healthy

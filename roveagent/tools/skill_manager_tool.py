@@ -2037,6 +2037,12 @@ def _install_skill(source: str) -> str:
     except InstallRefused as exc:
         return tool_error("install refused: %s" % exc, success=False)
     body = result.as_dict() if hasattr(result, "as_dict") else {"result": str(result)}
+    # fail-closed：installer 用 ok=False 的结果表达"拒绝"而不是抛异常。原代码无条件
+    # 报 installed=True，会把被拒绝的安装说成成功（实测由回放用例抓到）。
+    if getattr(result, "ok", False) is not True:
+        return tool_error(
+            "install refused by the installer: %s"
+            % json.dumps(body, ensure_ascii=False), success=False)
     body.update({"success": True, "installed": True, "policy": decision.as_dict()})
     return json.dumps(body, ensure_ascii=False)
 
@@ -2068,6 +2074,12 @@ def _apply_pending_install(payload: Dict[str, Any]) -> str:
     except InstallRefused as exc:
         return tool_error("install refused: %s" % exc, success=False)
     body = result.as_dict() if hasattr(result, "as_dict") else {"result": str(result)}
+    # fail-closed：installer 用 ok=False 的结果表达"拒绝"而不是抛异常。原代码无条件
+    # 报 installed=True，会把被拒绝的安装说成成功（实测由回放用例抓到）。
+    if getattr(result, "ok", False) is not True:
+        return tool_error(
+            "install refused by the installer: %s"
+            % json.dumps(body, ensure_ascii=False), success=False)
     body.update({"success": True, "installed": True,
                  "granted": sorted(c.value for c in granted)})
     return json.dumps(body, ensure_ascii=False)

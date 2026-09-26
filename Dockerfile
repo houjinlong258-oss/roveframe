@@ -13,13 +13,29 @@
 #  * Three stages. `deps` installs the pnpm store once and is reused by
 #    `builder`, so a source-only change does not re-resolve the lockfile.
 #
-#  * The runtime stage keeps the FULL node_modules and .next tree instead of
-#    using Next's `output: 'standalone'`. next.config.ts does not enable
-#    standalone output and tsup externalises npm dependencies, and this image
-#    could not be built or smoke-tested on the authoring machine (the Docker
-#    daemon was unavailable). Shipping the known-complete tree is the honest
-#    choice; `output: 'standalone'` is recorded as a follow-up optimisation
-#    rather than an untested change.
+#  * The runtime stage uses Next's `output: 'standalone'` tree instead of the
+#    FULL node_modules.
+#
+#    History (kept deliberately): this file previously kept the FULL
+#    node_modules + .next tree, with the recorded reason —
+#
+#      "next.config.ts does not enable standalone output and tsup externalises
+#       npm dependencies, and this image could not be built or smoke-tested on
+#       the authoring machine (the Docker daemon was unavailable). Shipping the
+#       known-complete tree is the honest choice; `output: 'standalone'` is
+#       recorded as a follow-up optimisation rather than an untested change."
+#
+#    That follow-up is now implemented. **The blocker did not go away**: the
+#    Docker daemon is still unavailable on the authoring machine, so the new
+#    layout is still not smoke-tested there. Instead of shipping an untested
+#    hope, the change is made fail-closed — the runtime stage asserts, at build
+#    time, that every external dependency of dist/server.js resolves inside the
+#    traced node_modules, and fails the build if not. See that RUN below.
+#
+#    Two things standalone does NOT give you, both handled explicitly below:
+#    `.next/static` is not part of the standalone tree, and the entry must stay
+#    `node dist/server.js` — the standalone server.js would silently bypass
+#    src/server.ts's scheduler / migration / boot-check / rate-limit assertions.
 #
 #  * scripts/ IS copied: src/lib/migration.ts reads scripts/*.sql at boot, and
 #    if those files are missing it throws inside an un-awaited IIFE with no
@@ -117,16 +133,35 @@ ENV NODE_ENV=production \
     COZE_PROJECT_ENV=PROD \
     PORT=5000
 
-COPY --from=builder /app/node_modules      ./node_modules
-COPY --from=builder /app/.next             ./.next
-COPY --from=builder /app/dist              ./dist
-COPY --from=builder /app/public            ./public
-COPY --from=builder /app/messages          ./messages
-COPY --from=builder /app/scripts           ./scripts
-COPY --from=builder /app/package.json      ./package.json
-COPY --from=builder /app/next.config.ts    ./next.config.ts
-COPY --from=builder /app/tsconfig.json     ./tsconfig.json
-COPY --from=builder /app/postcss.config.mjs ./postcss.config.mjs
+# standalone 产物：`next build` 用 nft（node file trace）追踪出的**最小**
+# node_modules + `.next/server` + 一份 package.json。
+#
+# 为什么入口仍然是 `dist/server.js` 而不是 standalone 自带的 `server.js`：
+# 后者是 Next 自动生成的最小服务器，它会**绕过** `src/server.ts` 里那几件生产
+# 必须做的事 —— startScheduler / autoMigrate / runBootChecks / 进程守卫 /
+# 限流契约断言。改用自带 server.js 等于静默降级，所以这里只借用它的
+# node_modules 与 .next，入口保持 `node dist/server.js`（见文件末尾 CMD）。
+COPY --from=builder /app/.next/standalone ./
+# `.next/static` **不在** standalone 目录里（Next 只对 node_modules 与 server 产物
+# 做追踪），必须单独拷；漏掉的表现是页面能出 HTML 但所有 CSS/JS 404。
+COPY --from=builder /app/.next/static     ./.next/static
+COPY --from=builder /app/public           ./public
+COPY --from=builder /app/dist             ./dist
+COPY --from=builder /app/messages         ./messages
+COPY --from=builder /app/scripts          ./scripts
+
+# ---------------------------------------------------------------------------
+# 构建期 fail-closed：确认 dist/server.js 的每个外部依赖在裁剪后的
+# node_modules 里都真的能解析。
+#
+# 为什么需要：standalone 的依赖集合是**追踪推断**出来的，不是声明出来的。
+# 一旦 nft 漏掉一个包，产品不会在构建期报错，而是在**容器启动时**抛
+# MODULE_NOT_FOUND —— 也就是只在生产暴露。这里把这条失败提前到构建期。
+#
+# 依赖清单不从别处抄，而是**当场从 dist/server.js 里解析**：
+# 以后谁给 server.ts 加了新 import，这个检查自动覆盖，不需要同步维护列表。
+# ---------------------------------------------------------------------------
+RUN node -e "const fs=require('fs');const mod=require('module');const src=fs.readFileSync('dist/server.js','utf8');const specs=[...src.matchAll(/require\([\"']([^\"']+)[\"']\)/g)].map(m=>m[1]);const ext=[...new Set(specs)].filter(s=>!/^\./.test(s)&&!/^node:/.test(s)&&!mod.builtinModules.includes(s));const missing=ext.filter(s=>{try{require.resolve(s);return false}catch{return true}});console.log('dist/server.js 外部依赖 '+ext.length+' 个:',ext.join(', '));if(missing.length){console.error('MISSING in standalone node_modules: '+missing.join(', '));process.exit(1)}console.log('OK: 全部可解析')"
 
 # Drop root. The image writes nothing to /app at run time; SQLite/state belongs
 # to the RoveAgent container.

@@ -152,3 +152,60 @@ export function skillHintsPrompt(matches: readonly SkillMatch[], locale: string)
   const lines = matches.map((m) => `- ${m.name} — ${m.description.slice(0, 160)}`);
   return `${header}:\n${lines.join('\n')}`;
 }
+
+/**
+ * 安装意图的判定式。**故意收窄**：只有用户明显在"找/装新技能"时才提示。
+ *
+ * 为什么不能每轮都提示：`fetch` 会去克隆任意 git 仓库。把"你可以联网装技能"写进
+ * 每一轮上下文，等于持续诱导模型自己去找东西装 —— 与产品「先批准再动手」的调性相反，
+ * 而且是把它没有的主动权塞给它。所以这段提示只在意图明确时出现。
+ *
+ * 反例（必须**不**触发，见测试）：`你有哪些技能`、`用你的技能分析订单` ——
+ * 它们提到"技能"但都不是安装意图。
+ */
+const INSTALL_INTENT_PATTERNS: readonly RegExp[] = [
+  // 中文：动词 + 技能（允许中间插"一个/个/新"）
+  /(装|安装|添加|新增|下载|导入|接入)(一个|个|新)?[^。！？\n]{0,6}技能/,
+  /(找|搜|搜索|物色|推荐|看看)(一个|个|些|有没有)?[^。！？\n]{0,12}技能/,
+  // 「有没有…技能」是中文里最常见的求助句式。注意不能写成 /有哪些.*技能/ ——
+  // "你有哪些技能"是清点，不是安装意图，它在防误报用例里。
+  /有没有[^。！？\n]{0,12}技能/,
+  /技能(库|市场|商店|仓库)/,
+  // English
+  /\b(install|add|import|download|fetch)\b[^.\n]{0,24}\bskills?\b/i,
+  /\b(find|search|look\s+for|recommend|discover)\b[^.\n]{0,24}\bskills?\b/i,
+  /\bskill\s+(marketplace|library|store|repo)\b/i,
+  // Español
+  /\b(instalar|añadir|agregar|buscar|encontrar)\b[^.\n]{0,24}\bhabilidad/i,
+];
+
+/** 这句话是不是在要求"找一个 / 装一个"技能？ */
+export function hasInstallIntent(message: string): boolean {
+  const text = (message ?? '').trim();
+  if (text.length === 0) return false;
+  return INSTALL_INTENT_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+/**
+ * 安装意图明确时给出的操作说明。**不含**任何"你可以自己去找"的鼓励 —— 只说明
+ * 已经有了哪两个动作，以及高影响会挂起等人批。
+ */
+export function installIntentHint(message: string, locale: string): string {
+  if (!hasInstallIntent(message)) return '';
+  if (locale === 'zh') {
+    return [
+      '用户想获取/安装技能。运行时已具备两个动作：',
+      '1) skill_manage(action="fetch", source="owner/repo 或 https://…") 取回到隔离区（只落地，未生效）；',
+      '2) skill_manage(action="install", source="<fetch 返回的路径>") 安装。',
+      '只申请只读类能力的技能会直接装好；申请高影响能力（写文件 / 执行命令 / 联网 / 读环境变量 / 控制进程）的技能会**挂起等待人工批准**，此时告知用户去 /skills pending 审批，不要重复尝试。',
+      '不要凭记忆编造技能内容；也不要在用户没有要求时主动去联网找技能。',
+    ].join('\n');
+  }
+  return [
+    'The user wants to obtain/install a skill. Two actions are available:',
+    '1) skill_manage(action="fetch", source="owner/repo or https://…") to clone into quarantine (inert, not installed);',
+    '2) skill_manage(action="install", source="<path returned by fetch>") to install it.',
+    'A skill asking only for read-level capabilities installs directly; one asking for a high-impact capability (file writes / shell / network / env secrets / process control) is **staged for human approval** — tell the user to review /skills pending and do not retry.',
+    'Do not invent skill content, and do not go looking for skills online unless the user asked.',
+  ].join('\n');
+}

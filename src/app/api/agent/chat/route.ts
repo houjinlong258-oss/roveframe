@@ -17,7 +17,7 @@ import { approvalMarker, stripInternalMarkers } from '@/lib/agent/stream-events'
 import { detectDeliverables } from '@/lib/artifacts/deliverable';
 import { classifyRequest } from '@/lib/agent/request-class';
 import { roveAgentChat, roveAgentChatStream, roveAgentConfigured, roveAgentConfigDetail, listInstalledSkills, RoveAgentUnavailable, type RoveAgentStreamEvent } from '@/lib/roveagent/client';
-import { matchSkills, skillHintsPrompt } from '@/lib/agent/skill-router';
+import { installIntentHint, matchSkills, skillHintsPrompt } from '@/lib/agent/skill-router';
 import { PERSONAS, resolvePersonaKey, type PersonaKey } from '@/lib/agent/personas';
 
 const PERSONA_EMPLOYEE: Record<PersonaKey, string> = Object.fromEntries(
@@ -77,7 +77,18 @@ async function skillHintsFor(
   if (!roveAgentConfigured()) return '';
   try {
     const skills = await listInstalledSkills(scope);
-    return skillHintsPrompt(matchSkills(message, skills), locale);
+    // 安装意图的说明**只在该意图明确时**才拼进来（判定式见 skill-router）。
+    // 为什么不每轮都提：fetch 能克隆任意 git 仓库，把"你可以联网装技能"写进每一轮
+    // 上下文等于持续诱导模型自己去找东西装。
+    //
+    // 为什么留在这个 try 内：上面 `!roveAgentConfigured()` 已返回空串 —— 运行时没配
+    // 就没有 fetch/install 这两个工具，此时宣传它们等于对模型说谎。
+    return [
+      skillHintsPrompt(matchSkills(message, skills), locale),
+      installIntentHint(message, locale),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
   } catch {
     return '';
   }

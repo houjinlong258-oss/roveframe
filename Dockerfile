@@ -117,6 +117,31 @@ RUN node scripts/setup-pdf-font.mjs \
  || echo "WARN: CJK font unavailable — Chinese PDFs will degrade (set RF_PDF_FONT to override)"
 
 # ---------------------------------------------------------------------------
+# dist/server.js 是 **tsup** 产物（npm 依赖 external），它的依赖图不在 Next 的追踪
+# 图里 —— nft 只从 Next 的入口出发，追不到 tsup 打的包。CI 首次 standalone 构建实测：
+#
+#   MISSING in standalone node_modules:
+#     @supabase/supabase-js, dotenv, coze-coding-dev-sdk, web-push, nodemailer,
+#     imapflow, mailparser, drizzle-orm, drizzle-orm/pg-core
+#
+# 于是把它们**物化**成一份实体目录，供 runner 阶段合并。
+#
+# 为什么不能直接 COPY node_modules/<pkg>：pnpm 的顶层包是**符号链接**，指向
+# node_modules/.pnpm/…；把链接复制到没有 .pnpm 的目录里就是断链。`cp -rL` 解引用，
+# extra-deps/ 里落到的是真文件。
+#
+# 这份清单不需要手工保持正确：runner 阶段末尾的构建期断言会从 dist/server.js
+# 当场解析依赖并逐个 require.resolve，漏一个就让构建失败。
+# ---------------------------------------------------------------------------
+RUN set -e; mkdir -p /app/extra-deps; \
+    for p in @supabase/supabase-js dotenv coze-coding-dev-sdk web-push nodemailer \
+             imapflow mailparser drizzle-orm pg; do \
+      mkdir -p "/app/extra-deps/$(dirname "$p")"; \
+      cp -rL "/app/node_modules/$p" "/app/extra-deps/$p"; \
+    done; \
+    echo "extra-deps materialised:"; find /app/extra-deps -maxdepth 2 -mindepth 1 -type d | sort
+
+# ---------------------------------------------------------------------------
 # Stage 3 — runtime
 # ---------------------------------------------------------------------------
 FROM node:${NODE_VERSION}-bookworm-slim AS runner
@@ -142,6 +167,9 @@ ENV NODE_ENV=production \
 # 限流契约断言。改用自带 server.js 等于静默降级，所以这里只借用它的
 # node_modules 与 .next，入口保持 `node dist/server.js`（见文件末尾 CMD）。
 COPY --from=builder /app/.next/standalone ./
+# 合并 builder 物化出来的 extra-deps（nft 追不到的 tsup 外部依赖）。没有这一步，
+# 构建期断言会报 MISSING 并让构建失败 —— 那正是它的用途。
+COPY --from=builder /app/extra-deps/    ./node_modules/
 # `.next/static` **不在** standalone 目录里（Next 只对 node_modules 与 server 产物
 # 做追踪），必须单独拷；漏掉的表现是页面能出 HTML 但所有 CSS/JS 404。
 COPY --from=builder /app/.next/static     ./.next/static

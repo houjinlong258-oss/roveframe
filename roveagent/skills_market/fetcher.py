@@ -127,9 +127,19 @@ def _rmtree_force(path: Path) -> None:
     actually happen on both platforms.
     """
     for root, dirs, files in os.walk(path):  # top-down: chmod a dir before descending
-        for name in dirs + files:
+        # 必须给**完整权限**，不能用 stat.S_IWRITE —— 后者在 POSIX 上就是 0o200，
+        # 会把目录的读/执行位一起去掉，于是 rmtree 连目录都进不去，而
+        # ignore_errors=True 又把错误吞了：表现为"清理静默失效"。
+        # 实测踩到过：Windows 上 chmod 只切只读位所以本地全绿，Linux 上 4 条清理断言
+        # 全红（['<slug>-<ts>'] != []）。目录给 rwx、文件给 rw，两个平台都对。
+        for name in dirs:
             try:
-                os.chmod(os.path.join(root, name), stat.S_IWRITE)
+                os.chmod(os.path.join(root, name), 0o700)
+            except OSError:
+                pass
+        for name in files:
+            try:
+                os.chmod(os.path.join(root, name), 0o600)
             except OSError:
                 pass
     shutil.rmtree(path, ignore_errors=True)

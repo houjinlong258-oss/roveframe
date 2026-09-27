@@ -96,6 +96,12 @@ jobs:
           COZE_PROJECT_ENV: PROD
         run: pnpm build
 
+      # 上一步刚产出 dist/，正是 standalone-image 里那几条**产物相关**断言需要的输入。
+      # 前面的「Unit tests」排在 build 之前，那时 dist/ 还不存在，那些断言会显式 skip
+      # （skip 而不是静默通过）。这里补跑，让它们在 CI 里真正执行。
+      - name: Standalone image guards (need the build output)
+        run: pnpm exec tsx --test tests/standalone-image.test.ts
+
       - name: Upload build output on failure
         if: failure()
         uses: actions/upload-artifact@v4

@@ -1,6 +1,6 @@
 # 技能联网获取（#4）— 设计
 
-状态：**设计已定，实现未开始**。三个开放问题已由产品负责人决定，记录在 §1。
+状态：**已实现并验证**（§7 清单已勾，提交序列见文末）。三个开放问题已由产品负责人决定，记录在 §1。
 
 动机：Agent 已经有联网搜索能力（实测 `web_search` / `web_extract` 在
 ceo / operations / marketing 的 17 个可用工具里），却**装不了**它搜到的东西 ——
@@ -145,12 +145,12 @@ persona。实测（复刻 `api/app.py:525` 的调用）：ceo / operations / mar
 
 | # | 文件 | 内容 |
 |---|---|---|
-| 1 | `roveagent/skills_market/fetcher.py`（新） | 只做取回：协议校验、clone、硬限制、`provenance.json`。**可完全离线单测**（拒用路径不需要网络） |
-| 2 | `roveagent/tools/skill_manager_tool.py` | 新增 `fetch` / `install` 两个 action + action 白名单更新 |
-| 3 | 审批接线 | 高影响 install 走人工审批（`tools/write_approval.py` 与 TS 侧提案通道），低影响直接执行 |
-| 4 | `roveagent/api/capability_router.py` | 无需改动（`skills` toolset 已覆盖目标 persona） |
-| 5 | `tests` / `*_test.py` | §5 的 9 条用例 |
-| 6 | `src/lib/agent/skill-router.ts`（TS） | 提示词里告知 Agent 现在可以 fetch → 让「搜到就装」这条链路真的走起来 |
+| ☑ 1 | `roveagent/skills_market/fetcher.py`（新） | 只做取回：协议校验、clone、硬限制、`provenance.json`。**可完全离线单测**（拒用路径不需要网络） |
+| ☑ 2 | `roveagent/tools/skill_manager_tool.py` | 新增 `fetch` / `install` 两个 action + action 白名单更新 |
+| ☑ 3 | 审批接线 | 高影响 install 走人工审批（`tools/write_approval.py` 与 TS 侧提案通道），低影响直接执行 |
+| ☑ 4 | `roveagent/api/capability_router.py` | 无需改动（`skills` toolset 已覆盖目标 persona） |
+| ☑ 5 | `tests` / `*_test.py` | §5 的 9 条用例 |
+| ☑ 6 | `src/lib/agent/skill-router.ts`（TS） | 提示词里告知 Agent 现在可以 fetch → 让「搜到就装」这条链路真的走起来 |
 
 零新增依赖：`git` 是系统二进制，URL 解析复用现有函数。
 
@@ -162,3 +162,27 @@ persona。实测（复刻 `api/app.py:525` 的调用）：ceo / operations / mar
 `scanner.py:146-154` 已经有指令覆盖（CRITICAL）、角色重设 `you are now a`（HIGH）、
 `new system instructions:`（HIGH）、系统提示词抽取（HIGH）、上下文外泄（CRITICAL）
 等针对性模式。真实结论应当是：**有覆盖，但不完备**。
+
+---
+
+## 实现状态（2026-09-25）
+
+| 环节 | 状态 | 证据 |
+|---|---|---|
+| 取回 `fetch` | 完成 | `fetcher_test.py` 20 条离线 + **1 条真实网络 clone**（已接进 CI，push 到 main 时跑） |
+| 阈值策略 | 完成 | `install_policy_test.py` 16 条；2 次变异（读配置→红、放宽阈值→红） |
+| 分派接线 | 完成 | 端到端冒烟：真实技能目录 `installed=True`；`shell:execute` → `needs_approval` |
+| 审批挂起/回放 | 完成 | `skill_install_replay_test.py` 4 条；期间修掉一个 **fail-open**（被拒绝的安装曾被报成成功） |
+| 提示词引导 | 完成 | `skill-install-intent.test.ts` 24 条（正反两组） |
+
+提交序列：`819ea41` 设计 → `d674103` fetcher → `fb6efc0` 策略 →
+`6e2fe44` 接线前护栏 → `a9ac05b` 接线 → `6cf87f8` fail-closed + 回放测试 →
+`f8c1ef8` 意图提示。
+
+### 仍未闭合
+
+**真模型端到端未验证**：用户说「帮我装个技能」→ 模型**真的**去调 `fetch`。
+已分别验证两端（提示词在该出现时出现；工具链路可用），中间那一步取决于模型本身。
+本机无法验证的原因已实测：本机 DNS 是 fake-ip（`api.deepseek.com → 198.18.0.53`，
+落在 `198.18.0.0/15`），应用层 SSRF 守卫把该段判为私网，供应商调用会被
+`outbound_url_rejected:dns_resolves_to_private` 拦下。需在 DNS 正常的部署环境验证。

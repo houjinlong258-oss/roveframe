@@ -138,6 +138,21 @@ jobs:
       - name: Python tests (offline — no provider spend)
         run: python scripts/run-python-tests.py
 
+      # 「真实 argv 能克隆」这条证据此前只在作者机器上跑过一次（该用例是 opt-in 的，
+      # RF_TEST_REAL_FETCH=1）。不进 CI 的话，这句话就没有任何持续保障 —— 而
+      # 单测用的是注入的 runner，覆盖不到 git 参数本身（--depth/--no-tags/
+      # --single-branch/--quiet）到底拼得对不对。
+      #
+      # 只在 push 到 main 时跑：它要求 github.com 可达，挂在 PR 上会让第三方网络
+      # 抖动表现为本仓库 CI 失败。
+      - name: Skill fetch — real clone (proves the real git argv)
+        if: github.event_name == 'push'
+        env:
+          # 覆盖 workflow 级的 ROVEAGENT_OFFLINE=1：这一步就是要发真实网络请求。
+          ROVEAGENT_OFFLINE: "0"
+          RF_TEST_REAL_FETCH: "1"
+        run: python -m unittest roveagent.skills_market.fetcher_test.RealFetchTest
+
   # =========================================================================
   # Container build — proves the deployment path, not just the source
   # =========================================================================

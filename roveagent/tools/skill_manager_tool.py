@@ -1934,6 +1934,35 @@ def _caps_from_values(values) -> frozenset:
     return frozenset(out)
 
 
+def _license_for(source_path: Path) -> str:
+    """来源的许可证：返回路径，或 "" 表示**评估过、确实没有**。
+
+    绝不返回 None：本调用点必须给出评估结论，否则策略层那条规则会被静默跳过
+    （None 的语义是"未评估"，只留给单测）。
+
+    优先读 fetch 写下的 provenance.json（最权威：它记录的正是取回那一刻的事实），
+    没有 provenance 时就地探测（人工安装路径、以及测试里直接指向仓库目录的情形）。
+    """
+    # 惰性导入：fetcher 是许可证探测的归属模块，这里复用而不是重写。
+    from roveagent.skills_market.fetcher import _find_license
+
+    source = Path(source_path)
+    provenance = source.parent / "provenance.json"
+    if provenance.is_file():
+        try:
+            data = json.loads(provenance.read_text("utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        license_entry = data.get("license", "absent")
+        if isinstance(license_entry, dict) and license_entry.get("path"):
+            return str(license_entry["path"])
+        if license_entry is None:
+            # 显式 null = 取回时评估过且没有 —— 不要再去猜。
+            return ""
+    found = _find_license(source, source.parent)
+    return found[0] if found else ""
+
+
 def _install_policy_for(source_path: Path):
     """对一个已隔离的目录做「扫描 + 能力请求」，再套用阈值。
 
@@ -1956,8 +1985,12 @@ def _install_policy_for(source_path: Path):
         "%s: %s" % (f.severity.value, f.code)
         for f in (plan.scan.blocking if plan.scan else ())
     )
+    # 许可规则要在这里被真正触发：缺许可证 => 需人批。给的是 ""（评估过、没有）
+    # 而不是 None（未评估），因为这里确实评估过了。
+    license_path = _license_for(Path(source_path))
     decision = decide_install_policy(
-        requested=requested | frozenset(inferred), blocking=blocking
+        requested=requested | frozenset(inferred), blocking=blocking,
+        license_path=license_path,
     )
     return plan, decision, requested | frozenset(inferred)
 

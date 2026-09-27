@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -134,10 +135,33 @@ class ReplayPipelineTest(unittest.TestCase):
         self.assertIn("gone", str(result.get("error")))
         self.assertEqual(sorted(p.name for p in self.lib.iterdir()), [])
 
-    def test_auto_install_does_not_stage(self) -> None:
-        # 反向对照：同一个源、同一个管线，低影响时**不**产生 pending 记录。
-        self.assertTrue(REAL_SKILL.is_dir())
+    def _source_with_license(self) -> Path:
+        """复制真实技能目录并补上 LICENSE。
+
+        许可证现在是自动安装的前提：没有它，即使只申请 files:read 也会挂起等人批
+        （见 install_policy 的 LicenseGateTest）。所以"低影响 => 自动"这条断言要用
+        一个带许可证的源，而不是放宽断言。
+        """
+        # 目录名必须与 frontmatter 的 name 一致：installer 会校验二者匹配，
+        # 叫 src-with-license 会被判 "invalid manifest ... does not match directory"。
+        dest = Path(self._tmp.name) / "licensed" / REAL_SKILL.name
+        shutil.copytree(REAL_SKILL, dest)
+        (dest / "LICENSE").write_text("MIT License\n", encoding="utf-8")
+        return dest
+
+    def test_no_license_stages_even_when_low_impact(self) -> None:
+        """接线的直接证明：同一个低影响技能，仅因为缺许可证就必须挂起。"""
         result = json.loads(smt.skill_manage(action="install", source=str(REAL_SKILL)))
+        self.assertTrue(result.get("staged"), result)
+        self.assertIsNone(result.get("installed"))
+        self.assertIn("no license", json.dumps(result, ensure_ascii=False))
+        self.assertEqual(sorted(p.name for p in self.lib.iterdir()), [])
+
+    def test_auto_install_does_not_stage(self) -> None:
+        # 反向对照：同一个源、同一个管线，低影响**且带许可证**时不产生 pending 记录。
+        self.assertTrue(REAL_SKILL.is_dir())
+        result = json.loads(smt.skill_manage(action="install",
+                                             source=str(self._source_with_license())))
         self.assertTrue(result.get("installed"), result)
         self.assertIsNone(result.get("staged"))
         self.assertEqual(wa.pending_count(wa.SKILLS), 0,

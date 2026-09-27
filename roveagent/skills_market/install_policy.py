@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import dataclasses
 from enum import Enum
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 
 from roveagent.skills_market.permissions import HIGH_IMPACT, Capability
 
@@ -101,6 +101,7 @@ def decide_install_policy(
     *,
     requested: Iterable[object] = (),
     blocking: Iterable[str] = (),
+    license_path: Optional[str] = None,
 ) -> InstallPolicyDecision:
     """Decide how an install may proceed.
 
@@ -159,6 +160,20 @@ def decide_install_policy(
             reason=(
                 "needs approval: requests high-impact capability %s"
                 % ", ".join(sorted(high))
+            ),
+            high_impact=tuple(sorted(high)),
+            low_impact=tuple(sorted(low)),
+        )
+
+    # 缺许可证 => 需人批。None 表示**未评估**（不触发）；"" 表示**已评估且没有**。
+    # 两者必须分开：否则未接线的调用方会被静默升级为需人批，而真正的
+    # "评估过、确实没有"又可能被当成未评估放过 —— 两个方向都是错。
+    if license_path == "":
+        return InstallPolicyDecision(
+            disposition=InstallDisposition.NEEDS_APPROVAL,
+            reason=(
+                "needs approval: no license file found in the source "
+                "(add one, or approve explicitly)"
             ),
             high_impact=tuple(sorted(high)),
             low_impact=tuple(sorted(low)),

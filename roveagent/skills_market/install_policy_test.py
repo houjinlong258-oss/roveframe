@@ -111,6 +111,35 @@ class FailClosedTest(unittest.TestCase):
         )
 
 
+class LicenseGateTest(unittest.TestCase):
+    """缺许可证 => 需人批（fail-closed 方向）。
+
+    技能来自任意 git 主机（已批准的取回范围）。没有许可证文件时，"能不能用"是一个
+    法律判断，不该由安装流程替人做 —— 所以缺证据时不自动安装，而是挂起等人看，
+    人可以说"我知道，继续"。
+    """
+
+    def test_license_present_keeps_auto(self) -> None:
+        d = decide_install_policy(requested=[Capability.FILES_READ], license_path="LICENSE")
+        self.assertIs(d.disposition, InstallDisposition.AUTO)
+
+    def test_absent_license_requires_approval(self) -> None:
+        d = decide_install_policy(requested=[Capability.FILES_READ], license_path="")
+        self.assertIs(d.disposition, InstallDisposition.NEEDS_APPROVAL)
+        self.assertIn("no license", d.reason)
+
+    def test_unassessed_license_does_not_trip_the_rule(self) -> None:
+        # None（未评估）与 ""（已评估：没有）必须区分开。
+        d = decide_install_policy(requested=[Capability.FILES_READ])
+        self.assertIs(d.disposition, InstallDisposition.AUTO)
+        self.assertNotIn("no license", d.reason)
+
+    def test_refusal_outranks_the_license_rule(self) -> None:
+        d = decide_install_policy(
+            requested=[Capability.FILES_READ], blocking=["critical: x"], license_path="")
+        self.assertIs(d.disposition, InstallDisposition.REFUSE)
+
+
 class NonBypassableTest(unittest.TestCase):
     """The policy must not be switchable off — asserted against its own source."""
 
@@ -157,7 +186,7 @@ class NonBypassableTest(unittest.TestCase):
             # __future__ 导入也当作普通 ImportFrom），漏掉它会让这条断言在正确
             # 代码上变红 —— 初版就是这么写的。
             {"annotations", "dataclasses", "Enum", "Any", "Iterable",
-             "HIGH_IMPACT", "Capability"},
+             "HIGH_IMPACT", "Capability", "Optional"},
             "install_policy 的依赖面变了 —— 它应当是纯逻辑，不碰 I/O、配置或扫描器",
         )
 

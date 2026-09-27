@@ -169,7 +169,14 @@ ENV NODE_ENV=production \
 COPY --from=builder /app/.next/standalone ./
 # 合并 builder 物化出来的 extra-deps（nft 追不到的 tsup 外部依赖）。没有这一步，
 # 构建期断言会报 MISSING 并让构建失败 —— 那正是它的用途。
-COPY --from=builder /app/extra-deps/    ./node_modules/
+# 为什么拷到独立路径而不是合并进 node_modules：standalone 树里有些包（实测 pg）是
+# **符号链接**，把真目录拷到符号链接上 buildx 直接报
+#   cannot copy to non-directory: .../node_modules/pg
+# 改成放在 /app/extra-deps 并用 NODE_PATH 让 require 回退搜索它 —— 不碰 node_modules，
+# 也就不会与 nft 的产物冲突。NODE_PATH 对 CJS 有效，而 dist/server.js 正是 CJS
+# （tsup --format cjs），且 require.resolve 同样遵循它，所以下面的构建期断言仍能验证。
+COPY --from=builder /app/extra-deps/    ./extra-deps/
+ENV NODE_PATH=/app/extra-deps
 # `.next/static` **不在** standalone 目录里（Next 只对 node_modules 与 server 产物
 # 做追踪），必须单独拷；漏掉的表现是页面能出 HTML 但所有 CSS/JS 404。
 COPY --from=builder /app/.next/static     ./.next/static

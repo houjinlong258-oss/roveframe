@@ -315,5 +315,34 @@ class RealFetchTest(FetcherTestBase):
         self.assertFalse(result.quarantine.exists())
 
 
+class LicenseProvenanceTest(FetcherTestBase):
+    """来源与许可必须与内容一起被记录；缺许可证要**显式可见**。"""
+
+    def test_license_is_recorded_when_present(self) -> None:
+        runner = FakeGit(files={"SKILL.md": b"# demo\n", "LICENSE": b"MIT License\n"})
+        result = fetch_skill("https://host/o/r.git", quarantine_root=self.root, runner=runner)
+        self.assertEqual(result.license_path, "LICENSE")
+        self.assertEqual(len(result.license_sha256), 64)
+        provenance = json.loads((result.quarantine / "provenance.json").read_text("utf-8"))
+        self.assertEqual(provenance["license"]["path"], "LICENSE")
+        self.assertEqual(provenance["license"]["sha256"], result.license_sha256)
+
+    def test_missing_license_is_recorded_as_an_explicit_null(self) -> None:
+        # 断言"键存在且为 None"，而不是"键不存在" —— 后者读的人会直接忽略。
+        runner = FakeGit(files={"SKILL.md": b"# demo\n"})
+        result = fetch_skill("https://host/o/r.git", quarantine_root=self.root, runner=runner)
+        self.assertEqual(result.license_path, "")
+        provenance = json.loads((result.quarantine / "provenance.json").read_text("utf-8"))
+        self.assertIn("license", provenance, "缺许可证时该键必须存在且为 null")
+        self.assertIsNone(provenance["license"])
+
+    def test_license_is_found_at_the_repository_root_for_a_subdirectory_skill(self) -> None:
+        # 技能在子目录、许可证在仓库根 —— 只看技能目录会误判成"没有"。
+        runner = FakeGit(files={"skills/demo/SKILL.md": b"# demo\n", "LICENSE": b"Apache-2.0\n"})
+        result = fetch_skill("https://host/o/r.git#skills/demo",
+                             quarantine_root=self.root, runner=runner)
+        self.assertEqual(result.license_path, "LICENSE")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -57,6 +57,7 @@ Reused rather than reimplemented: ``_resolve_git_url``, ``_resolve_subdir_within
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 import re
@@ -89,6 +90,43 @@ SCHEME_PREFIXES: tuple[str, ...] = ("https://", "ssh://")
 
 #: ``git@github.com:owner/repo.git`` — scp-like syntax, no scheme.
 SCP_LIKE = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[^\s]")
+
+
+#: 许可证文件的常见命名。判定用大小写不敏感比较，见 _find_license。
+LICENSE_FILENAMES: tuple[str, ...] = (
+    "LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE", "COPYING", "COPYING.txt",
+    "LICENSE-MIT", "LICENSE-APACHE",
+)
+
+
+def _find_license(target: Path, repo: Path) -> Optional[tuple[str, str]]:
+    """在技能目录找许可证；找不到就向上找到仓库根。
+
+    为什么要向上找：技能常放在仓库子目录（``#path/to/skill``），而许可证通常只有
+    仓库根那一份。只看技能目录会把"有许可证"误判成"没有"。
+
+    返回 ``(相对仓库根的路径, sha256)``；找不到返回 ``None``。找不到**不在这里报错**：
+    怎么处置是 install_policy 的决定，取回阶段只负责如实记录（职责边界见设计文档）。
+    """
+    for base in (target, repo):
+        if not base.is_dir():
+            continue
+        try:
+            entries = sorted(p for p in base.iterdir() if p.is_file())
+        except OSError:
+            continue
+        for path in entries:
+            stem = path.name.upper()
+            if stem in LICENSE_FILENAMES or stem.startswith(
+                ("LICENSE.", "LICENCE.", "COPYING.")
+            ):
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                try:
+                    relative = path.relative_to(repo).as_posix()
+                except ValueError:
+                    relative = path.name
+                return relative, digest
+    return None
 
 
 class FetchError(RuntimeError):
@@ -159,6 +197,10 @@ class FetchedSkill:
     files: tuple[str, ...]
     total_bytes: int
     fetched_at: float
+    #: 许可证（相对仓库根路径 + sha256）。空串 = 来源里没有许可证文件。
+    #: 用空串而不是 None：调用方少一处 None 分支，且""的语义就是"没有"。
+    license_path: str = ""
+    license_sha256: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -171,6 +213,8 @@ class FetchedSkill:
             "files": list(self.files),
             "total_bytes": self.total_bytes,
             "fetched_at": self.fetched_at,
+            "license_path": self.license_path,
+            "license_sha256": self.license_sha256,
         }
 
     def cleanup(self) -> None:
@@ -332,6 +376,9 @@ def fetch_skill(
             raise FetchRefused("nothing to fetch: the resolved directory is empty")
 
         digest, digest_files = digest_tree(target)
+        # 来源与许可一起记录：装第三方技能时「谁写的、什么许可」与「内容是什么」
+        # 同等重要，而后者此前只在 digest 里有。
+        license_info = _find_license(target, repo)
         result = FetchedSkill(
             identifier=identifier,
             url=resolved_url,
@@ -343,6 +390,8 @@ def fetch_skill(
             files=files,
             total_bytes=total_bytes,
             fetched_at=time.time(),
+            license_path=license_info[0] if license_info else "",
+            license_sha256=license_info[1] if license_info else "",
         )
         # Provenance lives beside the clone, never inside it: writing into the
         # skill directory would change the digest the installer is about to verify.
@@ -355,6 +404,12 @@ def fetch_skill(
                     "commit": commit,
                     "digest": digest,
                     "digest_files": list(digest_files),
+                    # 显式写 null 而不是省略这个键：缺许可证是要被人看见的事实，
+                    # 不能表现为"这个字段恰好不存在"。
+                    "license": (
+                        {"path": license_info[0], "sha256": license_info[1]}
+                        if license_info else None
+                    ),
                     "total_bytes": total_bytes,
                     "fetched_at": result.fetched_at,
                     "limits": dataclasses.asdict(limits),

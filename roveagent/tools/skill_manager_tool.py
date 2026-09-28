@@ -1934,6 +1934,77 @@ def _caps_from_values(values) -> frozenset:
     return frozenset(out)
 
 
+def _record_installed_provenance(source: str, body: dict) -> str:
+    """把一次网络安装的来源与许可落成库内清单，返回清单路径。
+
+    写入分两步：先落 sidecar（每个技能一份），再从**全部** sidecar 重写清单。
+    追加写会因重复安装产生重复行，清单就不再是"当前装了什么"的事实。
+    """
+    library = Path(_skills_dir())
+    sidecar_dir = library / ".provenance"
+    sidecar_dir.mkdir(parents=True, exist_ok=True)
+
+    provenance: dict = {}
+    provenance_file = Path(source).parent / "provenance.json"
+    if provenance_file.is_file():
+        try:
+            provenance = json.loads(provenance_file.read_text("utf-8"))
+        except (OSError, ValueError):
+            provenance = {}
+    license_entry = provenance.get("license")
+    license_path = license_entry.get("path", "") if isinstance(license_entry, dict) else ""
+    license_sha = license_entry.get("sha256", "") if isinstance(license_entry, dict) else ""
+    if not license_path:
+        # 没有 provenance（人工安装、或测试里直接指向目录）时就地探测 —— 必须与安装
+        # 判定走同一条探测路径，否则判定说"有许可证"而清单写 NONE FOUND，两者打架。
+        # 这把测试正是钉这个不一致的。
+        from roveagent.skills_market.fetcher import _find_license
+
+        found = _find_license(Path(source), Path(source).parent)
+        if found:
+            license_path, license_sha = found
+
+    name = str(body.get("skill_name") or Path(source).name)
+    record = {
+        "skill_name": name,
+        "source": provenance.get("identifier") or source,
+        "url": provenance.get("url", ""),
+        "commit": provenance.get("commit", ""),
+        "license_path": license_path,
+        "license_sha256": license_sha,
+        "fetched_at": provenance.get("fetched_at", ""),
+    }
+    (sidecar_dir / ("%s.json" % name)).write_text(
+        json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
+
+    rows = []
+    for path in sorted(sidecar_dir.glob("*.json")):
+        try:
+            rows.append(json.loads(path.read_text("utf-8")))
+        except (OSError, ValueError):
+            continue
+    lines = [
+        "# 第三方技能来源与许可（由 skill_manage(action=\"install\") 生成，勿手改）",
+        "",
+        "本清单只列**从网络取回并安装**的技能。本地创建或仓库自带的技能不在其中。",
+        "",
+        "| skill | source | commit | license | license sha256 |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for row in rows:
+        lines.append("| {n} | {s} | {c} | {l} | {h} |".format(
+            n=row.get("skill_name", ""),
+            s=row.get("url") or row.get("source", ""),
+            c=(row.get("commit") or "")[:12],
+            # 没有许可证是必须被看见的事实，不能留空 —— 留空会被读的人当成"没问题"。
+            l=row.get("license_path") or "**NONE FOUND**",
+            h=(row.get("license_sha256") or "")[:12],
+        ))
+    notice = library / "NOTICE.installed.md"
+    notice.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(notice)
+
+
 def _license_for(source_path: Path) -> str:
     """来源的许可证：返回路径，或 "" 表示**评估过、确实没有**。
 
@@ -2077,6 +2148,8 @@ def _install_skill(source: str) -> str:
             "install refused by the installer: %s"
             % json.dumps(body, ensure_ascii=False), success=False)
     body.update({"success": True, "installed": True, "policy": decision.as_dict()})
+    # 来源与许可落成库内清单：装进来的东西必须能被追溯。
+    body["notice"] = _record_installed_provenance(source, body)
     return json.dumps(body, ensure_ascii=False)
 
 

@@ -135,6 +135,29 @@ class ReplayPipelineTest(unittest.TestCase):
         self.assertIn("gone", str(result.get("error")))
         self.assertEqual(sorted(p.name for p in self.lib.iterdir()), [])
 
+    def test_install_writes_an_idempotent_notice_listing_source_and_license(self) -> None:
+        source = self._source_with_license()
+        result = json.loads(smt.skill_manage(action="install", source=str(source)))
+        self.assertTrue(result.get("installed"), result)
+
+        notice = self.lib / "NOTICE.installed.md"
+        self.assertTrue(notice.is_file(), "安装后必须生成 NOTICE 清单")
+        text = notice.read_text("utf-8")
+        self.assertIn("daily-briefing", text)
+        self.assertIn("LICENSE", text, "清单必须点出许可证文件名")
+
+        # 幂等：重复安装不得在清单里留下第二行（追加写就会）。
+        smt.skill_manage(action="install", source=str(source))
+        text2 = notice.read_text("utf-8")
+        self.assertEqual(text2.count("| daily-briefing |"), 1, "重写必须幂等")
+
+    def test_notice_marks_a_missing_license_loudly(self) -> None:
+        # 缺许可证时清单不能留空 —— 留空会被读的人当成"没问题"。
+        result = json.loads(smt.skill_manage(action="install", source=str(REAL_SKILL)))
+        self.assertTrue(result.get("staged"), result)      # 无许可证会被挂起
+        notice = self.lib / "NOTICE.installed.md"
+        self.assertFalse(notice.exists(), "未安装就不该有清单（不能凭拒绝写清单）")
+
     def _source_with_license(self) -> Path:
         """复制真实技能目录并补上 LICENSE。
 
